@@ -143,7 +143,11 @@ def route_obstacles(room):
     the viewpoint search would stop believing any ball is observable.
     """
     items = list(room.get("furniture", []))
-    for ball in []:   # ball routing disabled; restore with the apply script
+    # Seed 1001 put floor_0_room_1_g4 0.0965 m from a 0.15 m sphere, so the
+    # viewpoint sat inside it and the leg could never arrive.  point_is_safe
+    # and the A* grid both read this, so listing the balls keeps a viewpoint
+    # and a path out of them without touching what the cameras may see.
+    for ball in room.get("red_balls", []) or []:
         position = ball.get("position") or ball.get("pose")
         if not position or len(position) < 2:
             continue
