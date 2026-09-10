@@ -116,6 +116,44 @@ def point_segment_distance_2d(point, start, end):
     return math.hypot(float(point[0]) - nearest[0],
                       float(point[1]) - nearest[1])
 
+def detour_point_from_points(start, target, blocking, clearance, step):
+    """Side step clearing every blocking point, or None if none does.
+
+    ``blocking`` is whatever the sensor returned: walls and obstacles are
+    the same thing here, so a candidate that would cut into a wall fails
+    on its own returns without anyone naming it a wall.
+    """
+    if not blocking:
+        return None
+    delta_x = float(target[0]) - float(start[0])
+    delta_y = float(target[1]) - float(start[1])
+    span = math.hypot(delta_x, delta_y)
+    if span < 1.0e-6:
+        return None
+    forward = (delta_x / span, delta_y / span)
+    left = (-forward[1], forward[0])
+    blocked = min(blocking, key=lambda point: point_segment_distance_2d(
+        point, start, target))
+    along = ((blocked[0] - float(start[0])) * forward[0] +
+             (blocked[1] - float(start[1])) * forward[1])
+    along = max(0.0, min(span, along))
+    base = (float(start[0]) + along * forward[0],
+            float(start[1]) + along * forward[1])
+    for multiple in (1, 2, 3):
+        offset = multiple * float(step)
+        for sign in (1.0, -1.0):
+            candidate = (base[0] + sign * offset * left[0],
+                         base[1] + sign * offset * left[1])
+            if min(point_segment_distance_2d(point, start, candidate)
+                   for point in blocking) < clearance:
+                continue
+            if min(point_segment_distance_2d(point, candidate, target)
+                   for point in blocking) < clearance:
+                continue
+            return candidate
+    return None
+
+
 
 def oblique_actual_geometry(deep_pose, near_pose, door, limits=None,
                             room_type="open", obstacle=None):
@@ -561,6 +599,16 @@ class ThreeFloorGoalSequencer:
         self._runtime_audit_ceiling_margin = max(
             self._runtime_audit_floor_margin + 0.10,
             float(rospy.get_param("~runtime_3d_ceiling_margin_m", 0.95)))
+        # A failed audit means the Livox saw something the offline route
+        # could not know about.  Step around it instead of ending the run.
+        self._runtime_detour_max_attempts = max(0, int(rospy.get_param(
+            "~runtime_detour_max_attempts", 2)))
+        self._runtime_detour_step = max(0.20, float(rospy.get_param(
+            "~runtime_detour_step_m", 0.55)))
+        self._runtime_detour_speed = max(0.10, float(rospy.get_param(
+            "~runtime_detour_speed_mps", 0.60)))
+        self._runtime_detour_tolerance = max(0.05, float(rospy.get_param(
+            "~runtime_detour_tolerance_m", 0.20)))
 
         os.makedirs(self._output_dir, exist_ok=True)
         self._lock = threading.RLock()
@@ -853,9 +901,46 @@ class ThreeFloorGoalSequencer:
         self._write_room_evidence("running")
         return passed
 
-    def _ensure_runtime_3d_audit(self, floor, waypoint):
+    def _perceived_obstacle_points(self, floor, start):
+        """Fresh cloud points in the collision band, minus the robot itself.
+
+        Same filtering the audit applies, so a detour is judged against the
+        evidence that failed it.
+        """
+        with self._lock:
+            points = list(self._latest_cloud_points)
+            sampled_at = self._latest_cloud_monotonic
+        if (sampled_at is None or
+                time.monotonic() - sampled_at > self._runtime_audit_max_age):
+            return []
+        floor_z = float(floor["z"])
+        return [
+            point for point in points
+            if (floor_z + self._runtime_audit_floor_margin <= point[2] <=
+                floor_z + self._runtime_audit_ceiling_margin) and
+            math.hypot(point[0] - start[0], point[1] - start[1]) >
+            self._runtime_audit_self_radius]
+
+    def _perceived_detour_point(self, floor, waypoint):
+        """Side step clearing the sensed obstacle, from the cloud alone.
+
+        Walls return points in the same cloud, so a candidate that would cut
+        into one fails the clearance test without the route ever being told
+        where the wall is.  Nothing here reads the scene.
+        """
+        with self._lock:
+            start = self._pose
+        if start is None:
+            return None
+        return detour_point_from_points(
+            start, (float(waypoint["x"]), float(waypoint["y"])),
+            self._perceived_obstacle_points(floor, start),
+            self._runtime_audit_clearance, self._runtime_detour_step)
+
+    def _ensure_runtime_3d_audit(self, floor, waypoint, index=0):
         if self._runtime_3d_audit(floor, waypoint):
             return True
+        room_id = str(waypoint.get("room_id", ""))
         record = self._room_record(waypoint, floor["floor_number"])
         if record is not None:
             record["extra_scan_count"] += 1
@@ -872,6 +957,39 @@ class ThreeFloorGoalSequencer:
         self._sleep(0.15)
         if self._runtime_3d_audit(floor, waypoint):
             return True
+        # The rescan agrees something is in the way.  It is sensed, not
+        # known, so route around it from the cloud and re-audit what is
+        # left of the leg.  The scan still happens at the planned
+        # viewpoint, so room coverage is unchanged.
+        for attempt in range(self._runtime_detour_max_attempts):
+            detour = self._perceived_detour_point(floor, waypoint)
+            if detour is None:
+                break
+            leg = dict(waypoint)
+            leg["x"], leg["y"] = float(detour[0]), float(detour[1])
+            leg["note"] = "{}_detour_{}".format(
+                waypoint.get("note"), attempt + 1)
+            leg["align_yaw"] = False
+            if record is not None:
+                record["perceived_detour_count"] = int(
+                    record.get("perceived_detour_count", 0)) + 1
+            self._record_event(
+                "perceived_obstacle_detour", room_id=room_id,
+                waypoint=waypoint.get("note"), attempt=attempt + 1,
+                maximum_attempts=self._runtime_detour_max_attempts,
+                detour_target=[round(float(value), 3) for value in detour],
+                required_clearance_m=self._runtime_audit_clearance)
+            self._publish_route_state(
+                "DETOUR_SENSED_OBSTACLE", floor=int(floor["floor_number"]),
+                room_id=room_id, waypoint=leg["note"],
+                target=[float(detour[0]), float(detour[1])])
+            reached, _distance, _recoveries = self._drive_direct_waypoint(
+                floor, leg, self._runtime_detour_speed,
+                self._runtime_detour_tolerance, index, "plane")
+            if reached is None:
+                break
+            if self._runtime_3d_audit(floor, waypoint):
+                return True
         with self._lock:
             if self._failure is None:
                 self._failure = "runtime_3d_path_audit_failed:{}".format(
@@ -1861,7 +1979,8 @@ class ThreeFloorGoalSequencer:
                     self._handoff_tolerance)))
             target = (float(waypoint["x"]), float(waypoint["y"]))
             if (waypoint.get("room_id") and
-                    not self._ensure_runtime_3d_audit(floor, waypoint)):
+                    not self._ensure_runtime_3d_audit(
+                        floor, waypoint, index)):
                 with self._lock:
                     reason = self._failure
                 self._write_tour(floor, records, "failed", reason)

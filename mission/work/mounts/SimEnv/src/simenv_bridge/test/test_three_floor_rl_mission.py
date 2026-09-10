@@ -1234,6 +1234,57 @@ class ThreeFloorRLMissionTest(unittest.TestCase):
                 acceptance["checks"]["final_pose_on_first_floor_landing"]
             )
 
+    def test_a_sensed_obstacle_produces_a_detour_the_route_can_take(self):
+        """Seed 1001's floor_1_room_3 entry_to_g3 geometry, from points only.
+
+        A 0.30 m box centred 0.11 m off the straight line to g3 is what the
+        offline route could not know about.  Only the Livox returns are
+        given here: no scene, no truth, no object identity.
+        """
+        sequencer = load_sequencer()
+        start = (4.20, 28.60)
+        target = (4.90, 30.40)
+        # The box, as a ring of returns off its faces.
+        box_x, box_y, half = 4.63, 29.449, 0.15
+        blocking = [
+            (box_x + sx * half, box_y + sy * half, 2.75)
+            for sx in (-1.0, 0.0, 1.0) for sy in (-1.0, 0.0, 1.0)]
+        clearance, step = 0.38, 0.55
+
+        straight = min(
+            sequencer.point_segment_distance_2d(point, start, target)
+            for point in blocking)
+        self.assertLess(straight, clearance)
+
+        detour = sequencer.detour_point_from_points(
+            start, target, blocking, clearance, step)
+        self.assertIsNotNone(detour)
+        for leg in ((start, detour), (detour, target)):
+            self.assertGreaterEqual(
+                min(sequencer.point_segment_distance_2d(
+                    point, leg[0], leg[1]) for point in blocking),
+                clearance)
+
+    def test_a_boxed_in_leg_reports_no_detour_rather_than_inventing_one(self):
+        sequencer = load_sequencer()
+        start, target = (0.0, 0.0), (2.0, 0.0)
+        # Returns on both sides as well as across: nothing clears 0.38 m.
+        blocking = [(1.0, offset * 0.1, 0.5)
+                    for offset in range(-40, 41)]
+        self.assertIsNone(sequencer.detour_point_from_points(
+            start, target, blocking, 0.38, 0.55))
+
+    def test_the_audit_falls_back_to_a_sensed_detour_before_failing(self):
+        source = (
+            ROOT / "scripts" / "scanplanner_three_floor_goal_sequencer.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("_perceived_detour_point", source)
+        self.assertIn("perceived_obstacle_detour", source)
+        self.assertIn("DETOUR_SENSED_OBSTACLE", source)
+        # The detour must be judged on the cloud, never on the scene.
+        self.assertNotIn("route_only_obstacles", source)
+        self.assertNotIn("red_distractors", source)
+
     def test_room_legs_get_the_same_bounded_stall_escape_as_entrance_legs(self):
         launch = (ROOT / "launch" / "scanplanner_three_floor_rl.launch").read_text(
             encoding="utf-8")
