@@ -265,11 +265,17 @@ def wall_clearance(x, y, room):
 
 def segment_clear(x0, y0, x1, y1, room, clearance,
                   wall_clearance_required=None):
+    # route_clearance, not furniture_clearance: the A* safe grid already
+    # rejects a cell that sits on a ball or a distractor, but every segment
+    # test here used to see furniture alone.  Seed 111 took the straight
+    # g3_to_g4 shortcut 0.005 m from a 0.30 m distractor box because of it,
+    # and the same hole let path compression cut back across one after A*
+    # had routed around it.
     for step in range(1, 40):
         ratio = step / 40.0
         x = x0 + ratio * (x1 - x0)
         y = y0 + ratio * (y1 - y0)
-        if furniture_clearance(x, y, room) < clearance:
+        if route_clearance(x, y, room) < clearance:
             return False
         if (wall_clearance_required is not None and
                 wall_clearance(x, y, room) < wall_clearance_required):
