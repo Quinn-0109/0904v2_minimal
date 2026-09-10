@@ -93,80 +93,6 @@ def read_red_distractors_from_world(path):
     return records
 
 
-def read_route_only_distractors_from_world(path):
-    """Read every fixed distractor solid, for NAVIGATION only.
-
-    A distractor is physical geometry the robot can walk into, and both
-    kinds matter: seed 1001 drove the entry_to_g3 line 0.11 m from a 0.30 m
-    red box.  Only ``distractor_`` models are read, so no danger source and
-    no truth file is consulted, and the records reach route_obstacles alone
-    -- never the coverage grid or line of sight, which must keep judging a
-    red ball on furniture occlusion by itself.
-    """
-    records = []
-    root = ET.parse(path).getroot()
-    for model in root.iter("model"):
-        name = str(model.get("name", ""))
-        if not name.startswith("distractor_"):
-            continue
-        pose_node = model.find("pose")
-        if pose_node is None:
-            continue
-        pose = [float(value) for value in (pose_node.text or "").split()]
-        if len(pose) < 3:
-            continue
-        box_node = model.find("./link/visual/geometry/box/size")
-        sphere_node = model.find("./link/visual/geometry/sphere/radius")
-        if box_node is not None:
-            size = [float(value) for value in (box_node.text or "").split()]
-            if len(size) < 3:
-                continue
-            size = size[:3]
-        elif sphere_node is not None:
-            radius = float((sphere_node.text or "0").strip())
-            size = [2.0 * radius, 2.0 * radius, 2.0 * radius]
-        else:
-            continue
-        records.append({
-            "id": name,
-            "kind": "route_only_distractor",
-            "pose": (pose + [0.0, 0.0, 0.0])[:6],
-            "size": size,
-        })
-    return records
-
-
-def assign_route_only_obstacles(layout, distractors):
-    """Attach each distractor to the room that holds it, before planning.
-
-    derive_physical_viewpoints picks viewpoints and runs the room A* off
-    route_obstacles, so a layout-level list written afterwards is invisible
-    to both.  Floors are 2.6 m apart and a distractor sits 0.15 m above its
-    own floor, so the elevation match is unambiguous.
-    """
-    rooms = []
-    for floor in layout.get("floors", []):
-        elevation = float(floor.get("elevation", 0.0))
-        for room in floor.get("rooms", []):
-            room["route_only_obstacles"] = []
-            rooms.append((elevation, room))
-    for record in distractors or []:
-        pose = record.get("pose") or []
-        if len(pose) < 3:
-            continue
-        x, y, z = float(pose[0]), float(pose[1]), float(pose[2])
-        for elevation, room in rooms:
-            if abs(z - elevation) > 1.0:
-                continue
-            bounds = room["bounds"]
-            if not float(bounds["x_min"]) <= x <= float(bounds["x_max"]):
-                continue
-            if not float(bounds["y_min"]) <= y <= float(bounds["y_max"]):
-                continue
-            room["route_only_obstacles"].append(copy.deepcopy(record))
-            break
-
-
 def floor_index(floor):
     return int(floor.get("floor_index", -1))
 
@@ -234,10 +160,6 @@ def route_obstacles(room):
                      0.0, 0.0, 0.0],
             "size": [2.0 * radius, 2.0 * radius, 2.0 * radius],
         })
-    # The scene's own distractor solids are just as solid as the furniture.
-    # assign_route_only_obstacles fills this in before any viewpoint is
-    # chosen; it is navigation-only for the same reason the balls are.
-    items.extend(room.get("route_only_obstacles", []) or [])
     return items
 
 
@@ -2900,8 +2822,7 @@ def preserve_official_scene_sources(layout, truth_payload):
 
 
 def build_randomized_scene(source_layout, source_mission, seed_offset=0,
-                           red_distractors=None, official_truth=None,
-                           route_only_distractors=None):
+                           red_distractors=None, official_truth=None):
     """Return randomized layout/config payloads plus XML pose updates."""
     layout = copy.deepcopy(source_layout)
     mission = copy.deepcopy(source_mission)
@@ -2913,7 +2834,6 @@ def build_randomized_scene(source_layout, source_mission, seed_offset=0,
     settings["effective_floor_seeds"] = [
         seed_by_floor[index] for index in range(3)]
     settings["seed_offset"] = int(seed_offset)
-    assign_route_only_obstacles(layout, route_only_distractors)
 
     if official_truth is None:
         furniture_poses = randomize_furniture(
@@ -3034,7 +2954,6 @@ def main():
     source_layout = read_json(args.layout)
     source_mission = read_json(args.mission_config)
     red_distractors = read_red_distractors_from_world(args.world)
-    route_only_distractors = read_route_only_distractors_from_world(args.world)
 
     preserve_official = bool(
         source_mission.get("scene_randomization", {}).get(
@@ -3053,8 +2972,7 @@ def main():
     (layout, mission, furniture_poses, danger_poses, red_truth,
      scans, seed_by_floor) = build_randomized_scene(
         source_layout, source_mission, args.seed_offset,
-        red_distractors, official_truth=official_truth,
-        route_only_distractors=route_only_distractors)
+        red_distractors, official_truth=official_truth)
     # OFFICIAL_DISTRACTION_SOURCES_COMPAT_V1
     # The official generator records every non-danger object under
     # ``distraction_sources``.  ``red_distractors`` remains the red-box-only
