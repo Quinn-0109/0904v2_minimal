@@ -496,6 +496,15 @@ class ThreeFloorGoalSequencer:
         self._entrance_recovery_max_attempts = max(
             0, int(rospy.get_param(
                 "~entrance_recovery_max_attempts", 2)))
+        # A room leg can deadlock the same way an entrance leg does: the
+        # command produces no motion, so the error never changes, so the
+        # controller reissues the same command until the progress timeout
+        # ends the mission.  Seed 205 lost floor_1_room_3_g4 that way, 1.19 m
+        # from the target on open floor with 2.44 m to the nearest furniture.
+        # Give those legs the same zero-hold escape.
+        self._stall_recovery_max_attempts = max(
+            0, int(rospy.get_param(
+                "~stall_recovery_max_attempts", 2)))
         self._plane_fast_takeover = bool(rospy.get_param(
             "~plane_fast_takeover", True))
         self._plane_fast_blend = max(
@@ -1368,21 +1377,25 @@ class ThreeFloorGoalSequencer:
                 best_heading_error = heading_error
                 progress_deadline = time.monotonic() + progress_timeout
             elif time.monotonic() >= progress_deadline:
-                if (entrance_mode and stall_recoveries <
-                        self._entrance_recovery_max_attempts):
+                recovery_attempts = (
+                    self._entrance_recovery_max_attempts if entrance_mode
+                    else self._stall_recovery_max_attempts)
+                if stall_recoveries < recovery_attempts:
                     stall_recoveries += 1
                     self._publish_scan(False)
                     self._record_event(
-                        "entrance_stall_recovery", floor=int(floor["floor_number"]),
+                        "stall_recovery", floor=int(floor["floor_number"]),
                         waypoint=note, attempt=stall_recoveries,
+                        entrance_mode=bool(entrance_mode),
                         pose=[round(value, 4) for value in pose],
                         distance_m=round(distance, 4),
                         heading_error_rad=round(heading_error, 4),
                         zero_hold_sec=self._entrance_recovery_hold)
                     self._publish_route_state(
-                        "RECOVER_ENTRANCE_STALL",
+                        "RECOVER_STALL",
                         floor=int(floor["floor_number"]), waypoint=note,
                         attempt=stall_recoveries,
+                        entrance_mode=bool(entrance_mode),
                         distance_m=round(distance, 4),
                         heading_error_rad=round(heading_error, 4))
                     self._sleep(self._entrance_recovery_hold)

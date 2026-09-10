@@ -425,6 +425,11 @@
     <param name="entrance_progress_timeout_sec" value="5.0"/>
     <param name="entrance_recovery_hold_sec" value="1.0"/>
     <param name="entrance_recovery_max_attempts" value="2"/>
+    <!-- A room leg deadlocks the same way an entrance leg does when the
+         command produces no motion: the error never changes, so the same
+         command is reissued until the progress timeout ends the mission.
+         Give those legs the same bounded zero-hold escape. -->
+    <param name="stall_recovery_max_attempts" value="2"/>
     <param name="plane_fast_takeover" value="true"/>
     <param name="plane_fast_takeover_blend_seconds" value="0.50"/>
     <param name="plane_fast_takeover_zero_hold_seconds" value="0.15"/>

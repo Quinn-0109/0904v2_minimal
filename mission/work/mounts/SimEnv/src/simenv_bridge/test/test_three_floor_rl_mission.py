@@ -1234,6 +1234,20 @@ class ThreeFloorRLMissionTest(unittest.TestCase):
                 acceptance["checks"]["final_pose_on_first_floor_landing"]
             )
 
+    def test_room_legs_get_the_same_bounded_stall_escape_as_entrance_legs(self):
+        launch = (ROOT / "launch" / "scanplanner_three_floor_rl.launch").read_text(
+            encoding="utf-8")
+        self.assertIn(
+            '<param name="stall_recovery_max_attempts" value="2"/>', launch)
+        sequencer_source = (
+            ROOT / "scripts" / "scanplanner_three_floor_goal_sequencer.py"
+        ).read_text(encoding="utf-8")
+        # The escape must not be reachable only from an entrance waypoint:
+        # seed 205 lost floor_1_room_3_g4 to a deadlock on open floor.
+        self.assertIn("self._stall_recovery_max_attempts", sequencer_source)
+        self.assertNotIn(
+            "if (entrance_mode and stall_recoveries <", sequencer_source)
+
     def test_launch_and_runners_use_real_rl_and_isolated_container(self):
         launch = (ROOT / "launch" / "scanplanner_three_floor_rl.launch").read_text(
             encoding="utf-8"
