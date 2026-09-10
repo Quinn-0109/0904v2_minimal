@@ -166,11 +166,52 @@ class CameraCalibration:
                    fallback.xyz_base, fallback.pitch)
 
 
+def independent_scan_batch_reappearances(event, scan_batches,
+                                        radius_m=1.20):
+    """Count room scan batches whose clusters land on one track position.
+
+    A batch is the candidate evidence of one completed room scan, so two
+    matching batches mean the same place produced red evidence twice from
+    independent sweeps.  Batch clusters stay diagnostic: nothing here
+    confirms a track or changes ``evidence_frames``.
+    """
+    position = event.get("position")
+    room_id = str(event.get("room_id", "")).strip()
+    if not room_id or not isinstance(position, (list, tuple)):
+        return 0
+    if len(position) < 2:
+        return 0
+    try:
+        x = float(position[0])
+        y = float(position[1])
+        limit = float(radius_m) ** 2
+    except (TypeError, ValueError):
+        return 0
+
+    matched = 0
+    for batch in scan_batches or []:
+        if str(batch.get("room_id", "")).strip() != room_id:
+            continue
+        for point in batch.get("candidate_clusters_min1") or []:
+            if not isinstance(point, (list, tuple)) or len(point) < 2:
+                continue
+            try:
+                px = float(point[0])
+                py = float(point[1])
+            except (TypeError, ValueError):
+                continue
+            if (px - x) ** 2 + (py - y) ** 2 <= limit:
+                matched += 1
+                break
+    return matched
+
+
 def is_weak_small_single_view_detection(
         event, scan_batches, max_evidence_frames=3,
         max_radius_px=7.0, max_median_radius_px=7.0,
         min_depth_profiles=4, min_median_depth_m=5.3,
-        max_depth_shape_accept_fraction=0.25):
+        max_depth_shape_accept_fraction=0.25,
+        reappearance_radius_m=1.20):
     """Reject only measured D1-like online camera evidence.
 
     Missing room, view, contour or depth evidence fails open.
@@ -183,6 +224,13 @@ def is_weak_small_single_view_detection(
         return False
 
     if not room_id:
+        return False
+
+    # The D1 profile this rule targets is a single brief exposure. A track
+    # that a second independent scan of the same room found again is not
+    # that profile, so keep it whatever its image size.
+    if independent_scan_batch_reappearances(
+            event, scan_batches, reappearance_radius_m) >= 2:
         return False
 
     positive_roles = set()

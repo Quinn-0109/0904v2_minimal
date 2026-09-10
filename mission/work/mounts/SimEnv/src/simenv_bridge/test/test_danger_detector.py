@@ -414,6 +414,51 @@ class DangerDetectorTest(unittest.TestCase):
         tracker.update([(1.45, 0.0)])
         self.assertEqual(len(tracker.tracks), 2)
 
+    def _rescan_room_batches(self):
+        """floor_1_room_2 of official seed 20: G3 blind, G4 scanned twice."""
+        def diagnostic(radius_px):
+            return {"accepted": True, "radius_px": radius_px,
+                    "depth_center_m": 6.0, "depth_shape_accepted": False}
+
+        return [
+            {"room_id": "room_a", "viewpoint_role": "G3",
+             "candidate_frames": 0, "raw_candidate_points": 0,
+             "candidate_clusters_min1": [], "contour_diagnostics": []},
+            {"room_id": "room_a", "viewpoint_role": "G4",
+             "candidate_frames": 7, "raw_candidate_points": 11,
+             "candidate_clusters_min1": [[-7.0101, 23.1025],
+                                         [-5.0306, 23.7469],
+                                         [-5.4438, 21.7848]],
+             "contour_diagnostics": [diagnostic(5.50), diagnostic(6.74),
+                                     diagnostic(5.24)]},
+            {"room_id": "room_a", "viewpoint_role": "G4",
+             "candidate_frames": 8, "raw_candidate_points": 11,
+             "candidate_clusters_min1": [[-7.2317, 22.5156],
+                                         [-5.0627, 23.4457]],
+             "contour_diagnostics": [diagnostic(5.60), diagnostic(6.80)]},
+        ]
+
+    def test_second_room_scan_reappearance_keeps_small_single_view_track(self):
+        mod = _load_module()
+        batches = self._rescan_room_batches()
+        for position in ([-7.0101, 23.1025, 2.75], [-5.0520, 23.5461, 2.75]):
+            event = {"room_id": "room_a", "evidence_frames": 3,
+                     "position": position}
+            self.assertEqual(
+                mod.independent_scan_batch_reappearances(event, batches), 2)
+            self.assertFalse(
+                mod.is_weak_small_single_view_detection(event, batches))
+
+    def test_single_batch_small_single_view_track_is_still_rejected(self):
+        mod = _load_module()
+        batches = self._rescan_room_batches()
+        event = {"room_id": "room_a", "evidence_frames": 3,
+                 "position": [-5.4438, 21.7848, 2.75]}
+        self.assertEqual(
+            mod.independent_scan_batch_reappearances(event, batches), 1)
+        self.assertTrue(
+            mod.is_weak_small_single_view_detection(event, batches))
+
     def test_tracker_never_merges_same_xy_across_floors(self):
         mod = _load_module()
         tracker = mod.DetectionTracker(merge_radius=0.75, confirm_count=1)
