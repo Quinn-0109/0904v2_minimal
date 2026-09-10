@@ -1,0 +1,22 @@
+float64 pose_x
+float64 pose_y
+float64 pose_z
+float64 yaw
+float64 front_offset
+float64 rear_offset
+float64 radius
+float64 min_height
+float64 max_height
+float64 clearance_search_radius
+---
+bool map_available
+bool occupied_collision
+uint64 occupied_queries
+uint64 unknown_queries
+float64 minimum_obstacle_clearance
+float64 front_center_x
+float64 front_center_y
+float64 rear_center_x
+float64 rear_center_y
+string frame_id
+string status

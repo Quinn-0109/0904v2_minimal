@@ -1,0 +1,30 @@
+{
+  "advanced_features": {
+    "enable_cross_door": false,
+    "enable_door_alignment": false,
+    "enable_door_attention": false,
+    "enable_door_commit": false,
+    "enable_door_detection": false,
+    "enable_room_detection": false,
+    "enable_room_information_gain": false,
+    "enable_room_recovery": false,
+    "enable_room_state_machine": false,
+    "enable_structured_exploration": false
+  },
+  "elapsed_sec": 197.374,
+  "exploration_end_elapsed_sec": null,
+  "lightweight_room_scheduler": true,
+  "mission_budget_starts_after_startup": true,
+  "mission_elapsed_sec": 197.374,
+  "robot_spawn_pose": {
+    "sensor_forward_offset": 0.2,
+    "x": 0.0,
+    "y": 0.8,
+    "yaw": 1.5708
+  },
+  "room_exit_map_snapshot_count": 2,
+  "startup_elapsed_sec": 62.73603633604944,
+  "state": "EXECUTE_GOAL",
+  "task_mode": "baseline_fastlio_exploration",
+  "total_wall_elapsed_sec": 260.11
+}

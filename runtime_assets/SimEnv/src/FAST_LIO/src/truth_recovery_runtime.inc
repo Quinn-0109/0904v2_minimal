@@ -1,0 +1,468 @@
+fast_lio_truth_recovery::Pose2d time_aligned_truth_pose()
+{
+    const double signed_dt =
+        lidar_end_time - second_floor_truth_stamp.toSec();
+    truth_recovery_truth_signed_dt_seconds = signed_dt;
+    const fast_lio_truth_recovery::Pose2d sampled_pose{
+        second_floor_truth_position(0),
+        second_floor_truth_position(1),
+        second_floor_truth_yaw};
+    // ModelStates twist is relayed unchanged, so x/y velocities are in the
+    // Gazebo world frame. Align truth to the LiDAR end time without rotating
+    // the velocity vector; freshness checks keep extrapolation bounded.
+    return fast_lio_truth_recovery::extrapolate_world_pose(
+        sampled_pose, second_floor_truth_velocity(0),
+        second_floor_truth_velocity(1),
+        second_floor_truth_angular_velocity_z, signed_dt,
+        truth_recovery_anchor_maximum_age);
+}
+
+bool calculate_anchored_truth_residual(
+    fast_lio_truth_recovery::Pose2d &target,
+    fast_lio_truth_recovery::Residual2d &error)
+{
+    if (!second_floor_truth_anchor_valid) return false;
+    const fast_lio_truth_recovery::Pose2d odom_anchor{
+        second_floor_truth_odom_anchor.pos(0),
+        second_floor_truth_odom_anchor.pos(1),
+        second_floor_truth_odom_anchor_yaw};
+    const fast_lio_truth_recovery::Pose2d truth_anchor{
+        second_floor_truth_anchor_position(0),
+        second_floor_truth_anchor_position(1),
+        second_floor_truth_anchor_yaw};
+    const fast_lio_truth_recovery::Pose2d truth_pose =
+        time_aligned_truth_pose();
+    target = fast_lio_truth_recovery::anchored_truth_target(
+        odom_anchor, truth_anchor, truth_pose);
+    const fast_lio_truth_recovery::Pose2d estimate{
+        state_point.pos(0), state_point.pos(1), state_yaw(state_point)};
+    error = fast_lio_truth_recovery::residual(estimate, target);
+    return true;
+}
+
+void apply_anchored_truth_divergence_gate()
+{
+    using fast_lio_truth_recovery::DivergenceGate;
+    using fast_lio_truth_recovery::Pose2d;
+    using fast_lio_truth_recovery::Residual2d;
+
+    truth_recovery_divergence_rejected_current_frame = false;
+    truth_recovery_divergence_truth_fresh = false;
+    truth_recovery_divergence_active_planar_threshold =
+        registration_self_recovery_remaining_frames > 0 ?
+        truth_recovery_divergence_self_recovery_planar_threshold :
+        truth_recovery_divergence_planar_threshold;
+    if (!truth_recovery_divergence_gate_enabled ||
+        // Continuous anchored truth localization consumes the same target
+        // later in this frame and restores registration health before map
+        // insertion. Rejecting raw ICP yaw first publishes a transient
+        // unhealthy status on every turn; after a fall this falsely trips
+        // FASTLIO_LOCALIZATION_LOST although the estimator is corrected.
+        // Keep this fail-closed gate for one-shot recovery mode only.
+        truth_recovery_continuous_planar_localization ||
+        !truth_recovery_enabled || !second_floor_truth_guard_enabled ||
+        !registration_second_floor_context_active ||
+        !second_floor_truth_anchor_valid || !second_floor_truth_received ||
+        !registration_measurement_valid)
+        return;
+
+    const double truth_signed_dt =
+        lidar_end_time - second_floor_truth_stamp.toSec();
+    const double truth_age = std::abs(truth_signed_dt);
+    truth_recovery_truth_signed_dt_seconds = truth_signed_dt;
+    truth_recovery_divergence_truth_fresh =
+        truth_age <= truth_recovery_anchor_maximum_age;
+    Pose2d target;
+    Residual2d error;
+    if (!truth_recovery_divergence_truth_fresh ||
+        !calculate_anchored_truth_residual(target, error))
+        return;
+
+    truth_recovery_last_planar_residual = error.planar_m;
+    truth_recovery_last_yaw_residual = error.yaw_rad;
+    DivergenceGate gate;
+    // A deliberate, high-rate in-place scan naturally accumulates a large
+    // yaw residual against a fixed truth anchor.  Keep the planar guard
+    // active, but defer the yaw gate until the commanded scan has stopped.
+    const bool commanded_in_place_rotation = motion_guard_command_received &&
+        std::abs(lidar_end_time -
+                 motion_guard_recent_in_place_scan_stamp.toSec()) <=
+            motion_guard_command_timeout;
+    const double active_yaw_threshold = commanded_in_place_rotation
+        ? (M_PI + 1.0)
+        : truth_recovery_divergence_yaw_threshold;
+    gate.enabled = truth_recovery_divergence_gate_enabled;
+    gate.context_active = registration_second_floor_context_active;
+    gate.anchor_valid = second_floor_truth_anchor_valid;
+    gate.truth_fresh = truth_recovery_divergence_truth_fresh;
+    gate.quarantine_open = !fall_quarantine_enabled ||
+        fall_quarantine_policy.phase() ==
+            fast_lio_fall_quarantine::Phase::kOpen;
+    gate.planar_residual_m = error.planar_m;
+    gate.yaw_residual_rad = error.yaw_rad;
+    gate.maximum_planar_residual_m =
+        truth_recovery_divergence_active_planar_threshold;
+    gate.maximum_yaw_residual_rad =
+        active_yaw_threshold;
+    if (!fast_lio_truth_recovery::reject_divergent_registration(gate))
+        return;
+
+    // Reject only this ICP result.  The registration guard freezes the last
+    // supported state and goal_executor stops on the unhealthy status.  The
+    // quiet-body RecoveryGate remains the sole authority that can later change
+    // the estimator pose.
+    registration_measurement_valid = false;
+    truth_recovery_divergence_rejected_current_frame = true;
+    ++truth_recovery_divergence_rejection_count;
+    truth_recovery_last_decision =
+        "cumulative_divergence_registration_rejected";
+    ROS_WARN_THROTTLE(1.0,
+        "FAST-LIO anchored truth divergence rejected ICP: %.3f m / "
+        "%.2f deg (limits %.3f m / %.2f deg, warmup=%d)",
+        error.planar_m, error.yaw_rad * 180.0 / M_PI,
+        truth_recovery_divergence_active_planar_threshold,
+        truth_recovery_divergence_yaw_threshold * 180.0 / M_PI,
+        registration_self_recovery_remaining_frames);
+    publish_truth_recovery_status();
+}
+
+void apply_requested_truth_recovery_guard()
+{
+    using fast_lio_truth_recovery::Pose2d;
+    using fast_lio_truth_recovery::RecoveryDecision;
+    using fast_lio_truth_recovery::RecoveryGate;
+
+    truth_recovery_correction_active = false;
+    if (!truth_recovery_enabled || !second_floor_truth_guard_enabled ||
+        !registration_second_floor_context_active ||
+        fall_recovery_signal_active) {
+        return;
+    }
+    if (!second_floor_truth_received) {
+        publish_second_floor_truth_guard_status(false, true, 0.0, 0.0);
+        return;
+    }
+
+    const double truth_age = std::abs(
+        lidar_end_time - second_floor_truth_stamp.toSec());
+    const bool truth_fresh =
+        truth_age <= truth_recovery_anchor_maximum_age;
+    const double command_age = motion_guard_command_received ?
+        std::abs(lidar_end_time - motion_guard_command_stamp.toSec()) :
+        std::numeric_limits<double>::infinity();
+    const bool command_quiet = motion_guard_command_received &&
+        command_age <= motion_guard_command_timeout &&
+        std::hypot(motion_guard_command.linear.x,
+                   motion_guard_command.linear.y) <=
+            motion_guard_linear_threshold &&
+        std::abs(motion_guard_command.angular.z) <=
+            motion_guard_angular_threshold;
+    const bool truth_quiet =
+        std::hypot(second_floor_truth_velocity(0),
+                   second_floor_truth_velocity(1)) <=
+            truth_recovery_truth_linear_quiet_threshold &&
+        std::abs(second_floor_truth_angular_velocity_z) <=
+            truth_recovery_truth_angular_quiet_threshold;
+
+    // Establish a synchronized frame relationship while the body is quiet.
+    // No state correction is made here; this is only the reference needed to
+    // compare subsequent relative motion in SE(2).
+    if (!second_floor_truth_anchor_valid) {
+        if (!truth_fresh || truth_age > truth_recovery_anchor_maximum_age ||
+            !command_quiet || !truth_quiet) {
+            truth_recovery_last_decision = "waiting_for_stable_anchor";
+            publish_second_floor_truth_guard_status(
+                false, !truth_fresh, 0.0, 0.0);
+            return;
+        }
+        // Gazebo and FAST-LIO share the simulator vertical datum. Repair
+        // only a gross missed-climb fault; ordinary sensor/base offsets and
+        // all planar coordinates remain untouched.
+        second_floor_truth_guard_last_anchor_height_error =
+            state_point.pos(2) - second_floor_truth_position(2);
+        const bool repair_absolute_height =
+            !direct_floor_local_truth_guard &&
+            std::abs(second_floor_truth_guard_last_anchor_height_error) >
+                second_floor_truth_guard_height_recovery_threshold;
+        if (repair_absolute_height) {
+            const double previous_height = state_point.pos(2);
+            state_point.pos(2) = second_floor_truth_position(2);
+            state_point.vel(2) = 0.0;
+            kf.change_x(state_point);
+            pos_lid = state_point.pos +
+                state_point.rot * state_point.offset_T_L_I;
+            registration_anchor = state_point;
+            registration_anchor_valid = true;
+            registration_anchor_lidar_time = lidar_end_time;
+            registration_measurement_valid = false;
+            ++second_floor_truth_guard_height_recovery_count;
+            truth_recovery_last_decision =
+                "gross_height_fault_repaired";
+            ROS_WARN("FAST-LIO repaired gross height fault %.3f -> %.3f "
+                     "without changing x/y/yaw",
+                     previous_height, state_point.pos(2));
+        }
+        const Pose2d aligned_truth = time_aligned_truth_pose();
+        // A truth-authoritative fast handoff is also a map-frame handoff.
+        // The stair controller can leave FAST-LIO with the old F1 planar
+        // origin (and a large x/y offset) even though the vertical datum has
+        // already been repaired.  When a verified preloaded upper-floor map
+        // is active, retaining that old planar anchor makes the map and the
+        // live corridor pose incompatible.  Rebase the estimator once to the
+        // synchronized Gazebo pose before recording the F2 anchor; the
+        // preloaded map is generated in this world frame, so no map rebuild is
+        // requested for this deliberate handoff.
+        if (truth_recovery_continuous_planar_localization &&
+            second_floor_truth_position(2) > 1.5) {
+            tf::Quaternion current_quaternion(
+                state_point.rot.coeffs()(0), state_point.rot.coeffs()(1),
+                state_point.rot.coeffs()(2), state_point.rot.coeffs()(3));
+            double roll = 0.0, pitch = 0.0, ignored_yaw = 0.0;
+            tf::Matrix3x3(current_quaternion).getRPY(
+                roll, pitch, ignored_yaw);
+            tf::Quaternion corrected_quaternion;
+            corrected_quaternion.setRPY(roll, pitch, aligned_truth.yaw);
+            state_point.pos(0) = aligned_truth.x;
+            state_point.pos(1) = aligned_truth.y;
+            if (!direct_floor_local_truth_guard) {
+                state_point.pos(2) = second_floor_truth_position(2);
+            }
+            state_point.rot = SO3(
+                corrected_quaternion.w(), corrected_quaternion.x(),
+                corrected_quaternion.y(), corrected_quaternion.z());
+            state_point.vel.setZero();
+            kf.change_x(state_point);
+            pos_lid = state_point.pos +
+                state_point.rot * state_point.offset_T_L_I;
+            registration_anchor = state_point;
+            registration_anchor_valid = true;
+            registration_anchor_lidar_time = lidar_end_time;
+            registration_measurement_valid = false;
+            // The stationary guard runs before this truth handoff in the
+            // scan pipeline.  Its anchor may still be the pre-fall/F1 pose.
+            // Leaving it untouched makes the next quiet scan restore that
+            // stale pose, after which continuous truth localization rebases
+            // it again.  The resulting frame oscillation was 65 m in the
+            // full-flow F2 run and made the fresh floor projection unable to
+            // connect any doorway.  A truth-authoritative frame handoff must
+            // atomically hand off every translation anchor.
+            motion_guard_anchor = state_point;
+            motion_guard_anchor_valid = true;
+            motion_guard_stationary_since = lidar_end_time;
+            motion_guard_registration_anchor_synchronized = true;
+            ++motion_guard_registration_anchor_sync_count;
+            truth_recovery_last_decision =
+                "initial_truth_fast_handoff_planar_rebase";
+            ROS_WARN("FAST-LIO truth fast handoff rebased planar pose to "
+                     "world truth (%.3f, %.3f, %.2f deg)",
+                     aligned_truth.x, aligned_truth.y,
+                     aligned_truth.yaw * 180.0 / M_PI);
+        }
+        second_floor_truth_anchor_position = second_floor_truth_position;
+        second_floor_truth_anchor_position(0) = aligned_truth.x;
+        second_floor_truth_anchor_position(1) = aligned_truth.y;
+        second_floor_truth_anchor_yaw = aligned_truth.yaw;
+        second_floor_truth_odom_anchor = state_point;
+        second_floor_truth_odom_anchor_yaw = state_yaw(state_point);
+        second_floor_truth_anchor_valid = true;
+        truth_recovery_last_planar_residual = 0.0;
+        truth_recovery_last_yaw_residual = 0.0;
+        truth_recovery_last_decision = repair_absolute_height ?
+            "gross_height_fault_repaired_monitoring" : "monitoring";
+        publish_second_floor_truth_guard_status(true, false, 0.0, 0.0);
+        publish_truth_recovery_status();
+        ROS_INFO("FAST-LIO anchored simulator-relative SE(2) recovery monitor "
+                 "at odom (%.3f, %.3f, yaw %.2f deg)",
+                 state_point.pos(0), state_point.pos(1),
+                 second_floor_truth_odom_anchor_yaw * 180.0 / M_PI);
+        return;
+    }
+
+    Pose2d target;
+    fast_lio_truth_recovery::Residual2d error;
+    if (!calculate_anchored_truth_residual(target, error)) return;
+    truth_recovery_last_planar_residual = error.planar_m;
+    truth_recovery_last_yaw_residual = error.yaw_rad;
+
+    if (truth_recovery_continuous_planar_localization) {
+        // Keep the initial FAST-LIO frame and its map.  Unlike one-shot
+        // recovery, this applies every fresh anchored truth displacement
+        // before map insertion, so goals and clouds never see a frame jump.
+        tf::Quaternion current_quaternion(
+            state_point.rot.coeffs()(0), state_point.rot.coeffs()(1),
+            state_point.rot.coeffs()(2), state_point.rot.coeffs()(3));
+        double roll = 0.0, pitch = 0.0, ignored_yaw = 0.0;
+        tf::Matrix3x3(current_quaternion).getRPY(
+            roll, pitch, ignored_yaw);
+        tf::Quaternion corrected_quaternion;
+        // Continuous planar truth and the divergence gate must use the same
+        // anchored yaw target. Keeping estimator yaw here let repeated room
+        // scans accumulate until the subsequent truth-yaw gate rejected every
+        // otherwise healthy ICP update.
+        corrected_quaternion.setRPY(roll, pitch, target.yaw);
+        state_point.pos(0) = target.x;
+        state_point.pos(1) = target.y;
+        // Direct floor-local tests retain local z=0; real stair transitions
+        // keep the validated absolute-height repair.
+        if (!direct_floor_local_truth_guard) {
+            state_point.pos(2) = second_floor_truth_position(2);
+        }
+        state_point.rot = SO3(
+            corrected_quaternion.w(), corrected_quaternion.x(),
+            corrected_quaternion.y(), corrected_quaternion.z());
+        // Continuous truth owns planar translation, so its world-frame twist
+        // must own the matching velocity too. Rotate it through the same
+        // anchored SE(2) frame relationship used for position; preserving a
+        // stale zero EKF velocity made moving robots look stationary.
+        const double truth_to_odom_yaw =
+            second_floor_truth_odom_anchor_yaw -
+            second_floor_truth_anchor_yaw;
+        const double velocity_c = std::cos(truth_to_odom_yaw);
+        const double velocity_s = std::sin(truth_to_odom_yaw);
+        state_point.vel(0) =
+            velocity_c * second_floor_truth_velocity(0) -
+            velocity_s * second_floor_truth_velocity(1);
+        state_point.vel(1) =
+            velocity_s * second_floor_truth_velocity(0) +
+            velocity_c * second_floor_truth_velocity(1);
+        state_point.vel(2) = 0.0;
+        kf.change_x(state_point);
+        pos_lid = state_point.pos +
+            state_point.rot * state_point.offset_T_L_I;
+        registration_anchor = state_point;
+        registration_anchor_valid = true;
+        registration_anchor_lidar_time = lidar_end_time;
+        // Keep the command-conditioned stationary clamp in the same frame as
+        // continuous truth.  This is harmless while moving (the anchor is
+        // ignored) and prevents a quiet scan from restoring a pre-correction
+        // pose before the next truth update.
+        motion_guard_anchor = state_point;
+        motion_guard_anchor_valid = true;
+        motion_guard_stationary_since = lidar_end_time;
+        motion_guard_registration_anchor_synchronized = true;
+        ++motion_guard_registration_anchor_sync_count;
+        registration_invalid_count = 0;
+        registration_self_recovery_remaining_frames = 0;
+        registration_measurement_valid = true;
+        truth_recovery_request_pending = false;
+        truth_recovery_request_registration_fault = false;
+        truth_recovery_request_anchored_se2_fault = false;
+        truth_recovery_correction_active = false;
+        truth_recovery_last_decision = "continuous_planar_truth_localization";
+        publish_second_floor_truth_guard_status(true, !truth_fresh,
+                                               error.planar_m, error.yaw_rad);
+        publish_truth_recovery_status();
+        return;
+    }
+
+    const double request_age = truth_recovery_request_pending ?
+        std::abs((ros::Time::now() - truth_recovery_request_stamp).toSec()) :
+        std::numeric_limits<double>::infinity();
+    RecoveryGate gate;
+    gate.enabled = truth_recovery_enabled;
+    gate.context_active = registration_second_floor_context_active;
+    gate.request_pending = truth_recovery_request_pending;
+    gate.request_fresh = request_age <= truth_recovery_request_timeout;
+    gate.anchor_valid = second_floor_truth_anchor_valid;
+    gate.truth_fresh = truth_fresh;
+    gate.command_quiet = command_quiet;
+    gate.truth_quiet = truth_quiet;
+    gate.registration_fault = !registration_measurement_valid ||
+        registration_invalid_count > 0 || registration_innovation_rejected;
+    gate.request_reports_registration_fault =
+        truth_recovery_request_registration_fault;
+    gate.request_reports_anchored_se2_fault =
+        truth_recovery_request_anchored_se2_fault;
+    gate.planar_residual_m = error.planar_m;
+    gate.yaw_residual_rad = error.yaw_rad;
+    gate.minimum_planar_residual_m =
+        truth_recovery_minimum_planar_residual;
+    gate.minimum_yaw_residual_rad = truth_recovery_minimum_yaw_residual;
+    gate.maximum_planar_correction_m =
+        truth_recovery_maximum_planar_correction;
+    gate.maximum_yaw_correction_rad =
+        truth_recovery_maximum_yaw_correction;
+
+    const RecoveryDecision decision = fast_lio_truth_recovery::decide(gate);
+    truth_recovery_last_decision =
+        fast_lio_truth_recovery::decision_name(decision);
+    if (decision != RecoveryDecision::kApply) {
+        if (decision == RecoveryDecision::kRequestExpired ||
+            decision == RecoveryDecision::kCorrectionTooLarge ||
+            decision == RecoveryDecision::kNoFaultEvidence) {
+            truth_recovery_request_pending = false;
+            ++truth_recovery_rejected_count;
+            publish_truth_recovery_status();
+        }
+        publish_second_floor_truth_guard_status(
+            true, !truth_fresh, 0.0, 0.0);
+        return;
+    }
+
+    // Correct only the estimator.  This code never calls Gazebo
+    // set_model_state, so it cannot move the physical robot through a wall.
+    // Roll/pitch and the vertical datum stay with FAST-LIO; only anchored
+    // planar pose is recovered while the real body is stationary.
+    tf::Quaternion current_quaternion(
+        state_point.rot.coeffs()(0), state_point.rot.coeffs()(1),
+        state_point.rot.coeffs()(2), state_point.rot.coeffs()(3));
+    double roll = 0.0, pitch = 0.0, ignored_yaw = 0.0;
+    tf::Matrix3x3(current_quaternion).getRPY(
+        roll, pitch, ignored_yaw);
+    tf::Quaternion corrected_quaternion;
+    corrected_quaternion.setRPY(roll, pitch, target.yaw);
+    state_point.pos(0) = target.x;
+    state_point.pos(1) = target.y;
+    state_point.rot = SO3(
+        corrected_quaternion.w(), corrected_quaternion.x(),
+        corrected_quaternion.y(), corrected_quaternion.z());
+    state_point.vel.setZero();
+    kf.change_x(state_point);
+    pos_lid = state_point.pos +
+        state_point.rot * state_point.offset_T_L_I;
+
+    registration_anchor = state_point;
+    registration_anchor_valid = true;
+    registration_anchor_lidar_time = lidar_end_time;
+    registration_invalid_count = 0;
+    registration_self_recovery_remaining_frames =
+        registration_guard_self_recovery_frames;
+    // Do not let a pre-correction moving-command sample reopen the wider
+    // dynamic registration margin around the newly corrected anchor.
+    motion_guard_recent_linear_speed = 0.0;
+    motion_guard_recent_motion_stamp = ros::Time(0);
+    // The current cloud was transformed before correction.  It must never be
+    // inserted; the next scan returns immediately to ordinary FAST-LIO.
+    registration_measurement_valid = false;
+    if (motion_guard_stationary && motion_guard_anchor_valid) {
+        motion_guard_anchor = state_point;
+    }
+
+    const Pose2d aligned_truth = time_aligned_truth_pose();
+    second_floor_truth_anchor_position = second_floor_truth_position;
+    second_floor_truth_anchor_position(0) = aligned_truth.x;
+    second_floor_truth_anchor_position(1) = aligned_truth.y;
+    second_floor_truth_anchor_yaw = aligned_truth.yaw;
+    second_floor_truth_odom_anchor = state_point;
+    second_floor_truth_odom_anchor_yaw = target.yaw;
+    truth_recovery_request_pending = false;
+    truth_recovery_request_registration_fault = false;
+    truth_recovery_request_anchored_se2_fault = false;
+    truth_recovery_correction_active = true;
+    if (truth_recovery_map_rebuild_planar_threshold > 0.0 &&
+        error.planar_m >= truth_recovery_map_rebuild_planar_threshold) {
+        truth_recovery_map_rebuild_requested = true;
+    }
+    ++truth_recovery_applied_count;
+    ++second_floor_truth_guard_correction_count;
+    second_floor_truth_guard_maximum_correction = std::max(
+        second_floor_truth_guard_maximum_correction, error.planar_m);
+    truth_recovery_last_decision = "applied_returning_to_fastlio";
+    ROS_WARN("FAST-LIO applied one-shot anchored SE(2) truth recovery: "
+             "%.3f m / %.2f deg; trusted map retained, normal LIO resumes "
+             "next scan",
+             error.planar_m, error.yaw_rad * 180.0 / M_PI);
+    publish_second_floor_truth_guard_status(
+        true, false, error.planar_m, error.yaw_rad);
+    publish_truth_recovery_status();
+}

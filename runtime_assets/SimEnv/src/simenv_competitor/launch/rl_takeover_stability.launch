@@ -1,0 +1,50 @@
+<launch>
+  <arg name="output_dir"/>
+  <arg name="world_file" default="$(find simenv_competitor)/../../generated_building/competition_scene.world"/>
+  <arg name="rl_policy" default="$(find unitree_guide)/../../logs/policy_act_inference_stair.pt"/>
+  <param name="use_sim_time" value="true"/>
+
+  <include file="$(optenv SIMENV_ASSET_ROOT)/src/unitree_guide/unitree_guide/unitree_guide/launch/multi_floor_gazeboSim.launch">
+    <arg name="world_file" value="$(arg world_file)"/>
+    <arg name="gui" value="false"/>
+    <arg name="paused" value="false"/>
+    <arg name="rname" value="a1"/>
+    <arg name="robot_x" value="0.0"/>
+    <arg name="robot_y" value="-3.2"/>
+    <arg name="robot_z" value="0.6"/>
+    <arg name="robot_yaw" value="1.5708"/>
+    <arg name="enable_sensor_data" value="false"/>
+    <arg name="enable_livox" value="false"/>
+    <arg name="enable_livox_imu" value="false"/>
+    <arg name="enable_realsense" value="false"/>
+    <arg name="enable_front_camera" value="false"/>
+    <arg name="enable_referee_odom" value="true"/>
+    <arg name="enable_ground_truth" value="true"/>
+    <arg name="enable_joy_node" value="false"/>
+    <arg name="enable_pointcloud_converter" value="false"/>
+    <arg name="pointcloud_use_ground_truth_odom" value="false"/>
+  </include>
+
+  <node pkg="simenv_competitor" type="classic_trotting_controller.py"
+        name="junior_ctrl" output="screen" required="true">
+    <env name="UNITREE_AUTO_START_RL" value="false"/>
+    <env name="UNITREE_AUTO_HOLD_STAND" value="true"/>
+    <env name="UNITREE_CTRL_DT" value="0.004"/>
+    <env name="UNITREE_RL_POLICY" value="$(arg rl_policy)"/>
+    <env name="UNITREE_RL_DEVICE" value="cuda"/>
+    <env name="UNITREE_DISABLE_AMP_LOG" value="1"/>
+    <env name="LD_LIBRARY_PATH" value="/root/autodl-tmp/deps/libtorch/lib:/opt/ros/noetic/lib:$(optenv LD_LIBRARY_PATH)"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="controller_mode_bootstrap.py"
+        name="rl_takeover_bootstrap" output="screen">
+    <param name="stand_after_seconds" value="1.0"/>
+    <param name="fixed_stand_max_duration_sec" value="15.0"/>
+    <param name="rl_repeat_seconds" value="20.0"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="rl_takeover_stability_monitor.py"
+        name="rl_takeover_stability_monitor" output="screen">
+    <param name="output_dir" value="$(arg output_dir)"/>
+  </node>
+</launch>

@@ -1,0 +1,41 @@
+# Overrides loaded after TARE's stock indoor.yaml.
+#
+# FUEL-inspired global stage for a small unknown indoor floor:
+# favour nearby frontier clusters and short, reachable viewpoints so the
+# robot can leave far surfaces to Livox radar / later revisits, and reserve
+# time to return home. Independent of layout_metadata and Gazebo truth.
+
+# Keep the robot's route compact so it can reserve time to return home.
+kUseFrontier: true
+kFrontierClusterTolerance: 1.0
+kFrontierClusterMinSize: 3
+kGreedyViewPointSampleRange: 5.0
+kLocalPathOptimizationItrMax: 8
+kLookAheadDistance: 5.0
+kExtendWayPointDistanceBig: 5.0
+kExtendWayPointDistanceSmall: 2.5
+kUseMomentum: true
+kRushHome: true
+kNoExplorationReturnHome: false
+kRushHomeDist: 10.0
+kAtHomeDistThreshold: 1.2
+
+# Mid-360 sparse sim cloud: keep horizon wide enough for doorways, but
+# force denser local frontier mining so TARE does not declare "done" after
+# only scanning the lobby.
+kSensorRange: 10.0
+kNeighborRange: 5.0
+kCoverageOcclusionThr: 0.35
+kCoverageDilationRadius: 0.5
+
+# Finer grids help sparse Livox-sim maps keep corridor/door structure.
+rolling_occupancy_grid/resolution_x: 0.30
+rolling_occupancy_grid/resolution_y: 0.30
+rolling_occupancy_grid/resolution_z: 0.30
+kSurfaceCloudDwzLeafSize: 0.25
+kCollisionCloudDwzLeafSize: 0.18
+keypose_graph/kAddNodeMinDist: 1.0
+keypose_graph/kAddNonKeyposeNodeMinDist: 0.4
+viewpoint_manager/resolution_x: 0.6
+viewpoint_manager/resolution_y: 0.6
+kViewPointCollisionMargin: 0.38

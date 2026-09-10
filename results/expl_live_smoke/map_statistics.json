@@ -1,0 +1,36 @@
+{
+  "schema": "simenv_voxel_map_statistics_v1",
+  "map_file": "voxel_map.bt",
+  "map_format": "OctoMap OcTree binary",
+  "input_interfaces": {
+    "registered_cloud": {"topic": "/cloud_registered", "ros_type": "sensor_msgs/PointCloud2", "frame_id": "camera_init", "fields": ["x", "y", "z", "intensity", "normal_x", "normal_y", "normal_z", "curvature"], "point_step_bytes": 48},
+    "odometry": {"topic": "/Odometry", "ros_type": "nav_msgs/Odometry", "frame_id": "camera_init", "child_frame_id": "body"},
+    "accumulated_cloud": {"topic": "/cloud_map", "ros_type": "sensor_msgs/PointCloud2", "usage": "visualization only; not used for ray insertion"}
+  },
+  "output_interfaces": {
+    "floor_projection": {"topic": "/simenv/voxel_floor_projection", "ros_type": "nav_msgs/OccupancyGrid", "source": "same OctoMap tree as voxel_map.bt", "states": ["unknown", "free", "occupied"]}
+  },
+  "frame_id": "camera_init",
+  "resolution": 0.150000,
+  "occupied_voxel_count": 37324,
+  "free_voxel_count": 278728,
+  "unknown_voxel_count": 1677124,
+  "unknown_definition": "unobserved resolution cells inside map bounds",
+  "tree_leaf_count": 110707,
+  "tree_node_count": 135949,
+  "update_count": 1920,
+  "inserted_endpoint_count": 904336,
+  "self_filtered_endpoint_count": 28080,
+  "self_filter": {"radius": 0.550000, "min_relative_z": -0.750000, "max_relative_z": -0.080000},
+  "planar_height_stabilization": {"enabled": true, "reference_m": -0.002379, "current_offset_m": 0.369010, "maximum_offset_m": 0.388338, "vertical_transition_started": false},
+  "frame_mismatch_count": 0,
+  "first_cloud_stamp": 25.401000,
+  "last_cloud_stamp": 217.306000,
+  "map_bounds": {
+    "min": [-2.250000, -11.400000, -1.050000],
+    "max": [34.800000, 9.750000, 7.350000],
+    "voxel_dimensions": [248, 141, 57]
+  },
+  "occupied_progress_every_10_updates": [536, 1492, 1705, 1908, 1976, 2015, 2018, 2237, 2461, 2553, 2570, 2576, 2627, 2666, 2684, 2705, 2746, 2870, 2875, 2865, 2871, 2880, 2941, 2940, 2938, 2949, 3161, 4031, 5049, 6182, 6887, 7300, 7836, 8817, 9550, 9715, 9724, 9732, 9721, 9719, 9837, 10064, 10681, 11343, 11673, 11873, 12121, 12377, 12615, 12751, 12847, 12968, 13009, 13110, 13131, 13125, 13248, 13526, 14056, 14720, 15854, 16925, 17353, 17898, 18563, 19077, 19870, 21080, 21517, 21689, 22347, 23206, 23878, 24255, 24557, 24897, 25239, 25525, 25608, 25736, 25843, 25933, 26002, 26072, 26064, 26116, 26289, 26401, 26497, 26526, 26567, 26655, 26864, 27545, 28799, 29182, 29394, 29565, 30060, 30731, 31359, 31828, 32171, 32577, 32812, 33005, 33025, 32926, 32936, 33089, 33228, 33300, 33312, 33314, 33307, 33405, 33488, 33489, 33541, 33562, 33520, 33554, 33605, 33634, 33658, 33707, 33733, 33725, 33756, 33745, 33794, 33885, 34020, 34124, 34275, 34320, 34350, 34506, 34813, 35164, 35262, 35372, 35562, 35735, 35919, 36077, 36159, 36211, 36241, 36294, 36367, 36451, 36490, 36532, 36611, 36661, 36716, 36750, 36794, 36782, 36822, 36851, 36893, 36904, 36889, 36854, 36840, 36854, 36840, 36899, 36957, 37000, 37054, 37094, 37138, 37186, 37203, 37219, 37205, 37226, 37231, 37260, 37275, 37300, 37355, 37411, 37402, 37399, 37394, 37380, 37379, 37353, 37324],
+  "last_save_reason": "periodic"
+}

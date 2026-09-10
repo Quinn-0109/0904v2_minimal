@@ -1,0 +1,2135 @@
+#!/usr/bin/env python3
+"""ROS-light regression tests for the isolated F2 truth handoff policy."""
+
+import os
+import sys
+import threading
+import unittest
+import json
+import xml.etree.ElementTree as ET
+from types import SimpleNamespace
+from unittest import mock
+
+import numpy as np
+
+
+SCRIPT_DIR = os.path.abspath(os.path.join(
+    os.path.dirname(__file__), "..", "scripts"))
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+
+from second_floor_exploration_manager import SecondFloorMission
+import baseline_exploration_manager as baseline_manager_module
+from baseline_exploration_manager import BaselineExplorationManager
+from lightweight_room_core import LightweightRoomScheduler
+from goal_executor import GoalExecutor
+from stair_transition_manager import StairTransition
+
+
+class SecondFloorHandoffTest(unittest.TestCase):
+    @staticmethod
+    def _upper_landing_transition(pose, linear=(0.0, 0.0, 0.0),
+                                  angular=(0.0, 0.0, 0.0)):
+        transition = StairTransition.__new__(StairTransition)
+        transition.truth_pose = pose
+        transition.source_floor_index = 1
+        transition.truth_flight_b_pose = (-2.485, 4.520, 0.0, 0.0)
+        transition.truth_flight_b_next_pose = (-2.485, 4.260, 0.0, 0.0)
+        transition.truth_flight_b_heading = -np.pi / 2.0
+        transition.truth_second_floor_clearance = 0.30
+        transition.truth_upper_landing_clearance_tolerance = 0.0
+        transition.truth_upper_landing_center_tolerance = 0.35
+        transition.truth_upper_landing_heading_tolerance = 0.35
+        transition.truth_upper_landing_linear_speed = 0.20
+        transition.truth_upper_landing_angular_speed = 0.35
+        transition.truth_upper_landing_attitude_recovery_enabled = True
+        transition.truth_upper_landing_attitude_recovered = False
+        transition.truth_upper_landing_clearance_recovery_enabled = True
+        transition.truth_upper_landing_clearance_recovered = False
+        transition.truth_upper_landing_clearance_recovery_started = None
+        transition.truth_upper_landing_clearance_recovery_shortfall = 0.35
+        transition.truth_upper_landing_clearance_recovery_stall = 3.0
+        transition.truth_upper_landing_clearance_recovery_planar_speed = 0.12
+        transition.truth_f2_f3_landing_recovery_margin = 0.50
+        transition.total_height_gain = 2.05
+        transition.truth_model_pose = SimpleNamespace(position=SimpleNamespace(
+            x=pose[0], y=pose[1], z=pose[2]))
+        transition.truth_model_twist = SimpleNamespace(
+            linear=SimpleNamespace(x=linear[0], y=linear[1], z=linear[2]),
+            angular=SimpleNamespace(x=angular[0], y=angular[1], z=angular[2]))
+        return transition
+
+    def test_fix18_negative_final_tread_margin_cannot_handoff(self):
+        transition = self._upper_landing_transition(
+            (-2.485, 1.8014, 5.374, -np.pi / 2.0))
+        cleared, margin = transition._truth_upper_landing_clearance()
+        self.assertAlmostEqual(margin, -0.0514, places=4)
+        self.assertFalse(cleared)
+
+    def test_fix20_positive_clearance_bad_yaw_gets_one_safe_recovery(self):
+        transition = self._upper_landing_transition(
+            (-2.463, 1.200, 5.401, 2.585))
+        cleared, margin = transition._truth_upper_landing_clearance()
+        self.assertGreater(margin, 0.50)
+        self.assertTrue(cleared)
+        self.assertTrue(transition._truth_upper_landing_centered())
+        self.assertFalse(transition._truth_upper_landing_aligned())
+        transition.truth_model_pose.orientation = SimpleNamespace(
+            x=0.0, y=0.0, z=np.sin(-np.pi / 4.0),
+            w=np.cos(-np.pi / 4.0))
+        response = SimpleNamespace(success=True)
+        with mock.patch(
+                "stair_transition_manager.rospy.wait_for_service"), mock.patch(
+                "stair_transition_manager.rospy.ServiceProxy",
+                return_value=mock.Mock(return_value=response)) as proxy:
+            self.assertTrue(transition._recover_truth_upper_landing_attitude(
+                2.10, cleared))
+        state = proxy.return_value.call_args.args[0]
+        self.assertAlmostEqual(state.pose.orientation.z,
+                               np.sin(-np.pi / 4.0), places=6)
+        self.assertAlmostEqual(state.pose.orientation.w,
+                               np.cos(-np.pi / 4.0), places=6)
+        self.assertTrue(transition.truth_upper_landing_attitude_recovered)
+        self.assertFalse(transition._recover_truth_upper_landing_attitude(
+            2.10, cleared))
+
+    def test_plane_handoff_preserves_stable_flight_b_heading(self):
+        transition = self._upper_landing_transition(
+            (-2.485, 1.70, 5.35, -np.pi / 2.0))
+        transition.truth_model_pose.orientation = SimpleNamespace(
+            x=0.0, y=0.0, z=np.sin(-np.pi / 4.0),
+            w=np.cos(-np.pi / 4.0))
+        response = SimpleNamespace(success=True)
+        with mock.patch(
+                "stair_transition_manager.rospy.wait_for_service"), mock.patch(
+                "stair_transition_manager.rospy.ServiceProxy",
+                return_value=mock.Mock(return_value=response)) as proxy:
+            self.assertTrue(transition._align_truth_upper_landing_exit())
+        state = proxy.return_value.call_args.args[0]
+        self.assertAlmostEqual(state.pose.orientation.z,
+                               np.sin(-np.pi / 4.0), places=6)
+        self.assertAlmostEqual(state.pose.orientation.w,
+                               np.cos(-np.pi / 4.0), places=6)
+
+    def test_run53_small_stalled_shortfall_gets_positive_clearance_recheck(self):
+        transition = self._upper_landing_transition(
+            (-2.485, 1.82, 5.35, -np.pi / 2.0))
+        cleared, margin = transition._truth_upper_landing_clearance()
+        self.assertFalse(cleared)
+        self.assertGreater(margin, -0.15)
+        self.assertFalse(transition._recover_truth_upper_landing_clearance(
+            2.44, cleared, margin, now=10.0))
+        response = SimpleNamespace(success=True)
+        with mock.patch(
+                "stair_transition_manager.rospy.wait_for_service"), mock.patch(
+                "stair_transition_manager.rospy.ServiceProxy",
+                return_value=mock.Mock(return_value=response)) as proxy:
+            self.assertTrue(transition._recover_truth_upper_landing_clearance(
+                2.44, cleared, margin, now=13.1))
+        state = proxy.return_value.call_args.args[0]
+        self.assertLess(state.pose.position.y, 1.751)
+        self.assertTrue(transition.truth_upper_landing_clearance_recovered)
+
+    def test_vertical_gait_bounce_does_not_reset_terminal_recovery(self):
+        transition = self._upper_landing_transition(
+            (-2.485, 1.82, 5.35, -np.pi / 2.0),
+            linear=(0.03, 0.04, 0.50))
+        cleared, margin = transition._truth_upper_landing_clearance()
+        self.assertFalse(transition._recover_truth_upper_landing_clearance(
+            2.44, cleared, margin, now=10.0))
+        self.assertEqual(
+            transition.truth_upper_landing_clearance_recovery_started, 10.0)
+
+    def test_large_final_tread_shortfall_cannot_use_clearance_recovery(self):
+        transition = self._upper_landing_transition(
+            (-2.485, 2.05, 5.35, -np.pi / 2.0))
+        cleared, margin = transition._truth_upper_landing_clearance()
+        self.assertLess(margin, -0.15)
+        with mock.patch("stair_transition_manager.rospy.ServiceProxy") as proxy:
+            self.assertFalse(transition._recover_truth_upper_landing_clearance(
+                2.44, cleared, margin, now=20.0))
+        proxy.assert_not_called()
+
+    def test_negative_clearance_never_allows_attitude_recovery(self):
+        transition = self._upper_landing_transition(
+            (-2.485, 1.8014, 5.374, 2.585))
+        cleared, _ = transition._truth_upper_landing_clearance()
+        with mock.patch(
+                "stair_transition_manager.rospy.ServiceProxy") as proxy:
+            self.assertFalse(transition._recover_truth_upper_landing_attitude(
+                2.10, cleared))
+        proxy.assert_not_called()
+
+    def test_upper_landing_rejects_displaced_or_moving_pose(self):
+        displaced = self._upper_landing_transition(
+            (-3.622, 1.70, 5.374, 0.023))
+        self.assertFalse(displaced._truth_upper_landing_stable())
+        moving = self._upper_landing_transition(
+            (-2.485, 1.70, 5.374, -np.pi / 2.0), linear=(0.25, 0.0, 0.0))
+        self.assertFalse(moving._truth_upper_landing_stable())
+        stable = self._upper_landing_transition(
+            (-2.485, 1.70, 5.374, -np.pi / 2.0))
+        self.assertTrue(stable._truth_upper_landing_stable())
+
+    def test_f2_f3_handoff_rechecks_all_landing_safety_predicates(self):
+        unsafe = (
+            self._upper_landing_transition(
+                (-2.485, 1.8014, 5.374, -np.pi / 2.0)),
+            self._upper_landing_transition(
+                (-3.200, 1.200, 5.374, -np.pi / 2.0)),
+            self._upper_landing_transition(
+                (-2.485, 1.200, 5.374, -np.pi / 2.0),
+                linear=(0.40, 0.0, 0.0)),
+        )
+        for transition in unsafe:
+            transition.cmd = SimpleNamespace(publish=lambda _message: None)
+            transition.truth_f2_f3_handoff_stable_since = 0.0
+            transition.truth_f2_f3_handoff_stable_seconds = 0.0
+            transition._publish_second_floor_reached = mock.Mock()
+            self.assertFalse(transition._handoff_f2_f3_interior_landing(
+                2.44, 0.50, already_pinned=True))
+            transition._publish_second_floor_reached.assert_not_called()
+
+    def test_f2_f3_handoff_requires_continuous_safe_dwell(self):
+        transition = self._upper_landing_transition(
+            (-2.485, 1.200, 5.374, -np.pi / 2.0))
+        transition.cmd = SimpleNamespace(publish=lambda _message: None)
+        transition.truth_f2_f3_handoff_stable_since = None
+        transition.truth_f2_f3_handoff_stable_seconds = 3.0
+        transition._record_trace = lambda force=False: None
+        transition._publish_second_floor_reached = mock.Mock()
+        with mock.patch("stair_transition_manager.time.monotonic",
+                        return_value=10.0):
+            self.assertFalse(transition._handoff_f2_f3_interior_landing(
+                2.44, 0.50, already_pinned=True))
+        transition._publish_second_floor_reached.assert_not_called()
+        transition.truth_f2_f3_handoff_stable_since = 5.0
+        with mock.patch("stair_transition_manager.time.monotonic",
+                        return_value=10.0):
+            self.assertTrue(transition._handoff_f2_f3_interior_landing(
+                2.44, 0.50, already_pinned=True))
+        transition._publish_second_floor_reached.assert_called_once_with(2.44)
+
+
+    def test_f1_f2_landing_uses_yaw_rate_and_tilt_not_rl_joint_spin(self):
+        transition = self._upper_landing_transition(
+            (-2.485, 1.70, 2.91, -np.pi / 2.0),
+            angular=(1.20, 0.80, 0.02))
+        transition.source_floor_index = 0
+        transition.truth_f1_f2_landing_tilt_tolerance = 0.30
+        transition.truth_model_pose.orientation = SimpleNamespace(
+            x=0.0, y=0.0, z=np.sin(-np.pi / 4.0),
+            w=np.cos(-np.pi / 4.0))
+        self.assertTrue(transition._truth_upper_landing_motion_settled())
+
+        transition.truth_model_pose.orientation = SimpleNamespace(
+            x=np.sin(0.36 / 2.0), y=0.0, z=0.0,
+            w=np.cos(0.36 / 2.0))
+        self.assertFalse(transition._truth_upper_landing_motion_settled())
+
+    def test_goal_executor_relinquishes_cmd_vel_during_stairs(self):
+        active_states = (
+            "TRUTH_ENTRY_GUIDE", "STAIR_ASCENT_B",
+            "STAIR_FLIGHT_B_STALL_RECOVERY", "THIRD_FLOOR_REACHED")
+        for state in active_states:
+            self.assertTrue(GoalExecutor._stair_state_owns_command(state))
+        released_states = (
+            "", "WAIT_F1", "FIRST_FLOOR_FINALIZING",
+            "STAIR_POLICY_READY",
+            "SECOND_FLOOR_HANDOFF_COMPLETE", "STAIR_ASCENT_TIMEOUT",
+            "THIRD_FLOOR_EXPLORATION_START")
+        for state in released_states:
+            self.assertFalse(GoalExecutor._stair_state_owns_command(state))
+
+    def test_third_floor_exploration_releases_only_upper_stair_latch(self):
+        executor = GoalExecutor.__new__(GoalExecutor)
+        executor._lock = threading.RLock()
+        executor._stair_command_states = {
+            "/simenv/stair_transition_state":
+                "SECOND_FLOOR_HANDOFF_COMPLETE",
+            "/simenv/second_to_third_floor_stair_state":
+                "THIRD_FLOOR_REACHED",
+        }
+        executor._stair_command_owned = True
+        executor._events = []
+        executor._last_command = [0.2, 0.0, 0.0]
+        executor._on_third_floor_state(SimpleNamespace(
+            data="THIRD_FLOOR_EXPLORATION_START"))
+        self.assertFalse(executor._stair_command_owned)
+        self.assertEqual(
+            executor._stair_command_states[
+                "/simenv/second_to_third_floor_stair_state"],
+            "THIRD_FLOOR_EXPLORATION_START")
+
+    def test_run113_future_stair_readiness_does_not_block_second_floor(self):
+        executor = GoalExecutor.__new__(GoalExecutor)
+        executor._lock = threading.RLock()
+        executor._stair_command_states = {}
+        executor._stair_command_owned = False
+        executor._events = []
+        executor._last_command = [0.0, 0.0, 0.0]
+        executor._on_stair_command_state(
+            SimpleNamespace(data="TRUTH_ENTRY_GUIDE"),
+            "/simenv/stair_transition_state")
+        executor._on_stair_command_state(
+            SimpleNamespace(data="STAIR_POLICY_READY"),
+            "/simenv/second_to_third_floor_stair_state")
+        self.assertTrue(executor._stair_command_owned)
+        executor._on_stair_command_state(
+            SimpleNamespace(data="SECOND_FLOOR_HANDOFF_COMPLETE"),
+            "/simenv/stair_transition_state")
+        self.assertFalse(executor._stair_command_owned)
+
+    def test_waiting_stair_manager_publishes_wait_phase_on_global_policy_ack(self):
+        transition = StairTransition.__new__(StairTransition)
+        transition.policy = "/tmp/policy_act_inference_stair.pt"
+        transition.policy_loaded = False
+        transition.phase = "WAIT_F1"
+        transition.state = mock.Mock()
+        transition.on_policy_status(SimpleNamespace(
+            data="policy_reloaded:policy_act_inference_stair.pt"))
+        self.assertTrue(transition.policy_loaded)
+        published = transition.state.publish.call_args.args[0]
+        self.assertEqual(published.data, "WAIT_F1")
+
+    def test_goal_executor_does_not_publish_zero_while_stair_owns_command(self):
+        executor = GoalExecutor.__new__(GoalExecutor)
+        executor._lock = threading.RLock()
+        executor._stair_command_states = {}
+        executor._stair_command_owned = False
+        executor._events = []
+        executor._last_command = [0.1, 0.0, 0.0]
+        executor._goal_generation = 0
+        executor._command_pub = mock.Mock()
+        executor._desired_command_pub = mock.Mock()
+        executor._on_stair_command_state(
+            SimpleNamespace(data="STAIR_ASCENT_B"),
+            "/simenv/second_to_third_floor_stair_state")
+        self.assertTrue(executor._stair_command_owned)
+        self.assertFalse(executor._publish_zero())
+        executor._command_pub.publish.assert_not_called()
+        executor._on_stair_command_state(
+            SimpleNamespace(data="THIRD_FLOOR_HANDOFF_COMPLETE"),
+            "/simenv/second_to_third_floor_stair_state")
+        self.assertFalse(executor._stair_command_owned)
+        self.assertTrue(executor._publish_zero())
+        executor._command_pub.publish.assert_called_once()
+
+    def test_truth_long_return_route_stays_on_corridor_before_lobby_turn(self):
+        transition = StairTransition.__new__(StairTransition)
+        transition.truth_pose = (-0.56, 29.0, 0.32, -np.pi / 2.0)
+        transition.truth_side_entry_offset = 1.65
+        transition.truth_corridor_lateral_offset = 1.80
+        transition.truth_corridor_longitudinal_offset = 3.80
+        corridor, side = transition._truth_entry_route_targets(
+            (-4.015, 1.75), np.pi / 2.0)
+        self.assertAlmostEqual(corridor[0], -0.565, places=6)
+        self.assertAlmostEqual(corridor[1], 5.55, places=6)
+        self.assertAlmostEqual(side[0], -2.365, places=6)
+        self.assertAlmostEqual(side[1], 1.75, places=6)
+
+    def test_run101_upper_floor_route_stays_east_of_stair_void(self):
+        transition = StairTransition.__new__(StairTransition)
+        transition.source_floor_index = 1
+        transition.offline_stair_model = os.path.abspath(os.path.join(
+            SCRIPT_DIR, "..", "..", "..", "generated_building",
+            "elevator_three_floor_debug", "model.sdf"))
+        transition.truth_upper_floor_exit_clearance = .80
+        transition.truth_pose = (0.357, 12.454, 2.913, -1.109)
+        transition.truth_side_entry_offset = 1.65
+        transition.truth_corridor_lateral_offset = 1.80
+        transition.truth_corridor_longitudinal_offset = 3.80
+        corridor, side = transition._truth_entry_route_targets(
+            (-4.015, 1.75), np.pi / 2.0)
+        self.assertAlmostEqual(corridor[0], -0.94, places=6)
+        self.assertAlmostEqual(corridor[1], 1.55, places=6)
+        self.assertAlmostEqual(side[0], -2.365, places=6)
+        self.assertAlmostEqual(side[1], 1.75, places=6)
+        # The long leg stays east of opening x=-1.65. The short leg
+        # then crosses only the solid 3.02 x 1.00 m landing.
+        self.assertGreater(min(transition.truth_pose[0], corridor[0]), -1.65)
+
+    def test_upper_floor_outbound_defers_failed_near_door_retry(self):
+        overrides = SecondFloorMission._second_floor_only_parameter_overrides(
+            unified_fast_profile=True)
+        self.assertTrue(
+            overrides["known_unvisited_door_retry_only_on_terminal_return"])
+        self.assertNotIn(
+            "corridor_partial_return_reserve_seconds", overrides)
+        self.assertNotIn(
+            "corridor_partial_return_room_minimum_remaining_seconds",
+            overrides)
+
+
+    def test_fix19_upper_floor_truth_probe_uses_station_centerline(self):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.corridor_guided_entry_door_context = True
+        manager.corridor_established = True
+        manager.room_scheduler = SimpleNamespace(active_door=None)
+        manager.lock = threading.RLock()
+        manager.pose = (0.60, 19.70, 2.91, 0.0)
+        manager.corridor_axis = np.asarray([0.17, 0.99])
+        manager.corridor_station_axis = np.asarray([0.0, 1.0])
+        manager.corridor_forward_axis_hint = np.asarray([0.0, 1.0])
+        manager.corridor_station_origin = np.asarray([-0.29, 9.37])
+        manager.corridor_forward_distance = 2.5
+        manager.corridor_sweep_history = []
+        manager.elapsed = lambda: 184.0
+        with mock.patch(
+                "baseline_exploration_manager.rospy.get_param",
+                return_value=2):
+            goal = manager._plan_upper_floor_truth_corridor_probe(10)
+        self.assertIsNotNone(goal)
+        self.assertAlmostEqual(goal["position"][0], -0.29, places=6)
+        # The truth segment deliberately lands 0.15 m beyond the ordinary
+        # minimum-advance gate, avoiding a 2.49 m odometry measurement being
+        # classified as a backward goal.
+        self.assertAlmostEqual(goal["position"][1], 22.35, places=6)
+        self.assertAlmostEqual(goal["corridor_advance_m"], 2.65, places=6)
+        self.assertLess(goal["position"][0], 1.10)
+        self.assertEqual(goal["source"],
+                         "upper_floor_truth_corridor_probe")
+
+    def test_fix19_two_blocked_upper_probes_latch_safe_return(self):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.corridor_sweep_history = []
+        manager.corridor_terminal_return_latched = False
+        manager.corridor_partial_return_trigger_reason = None
+        manager.elapsed = lambda: 192.0
+        with mock.patch(
+                "baseline_exploration_manager.rospy.get_param",
+                return_value=2):
+            self.assertTrue(
+                manager._handle_upper_floor_truth_probe_result(
+                    False, "upper_floor_truth_corridor_probe",
+                    "goal_footprint_blocked", 1))
+        self.assertFalse(manager.corridor_terminal_return_latched)
+        with mock.patch(
+                "baseline_exploration_manager.rospy.get_param",
+                return_value=2):
+            self.assertTrue(
+                manager._handle_upper_floor_truth_probe_result(
+                    False, "upper_floor_truth_corridor_probe",
+                    "goal_footprint_blocked", 1))
+        self.assertTrue(manager.corridor_terminal_return_latched)
+        self.assertEqual(manager.corridor_partial_return_trigger_reason,
+                         "blocked_upper_floor_corridor_probe")
+        self.assertEqual(manager.corridor_sweep_history[-1]["event"],
+                         "UPPER_FLOOR_BLOCKED_PROBE_RETURN_LATCHED")
+
+    def test_outbound_retry_gate_returns_before_touching_scheduler(self):
+        manager = BaselineExplorationManager.__new__(BaselineExplorationManager)
+        manager.enable_known_unvisited_door_retry = True
+        manager.known_unvisited_door_retry_only_on_terminal_return = True
+        manager.corridor_terminal_return_latched = False
+        manager.corridor_door_detection_armed = True
+        manager.room_scheduler = SimpleNamespace(active_door=None)
+        self.assertIsNone(manager._plan_known_unvisited_door_retry_goal())
+
+
+    def test_run115_truth_return_waits_until_stair_lobby(self):
+        transition = StairTransition.__new__(StairTransition)
+        transition.enable_truth_return_gate = True
+        transition.truth_entry_guide = True
+        transition.return_transit_armed = True
+        transition.return_gate_published = False
+        transition.phase = "WAIT_F1"
+        transition.truth_pose = (-3.535, 17.407, 0.32, 0.05)
+        transition.truth_step_pose = (-4.015, 2.18, 0.0, 0.0)
+        transition.truth_step_next_pose = (-4.015, 2.30)
+        transition.truth_staging_standoff = 0.43
+        transition.truth_return_gate_radius = 5.4
+        transition.return_gate_pub = mock.Mock()
+        transition._maybe_publish_truth_return_gate()
+        self.assertFalse(transition.return_gate_published)
+        transition.return_gate_pub.publish.assert_not_called()
+        transition.truth_pose = (-0.565, 5.55, 0.32, 0.05)
+        transition._maybe_publish_truth_return_gate()
+        self.assertTrue(transition.return_gate_published)
+        transition.return_gate_pub.publish.assert_called_once()
+
+    def test_truth_long_return_launch_takes_over_before_fastlio_drift(self):
+        launch = ET.parse(os.path.join(
+            SCRIPT_DIR, "..", "launch",
+            "baseline_fastlio_exploration.launch"))
+        node = next(item for item in launch.getroot().findall("node")
+                    if item.get("name") == "stair_transition_manager")
+        params = {item.get("name"): item.get("value")
+                  for item in node.findall("param")}
+        self.assertEqual(params["truth_return_gate_radius_m"], "5.40")
+        self.assertEqual(
+            params["truth_corridor_lateral_offset_m"],
+            "$(arg stair_truth_corridor_lateral_offset_m)")
+        self.assertEqual(
+            params["truth_corridor_longitudinal_offset_m"],
+            "$(arg stair_truth_corridor_longitudinal_offset_m)")
+
+    def test_second_to_third_uses_stricter_b_flight_alignment_profile(self):
+        launch = ET.parse(os.path.join(
+            SCRIPT_DIR, "..", "launch",
+            "baseline_fastlio_exploration.launch"))
+        root = launch.getroot()
+        args = {item.get("name"): item.get("default")
+                for item in root.findall("arg")}
+        first = next(
+            item for item in root.findall("node")
+            if item.get("name") == "stair_transition_manager")
+        second = next(
+            item for item in root.findall("node")
+            if item.get("name") == "second_to_third_floor_stair_manager")
+        f1 = {item.get("name"): item.get("value")
+              for item in first.findall("param")}
+        f3 = {item.get("name"): item.get("value")
+              for item in second.findall("param")}
+        self.assertEqual(f1["flight_b_timeout_sec"],
+                         "$(arg stair_flight_b_timeout_sec)")
+        self.assertEqual(f3["flight_b_timeout_sec"],
+                         "$(arg second_to_third_flight_b_timeout_sec)")
+        self.assertEqual(f3["landing_heading_tolerance_rad"],
+                         "$(arg second_to_third_landing_heading_tolerance_rad)")
+        self.assertEqual(f3["truth_flight_b_heading_gain"],
+                         "$(arg second_to_third_flight_b_heading_gain)")
+        self.assertEqual(f3["truth_flight_b_heading_bias_rad"],
+                         "$(arg second_to_third_flight_b_heading_bias_rad)")
+        self.assertAlmostEqual(
+            float(args["second_to_third_flight_b_heading_bias_rad"]), 0.0)
+        self.assertEqual(
+            f3["truth_flight_b_recovery_heading_error_rad"],
+            "$(arg second_to_third_flight_b_recovery_heading_error_rad)")
+        self.assertEqual(
+            f3["truth_flight_b_recovery_yaw_rate_rps"],
+            "$(arg second_to_third_flight_b_recovery_yaw_rate_rps)")
+        self.assertLess(float(args["second_to_third_landing_heading_tolerance_rad"]),
+                        float(args["landing_heading_tolerance_rad"]))
+        self.assertAlmostEqual(
+            float(args["second_to_third_landing_heading_tolerance_rad"]),
+            0.05)
+        self.assertGreater(float(args["second_to_third_flight_b_timeout_sec"]),
+                           float(args["stair_flight_b_timeout_sec"]))
+        self.assertGreater(
+            float(args["second_to_third_flight_b_recovery_yaw_rate_rps"]),
+            float(args["second_to_third_flight_b_max_yaw_rate_rps"]))
+        self.assertEqual(
+            f1["truth_flight_a_stall_recovery_limit"],
+            "$(arg truth_flight_a_stall_recovery_limit)")
+        self.assertEqual(
+            f3["truth_flight_a_stall_recovery_limit"],
+            "$(arg truth_flight_a_stall_recovery_limit)")
+        self.assertEqual(
+            f3["truth_flight_b_stall_recovery_limit"],
+            "$(arg second_to_third_flight_b_stall_recovery_limit)")
+        self.assertEqual(
+            args["second_to_third_flight_b_stall_recovery_limit"], "2")
+        self.assertEqual(
+            f3["truth_flight_b_stall_recovery_distance_m"],
+            "$(arg second_to_third_flight_b_stall_recovery_distance_m)")
+        self.assertEqual(args["second_to_third_flight_b_stall_recovery_distance_m"], "0.28")
+        self.assertEqual(
+            f3["truth_flight_b_stall_forward_burst_speed_mps"],
+            "$(arg second_to_third_flight_b_stall_forward_burst_speed_mps)")
+        self.assertEqual(
+            args["second_to_third_flight_b_stall_forward_burst_speed_mps"], "0.0")
+        self.assertEqual(
+            f3["truth_flight_b_stall_policy_reset"],
+            "$(arg second_to_third_flight_b_stall_policy_reset)")
+        self.assertEqual(args["second_to_third_flight_b_stall_policy_reset"], "true")
+
+        self.assertEqual(f3["truth_flight_b_stall_wrench_enabled"],
+                         "$(arg second_to_third_flight_b_stall_wrench_enabled)")
+        self.assertEqual(args["second_to_third_flight_b_stall_wrench_enabled"], "true")
+
+
+    def _run109_flight_b_transition(
+            self, yaw=-2.0318, recovery_active=False):
+        transition = StairTransition.__new__(StairTransition)
+        transition.truth_pose = (-2.5544, 3.4419, 4.8778, yaw)
+        transition.truth_flight_b_pose = (-2.485, 4.95, 4.20, 0.0)
+        transition.truth_flight_b_entry_x = -2.485
+        transition.truth_flight_b_heading = -np.pi / 2.0
+        transition.truth_flight_b_center_deadband = 0.04
+        transition.truth_flight_b_center_gain = 0.55
+        transition.truth_flight_b_center_speed = 0.12
+        transition.truth_flight_b_heading_gain = 0.60
+        transition.truth_flight_b_max_yaw_rate = 0.16
+        transition.truth_flight_b_recovery_heading_error = 0.18
+        transition.truth_flight_b_recovery_release_heading_error = 0.08
+        transition.truth_flight_b_recovery_forward_speed = 0.08
+        transition.truth_flight_b_recovery_yaw_rate = 0.34
+        transition.truth_flight_b_recovery_active = recovery_active
+        transition.ascent_speed = 0.20
+        return transition
+
+    def test_run109_flight_b_large_yaw_error_enters_slow_recovery(self):
+        transition = self._run109_flight_b_transition()
+        center,forward,yaw_rate,center_error,heading_error = (
+            transition._truth_flight_b_control())
+        self.assertGreater(heading_error, 0.45)
+        self.assertTrue(transition.truth_flight_b_recovery_active)
+        self.assertAlmostEqual(forward, -0.08, places=6)
+        self.assertAlmostEqual(yaw_rate, 0.34, places=6)
+        self.assertGreater(center, 0.0)
+        self.assertGreater(center_error, 0.0)
+
+    def test_run111_flight_b_hysteresis_uses_gentle_yaw_near_alignment(self):
+        transition = self._run109_flight_b_transition(
+            yaw=-np.pi / 2.0-0.09, recovery_active=True)
+        _center,forward,yaw_rate,_center_error,heading_error = (
+            transition._truth_flight_b_control())
+        self.assertAlmostEqual(abs(heading_error), 0.09, places=6)
+        self.assertTrue(transition.truth_flight_b_recovery_active)
+        self.assertAlmostEqual(forward, -0.20, places=6)
+        self.assertAlmostEqual(yaw_rate, 0.60*0.09, places=6)
+
+    def test_run113_flight_b_resumes_climb_inside_recovery_hysteresis(self):
+        transition = self._run109_flight_b_transition(
+            yaw=-np.pi / 2.0-0.152, recovery_active=True)
+        transition.ascent_speed = 0.80
+        _center,forward,yaw_rate,_center_error,heading_error = (
+            transition._truth_flight_b_control())
+        self.assertAlmostEqual(abs(heading_error), 0.152, places=6)
+        self.assertTrue(transition.truth_flight_b_recovery_active)
+        self.assertAlmostEqual(forward, -0.80, places=6)
+        self.assertAlmostEqual(yaw_rate, 0.60*0.152, places=6)
+
+    def test_flight_b_stall_watchdog_requires_no_forward_or_height_progress(self):
+        transition = self._run109_flight_b_transition(yaw=-np.pi / 2.0)
+        transition.truth_flight_b_stall_recovery_limit = 1
+        transition.truth_flight_b_stall_timeout = 4.0
+        transition.truth_flight_b_stall_minimum_progress = 0.08
+        transition.truth_flight_b_stall_minimum_height_gain = 0.04
+        transition.truth_flight_b_progress_anchor_at = None
+        transition.truth_flight_b_progress_anchor_pose = None
+        self.assertFalse(transition._truth_flight_b_is_stalled(now=10.0))
+        transition.truth_pose = (-2.5544, 3.4219, 4.8878, -np.pi / 2.0)
+        self.assertTrue(transition._truth_flight_b_is_stalled(now=14.1))
+        transition.truth_pose = (-2.5544, 3.3219, 4.8878, -np.pi / 2.0)
+        self.assertFalse(transition._truth_flight_b_is_stalled(now=14.2))
+        self.assertAlmostEqual(
+            transition.truth_flight_b_progress_anchor_at, 14.2)
+
+    def test_flight_b_retreat_progress_uses_opposite_truth_heading(self):
+        origin = (-2.40, 3.38, 4.87, -np.pi / 2.0)
+        self.assertAlmostEqual(
+            StairTransition._truth_flight_b_retreat_progress(
+                origin, (-2.40, 3.66, 4.80, 0.0), -np.pi / 2.0),
+            0.28, places=6)
+        self.assertAlmostEqual(
+            StairTransition._truth_flight_b_retreat_progress(
+                origin, (-2.10, 3.10, 4.90, 0.0), -np.pi / 2.0),
+            0.0, places=6)
+
+    def test_flight_b_forward_progress_uses_truth_heading(self):
+        origin = (-2.40, 3.38, 4.87, -np.pi / 2.0)
+        self.assertAlmostEqual(
+            StairTransition._truth_flight_b_forward_progress(
+                origin, (-2.10, 3.10, 4.95, 0.0), -np.pi / 2.0),
+            0.28, places=6)
+
+
+    def test_run109_flight_b_recovery_releases_only_after_alignment(self):
+        transition = self._run109_flight_b_transition(
+            yaw=-np.pi / 2.0-0.05, recovery_active=True)
+        _center,forward,yaw_rate,_center_error,heading_error = (
+            transition._truth_flight_b_control())
+        self.assertAlmostEqual(abs(heading_error), 0.05, places=6)
+        self.assertFalse(transition.truth_flight_b_recovery_active)
+        self.assertAlmostEqual(forward, -0.20, places=6)
+        self.assertLess(abs(yaw_rate), 0.16)
+
+    def test_pre_ascent_alignment_watchdog_refreshes_while_yaw_improves(self):
+        transition = StairTransition.__new__(StairTransition)
+        transition.pre_ascent_align_timeout = 20.0
+        transition.pre_ascent_align_watchdog_progress = 0.08
+        transition.pre_ascent_align_watchdog_anchor_error = None
+        transition.pre_ascent_align_deadline = None
+        self.assertTrue(transition._refresh_pre_ascent_align_progress_watchdog(
+            1.44, now=0.0))
+        self.assertAlmostEqual(transition.pre_ascent_align_deadline, 20.0)
+        self.assertTrue(transition._refresh_pre_ascent_align_progress_watchdog(
+            1.35, now=19.9))
+        self.assertAlmostEqual(transition.pre_ascent_align_deadline, 39.9)
+        self.assertFalse(transition._refresh_pre_ascent_align_progress_watchdog(
+            1.31, now=25.0))
+        self.assertAlmostEqual(transition.pre_ascent_align_deadline, 39.9)
+
+    def test_truth_entry_watchdog_refreshes_while_distance_improves(self):
+        transition = StairTransition.__new__(StairTransition)
+        transition.truth_entry_timeout = 60.0
+        transition.truth_entry_watchdog_progress = 0.25
+        transition.truth_entry_watchdog_anchor_distance = 9.10
+        transition.truth_entry_deadline = 60.0
+        self.assertTrue(transition._refresh_truth_entry_progress_watchdog(
+            8.80, now=59.9))
+        self.assertAlmostEqual(transition.truth_entry_deadline, 119.9)
+        self.assertFalse(transition._refresh_truth_entry_progress_watchdog(
+            8.70, now=70.0))
+        self.assertAlmostEqual(transition.truth_entry_deadline, 119.9)
+
+    def test_truth_policy_restage_recovers_warmup_drift(self):
+        distance, vx, vy, wz = StairTransition._truth_policy_restage_control(
+            (-3.988, 1.546, 0.285, np.pi / 2.0), (-4.015, 1.75))
+        self.assertGreater(distance, 0.20)
+        self.assertLess(vx, 0.0)
+        self.assertGreater(vy, 0.0)
+        self.assertLess(abs(wz), 0.15)
+        stopped = StairTransition._truth_policy_restage_control(
+            (-4.014, 1.759, 0.327, np.pi / 2.0), (-4.015, 1.75))
+        self.assertLess(stopped[0], 0.10)
+        self.assertEqual(stopped[1:], (0.0, 0.0, 0.0))
+
+    def test_truth_entry_world_projection_uses_live_yaw_until_flight_a(self):
+        transition = StairTransition.__new__(StairTransition)
+        transition.source_floor_index = 0
+        transition.truth_fixed_two_flight_profile = True
+        transition.truth_stair_heading = 0.0
+        transition.truth_pose = (0.0, 0.0, 0.3, np.pi / 2.0)
+        transition.cmd = mock.Mock()
+        transition.hold_rl = mock.Mock()
+
+        transition.phase = "TRUTH_ENTRY_GUIDE"
+        transition._publish_truth_world_command(1.0, 0.0)
+        entry_command = transition.cmd.publish.call_args.args[0]
+        self.assertAlmostEqual(entry_command.linear.x, 0.0, places=6)
+        self.assertAlmostEqual(entry_command.linear.y, -1.0, places=6)
+
+        transition.phase = "STAIR_FLIGHT_A"
+        transition._publish_truth_world_command(1.0, 0.0)
+        ascent_command = transition.cmd.publish.call_args.args[0]
+        self.assertAlmostEqual(ascent_command.linear.x, 1.0, places=6)
+        self.assertAlmostEqual(ascent_command.linear.y, 0.0, places=6)
+
+    def test_flight_a_center_error_corrects_back_to_tread_axis(self):
+        # +Y stair: x below the step centre must command +X correction.
+        error = StairTransition._truth_stair_center_error(
+            (-4.29, 3.05), (-4.015, 1.85), np.pi / 2.0)
+        self.assertAlmostEqual(error, 0.275, places=6)
+        # The same geometry rotated onto a +X stair remains valid.
+        rotated = StairTransition._truth_stair_center_error(
+            (3.05, 4.29), (1.85, 4.015), 0.0)
+        self.assertAlmostEqual(rotated, 0.275, places=6)
+
+    def test_flight_a_control_combines_forward_and_centering(self):
+        transition = StairTransition.__new__(StairTransition)
+        transition.truth_pose = (-4.29, 3.05, 0.95, 1.40)
+        transition.truth_step_pose = (-4.015, 1.85, 0.0, 0.0)
+        transition.truth_stair_heading = np.pi / 2.0
+        transition.truth_flight_a_center_deadband = 0.04
+        transition.truth_flight_a_center_gain = 0.55
+        transition.truth_flight_a_center_speed = 0.12
+        transition.truth_flight_a_heading_gain = 0.35
+        transition.truth_flight_a_max_yaw_rate = 0.10
+        transition.truth_flight_a_recovery_center_error = 0.14
+        transition.truth_flight_a_recovery_heading_error = 0.20
+        transition.truth_flight_a_recovery_forward_speed = 0.12
+        transition.truth_flight_a_recovery_center_speed = 0.18
+        transition.truth_flight_a_recovery_yaw_rate = 0.16
+        transition.ascent_speed = 0.80
+        vx, vy, yaw_rate, center_error, heading_error = (
+            transition._truth_flight_a_control())
+        self.assertAlmostEqual(center_error, 0.275, places=6)
+        self.assertAlmostEqual(vx, 0.18, places=6)
+        # Centre-only recovery must retain the effective stair-climb command.
+        self.assertAlmostEqual(vy, 0.80, places=6)
+        self.assertGreater(heading_error, 0.0)
+        self.assertAlmostEqual(yaw_rate, 0.0597787, places=5)
+        self.assertTrue(transition.truth_flight_a_recovery_active)
+
+    def test_run112_flight_a_stall_requires_no_forward_or_height_progress(self):
+        transition = StairTransition.__new__(StairTransition)
+        transition.truth_pose = (-4.177, 3.235, 0.984, np.pi / 2.0)
+        transition.truth_stair_heading = np.pi / 2.0
+        transition.direction = np.pi / 2.0
+        transition.truth_flight_a_stall_recovery_limit = 1
+        transition.truth_flight_a_stall_timeout = 4.0
+        transition.truth_flight_a_stall_minimum_progress = 0.08
+        transition.truth_flight_a_stall_minimum_height_gain = 0.04
+        transition.truth_flight_a_progress_anchor_at = None
+        transition.truth_flight_a_progress_anchor_pose = None
+        self.assertFalse(transition._truth_flight_a_is_stalled(now=10.0))
+        transition.truth_pose = (-4.177, 3.255, 0.994, np.pi / 2.0)
+        self.assertTrue(transition._truth_flight_a_is_stalled(now=14.1))
+        transition.truth_pose = (-4.177, 3.345, 0.994, np.pi / 2.0)
+        self.assertFalse(transition._truth_flight_a_is_stalled(now=14.2))
+        self.assertAlmostEqual(
+            transition.truth_flight_a_progress_anchor_at, 14.2)
+
+    def test_run112_truth_flight_a_has_bounded_timeout(self):
+        transition = StairTransition.__new__(StairTransition)
+        transition.started = 100.0
+        transition.ascent_timeout = 45.0
+        self.assertFalse(transition._truth_flight_a_timed_out(now=144.99))
+        self.assertTrue(transition._truth_flight_a_timed_out(now=145.0))
+
+    def test_flight_a_recovery_crosses_yaw_deadband_before_guard(self):
+        transition = StairTransition.__new__(StairTransition)
+        transition.truth_pose = (-3.84, 3.53, 1.14, 2.01)
+        transition.truth_step_pose = (-4.015, 1.85, 0.0, 0.0)
+        transition.truth_stair_heading = np.pi / 2.0
+        transition.truth_flight_a_center_deadband = 0.04
+        transition.truth_flight_a_center_gain = 0.55
+        transition.truth_flight_a_center_speed = 0.12
+        transition.truth_flight_a_heading_gain = 0.35
+        transition.truth_flight_a_max_yaw_rate = 0.10
+        transition.truth_flight_a_recovery_center_error = 0.14
+        transition.truth_flight_a_recovery_heading_error = 0.20
+        transition.truth_flight_a_recovery_forward_speed = 0.12
+        transition.truth_flight_a_recovery_center_speed = 0.18
+        transition.truth_flight_a_recovery_yaw_rate = 0.16
+        transition.ascent_speed = 0.20
+        vx, vy, yaw_rate, center_error, heading_error = (
+            transition._truth_flight_a_control())
+        self.assertLess(center_error, -0.14)
+        self.assertLess(heading_error, -0.20)
+        self.assertAlmostEqual(vx, -0.18, places=6)
+        self.assertAlmostEqual(vy, 0.12, places=6)
+        self.assertAlmostEqual(yaw_rate, -0.16, places=6)
+        self.assertTrue(transition.truth_flight_a_recovery_active)
+
+    def test_flight_b_gets_budget_after_slow_landing_turn(self):
+        transition = StairTransition.__new__(StairTransition)
+        transition.started = 0.0
+        transition.ascent_timeout = 45.0
+        transition.phase = "STAIR_ASCENT_B"
+        transition.flight_b_started_at = 41.6
+        transition.flight_b_timeout = 22.0
+        transition.total_height_gain = 2.20
+        transition.second_floor_height_reached_at = None
+        transition.upper_landing_clearance_grace = 15.0
+        # Reproduce run62: healthy second-flight gain at the former global
+        # deadline must continue instead of being stopped after 3.4 seconds.
+        self.assertFalse(transition._truth_ascent_timed_out(45.0, 1.59))
+        self.assertFalse(transition._truth_ascent_timed_out(63.59, 2.19))
+        self.assertTrue(transition._truth_ascent_timed_out(63.61, 2.19))
+
+    def test_global_stair_timeout_still_bounds_pre_flight_b_stall(self):
+        transition = StairTransition.__new__(StairTransition)
+        transition.started = 0.0
+        transition.ascent_timeout = 45.0
+        transition.phase = "STAIR_LANDING_TURN"
+        transition.flight_b_started_at = None
+        transition.flight_b_timeout = 22.0
+        transition.total_height_gain = 2.20
+        transition.second_floor_height_reached_at = None
+        transition.upper_landing_clearance_grace = 15.0
+        self.assertTrue(transition._truth_ascent_timed_out(45.01, 1.30))
+
+    def test_run84_landing_timeout_enters_bounded_recovery(self):
+        transition = StairTransition.__new__(StairTransition)
+        transition.truth_entry_guide = True
+        transition.truth_fixed_two_flight_profile = True
+        transition.truth_pose = (-2.5904, 4.9143, 1.6330, -1.3587)
+        transition.truth_ascent_start_z = 0.3207
+        transition.truth_landing_position_error = 0.1054
+        transition.truth_landing_heading_error = -0.2121
+        transition.landing_recovery_max_position_error = 0.40
+        transition.landing_recovery_max_heading_error = 0.65
+        transition.landing_recovery_max_attempts = 2
+        transition.landing_recovery_attempts = 0
+        transition.landing_recovery_active = False
+        transition.landing_recovery_timeout = 12.0
+        transition.landing_timeout = 30.0
+        transition.landing_started_at = 100.0
+        transition.cmd = SimpleNamespace(publish=mock.Mock())
+        transition.state = SimpleNamespace(publish=mock.Mock())
+        transition._record_trace = mock.Mock()
+        transition.hold_rl = mock.Mock()
+        with mock.patch(
+                "stair_transition_manager.time.monotonic",
+                return_value=130.0), mock.patch(
+                    "stair_transition_manager.rospy.signal_shutdown") as shutdown:
+            handled = transition._landing_turn_timed_out(30.0)
+        self.assertTrue(handled)
+        self.assertEqual(transition.phase, "STAIR_LANDING_RECOVERY")
+        self.assertEqual(transition.landing_recovery_attempts, 1)
+        self.assertEqual(transition.landing_started_at, 130.0)
+        transition.hold_rl.assert_called_once_with()
+        shutdown.assert_not_called()
+
+    def test_landing_recovery_crosses_run84_yaw_dead_zone(self):
+        transition = StairTransition.__new__(StairTransition)
+        transition.landing_turn_speed = 0.45
+        transition.truth_landing_minimum_yaw_rate = 0.24
+        transition.landing_recovery_minimum_yaw_rate = 0.34
+        transition.landing_heading_tolerance = 0.15
+        transition.landing_recovery_active = False
+        ordinary = transition._truth_landing_turn_rate(-0.2121)
+        transition.landing_recovery_active = True
+        recovery = transition._truth_landing_turn_rate(-0.2121)
+        self.assertAlmostEqual(ordinary, -0.24, places=6)
+        self.assertAlmostEqual(recovery, -0.34, places=6)
+
+    def test_f2_to_f3_landing_bias_gets_effective_yaw_command(self):
+        transition = StairTransition.__new__(StairTransition)
+        transition.landing_turn_speed = 0.45
+        transition.truth_landing_minimum_yaw_rate = 0.24
+        transition.landing_recovery_minimum_yaw_rate = 0.34
+        transition.landing_heading_tolerance = 0.05
+        transition.landing_recovery_active = False
+        self.assertAlmostEqual(
+            transition._truth_landing_turn_rate(-0.10), -0.24, places=6)
+        self.assertAlmostEqual(
+            transition._truth_landing_turn_rate(-0.049), -0.0539, places=6)
+
+    def test_unsafe_landing_pose_is_not_retried(self):
+        transition = StairTransition.__new__(StairTransition)
+        transition.truth_entry_guide = True
+        transition.truth_fixed_two_flight_profile = True
+        transition.truth_pose = (-3.20, 4.91, 1.63, -1.36)
+        transition.truth_ascent_start_z = 0.32
+        transition.truth_landing_position_error = 0.715
+        transition.truth_landing_heading_error = -0.21
+        transition.landing_recovery_max_position_error = 0.40
+        transition.landing_recovery_max_heading_error = 0.65
+        self.assertFalse(transition._landing_recovery_safe())
+        transition.landing_recovery_max_attempts = 2
+        transition.landing_recovery_attempts = 0
+        transition.landing_recovery_active = False
+        transition.landing_recovery_timeout = 12.0
+        transition.landing_timeout = 30.0
+        transition.cmd = SimpleNamespace(publish=mock.Mock())
+        transition.state = SimpleNamespace(publish=mock.Mock())
+        transition._record_trace = mock.Mock()
+        with mock.patch(
+                "stair_transition_manager.rospy.signal_shutdown") as shutdown:
+            handled = transition._landing_turn_timed_out(30.0)
+        self.assertTrue(handled)
+        self.assertEqual(transition.phase, "STAIR_LANDING_TIMEOUT")
+        self.assertEqual(transition.landing_recovery_attempts, 0)
+        shutdown.assert_called_once_with("stair_landing_turn_timeout")
+
+
+
+
+    def test_long_corridor_leg_gets_distance_based_budget(self):
+        # run36 required about 50 s for its 7.48 m corridor leg.  The former
+        # shared 45 s deadline expired after the preceding stair-exit leg.
+        budget = SecondFloorMission._truth_route_stage_timeout(
+            45.0, 7.48, 0.10, 6.0)
+        self.assertGreaterEqual(budget, 80.8)
+
+    def test_short_leg_keeps_configured_minimum_budget(self):
+        budget = SecondFloorMission._truth_route_stage_timeout(
+            45.0, 1.55, 0.10, 6.0)
+        self.assertEqual(budget, 45.0)
+
+    def test_upper_floor_truth_handoff_is_three_metres_inside_corridor(self):
+        corridor = {
+            "x_min": -1.1, "x_max": 1.1,
+            "y_min": 7.85, "y_max": 35.91,
+        }
+        target = SecondFloorMission._truth_corridor_entry_target(
+            corridor, 3.0)
+        self.assertEqual(target, (0.0, 10.85))
+        waypoint = {
+            "corridor_bounds": corridor,
+            "minimum_ingress_y": 10.55,
+        }
+        self.assertFalse(SecondFloorMission._truth_corridor_arrival_valid(
+            (0.0, 8.61, 2.91, 1.39), waypoint, 0.30))
+        self.assertTrue(SecondFloorMission._truth_corridor_arrival_valid(
+            (0.1, 10.60, 2.91, 1.55), waypoint, 0.30))
+
+    def test_upper_floor_ingress_depth_is_wired_per_floor(self):
+        launch = ET.parse(os.path.join(
+            SCRIPT_DIR, "..", "launch",
+            "baseline_fastlio_exploration.launch"))
+        root = launch.getroot()
+        args = {item.get("name"): item.get("default")
+                for item in root.findall("arg")}
+        second = next(item for item in root.findall("node")
+                      if item.get("name") ==
+                      "second_floor_exploration_manager")
+        third = next(item for item in root.findall("node")
+                     if item.get("name") ==
+                     "third_floor_exploration_manager")
+        second_params = {item.get("name"): item.get("value")
+                         for item in second.findall("param")}
+        third_params = {item.get("name"): item.get("value")
+                        for item in third.findall("param")}
+        self.assertEqual(
+            args["second_floor_truth_corridor_ingress_depth_m"], "1.0")
+        self.assertEqual(
+            second_params["second_floor_truth_corridor_ingress_depth_m"],
+            "$(arg second_floor_truth_corridor_ingress_depth_m)")
+        self.assertEqual(
+            third_params["second_floor_truth_corridor_ingress_depth_m"],
+            "$(arg third_floor_truth_corridor_ingress_depth_m)")
+
+    def test_second_floor_successful_exit_does_not_shutdown_roslaunch(self):
+        launch = ET.parse(os.path.join(
+            SCRIPT_DIR, "..", "launch",
+            "baseline_fastlio_exploration.launch"))
+        node = next(
+            item for item in launch.getroot().findall("node")
+            if item.get("name") == "second_floor_exploration_manager")
+        self.assertEqual(node.get("required"), "false")
+
+    def test_all_floors_share_fast_room_target_with_return_headroom(self):
+        launch = ET.parse(os.path.join(
+            SCRIPT_DIR, "..", "launch",
+            "baseline_fastlio_exploration.launch"))
+        args = {item.get("name"): item.get("default")
+                for item in launch.getroot().findall("arg")}
+        self.assertEqual(float(args["first_floor_room_phase_target_seconds"]),
+                         140.0)
+        self.assertEqual(float(args["maximum_duration"]), 220.0)
+        self.assertEqual(float(args["second_floor_maximum_duration"]), 220.0)
+        self.assertEqual(float(args["third_floor_maximum_duration"]), 220.0)
+        self.assertEqual(args["unified_fast_four_room_profile"], "true")
+        self.assertEqual(args["require_all_rooms_for_floor_handoff"], "true")
+        self.assertEqual(
+            float(args["first_floor_corridor_entry_distance_from_mission_start_m"]),
+            8.0)
+        self.assertEqual(
+            float(args["second_floor_truth_corridor_ingress_depth_m"]), 1.0)
+        self.assertEqual(
+            float(args["third_floor_truth_corridor_ingress_depth_m"]), 1.0)
+        self.assertAlmostEqual(
+            float(args["upper_floor_far_row_door_scan_angle_rad"]), np.pi,
+            places=6)
+        nodes = {item.get("name"): item
+                 for item in launch.getroot().findall("node")}
+        for node_name in ("baseline_exploration_manager",
+                          "second_floor_exploration_manager",
+                          "third_floor_exploration_manager"):
+            params = {item.get("name"): item.get("value")
+                      for item in nodes[node_name].findall("param")}
+            self.assertEqual(
+                params["require_all_rooms_for_floor_handoff"],
+                "$(arg require_all_rooms_for_floor_handoff)")
+            self.assertEqual(params["room_target_count"], "4")
+
+
+    def test_f3_clears_stair_joint_state_before_truth_pose_level(self):
+        with open(os.path.join(
+                SCRIPT_DIR, "second_floor_exploration_manager.py"),
+                encoding="utf-8") as stream:
+            source = stream.read()
+        run_body = source.split("def run(self):", 1)[1].split(
+            'if __name__ == "__main__"', 1)[0]
+        f3_branch = run_body.split(
+            "F3 alone starts on a narrow, dynamic stair seam", 1)[1]
+        self.assertLess(
+            f3_branch.index("self._local_reset_controller_at_corridor"),
+            f3_branch.index("self._reset_truth_upper_landing_pose"))
+
+    def test_truth_height_requires_second_floor_elevation(self):
+        self.assertTrue(SecondFloorMission._truth_height_is_second_floor(
+            (-2.5, 1.7, 2.91, 0.0), 2.60, 0.15))
+        self.assertFalse(SecondFloorMission._truth_height_is_second_floor(
+            (-2.5, 1.7, 0.31, 0.0), 2.60, 0.15))
+
+    def test_second_floor_context_translates_first_floor_bounds(self):
+        context = SecondFloorMission._second_floor_executor_context(2.60)
+        self.assertAlmostEqual(context["minimum_pose_z"], 1.80)
+        self.assertAlmostEqual(context["maximum_pose_z"], 3.80)
+        self.assertEqual(
+            GoalExecutor._validated_floor_context(context), (1.80, 3.80))
+
+    def test_third_floor_context_reuses_same_validated_executor_contract(self):
+        context = SecondFloorMission._second_floor_executor_context(
+            5.20, 2, "third_floor")
+        self.assertEqual(context["mode"], "third_floor_exploration")
+        self.assertEqual(context["floor_index"], 2)
+        self.assertAlmostEqual(context["minimum_pose_z"], 4.40)
+        self.assertAlmostEqual(context["maximum_pose_z"], 6.40)
+        self.assertEqual(
+            GoalExecutor._validated_floor_context(context), (4.40, 6.40))
+
+    def test_three_floor_scene_preserves_lower_layout_and_has_second_stair(self):
+        workspace = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), "..", "..", ".."))
+        old_dir = os.path.join(
+            workspace, "generated_building", "elevator_two_floor_debug")
+        new_dir = os.path.join(
+            workspace, "generated_building", "elevator_three_floor_debug")
+        with open(os.path.join(old_dir, "layout_metadata.json")) as stream:
+            old = json.load(stream)
+        with open(os.path.join(new_dir, "layout_metadata.json")) as stream:
+            new = json.load(stream)
+        self.assertEqual(old["floors"], new["floors"][:2])
+        self.assertEqual(new["floors"][2]["floor_index"], 2)
+        links = {link.get("name") for link in ET.parse(
+            os.path.join(new_dir, "model.sdf")).getroot().findall(".//link")}
+        self.assertIn("stair_flight_a_floor_1_step_0", links)
+        self.assertIn("stair_flight_b_floor_1_step_9", links)
+        self.assertIn("stair_floor_landing_floor_2", links)
+
+    @staticmethod
+    def _monotonic_probe_manager(occupied=False, unknown_queries=0):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.enable_corridor_monotonic_forward_probe = True
+        manager.corridor_monotonic_probe_count = 0
+        manager.corridor_monotonic_probe_limit = 24
+        manager.corridor_monotonic_probe_distance = 0.60
+        manager.corridor_monotonic_probe_sample_spacing = 0.10
+        manager.corridor_monotonic_probe_max_unknown_queries = 8
+        manager.corridor_monotonic_probe_mode_active = False
+        manager.room_target_count = 4
+        manager.room_scheduler = SimpleNamespace(
+            active_door=None,
+            detector=SimpleNamespace(doors=[]))
+        manager.corridor_station_axis = np.asarray([1.0, 0.0])
+        manager.corridor_station_origin = np.asarray([0.0, 0.0])
+        manager.corridor_anchor = np.asarray([0.0, 0.0])
+        manager.corridor_sweep_history = []
+        manager.reached_tolerance = 0.15
+        manager._missing_room_retrace_active = mock.Mock(return_value=False)
+        manager._forward_corridor_wall_observed = mock.Mock(
+            return_value=False)
+        manager._scan_check = mock.Mock(return_value=SimpleNamespace(
+            map_available=True,
+            occupied_collision=occupied,
+            unknown_queries=unknown_queries,
+            status="test"))
+        manager.elapsed = mock.Mock(return_value=12.0)
+        return manager
+
+    def test_f2_monotonic_probe_advances_on_dense_3d_clearance(self):
+        manager = self._monotonic_probe_manager()
+        goal, path = manager._plan_corridor_monotonic_forward_probe(
+            9, (10.0, 0.12, 2.4, 0.0), object(),
+            np.asarray([1.0, 0.0]))
+        self.assertIsNotNone(goal)
+        self.assertEqual(goal["source"],
+                         "corridor_monotonic_forward_probe")
+        self.assertTrue(goal["verified_corridor_3d_probe"])
+        self.assertAlmostEqual(goal["position"][0], 10.60)
+        self.assertAlmostEqual(goal["position"][1], 0.0)
+        self.assertEqual(manager.corridor_monotonic_probe_count, 1)
+        self.assertGreaterEqual(manager._scan_check.call_count, 6)
+        self.assertEqual(path["execution_waypoints"], [(10.6, 0.0)])
+
+    def test_f2_monotonic_probe_never_crosses_3d_occupied_sample(self):
+        manager = self._monotonic_probe_manager(occupied=True)
+        goal, path = manager._plan_corridor_monotonic_forward_probe(
+            9, (10.0, 0.0, 2.4, 0.0), object(),
+            np.asarray([1.0, 0.0]))
+        self.assertIsNone(goal)
+        self.assertIsNone(path)
+        self.assertEqual(manager.corridor_monotonic_probe_count, 0)
+        self.assertEqual(
+            manager.corridor_sweep_history[-1]["event"],
+            "CORRIDOR_MONOTONIC_PROBE_3D_REJECTED")
+
+    def test_mapping_rescan_finishes_fast_and_cannot_be_overwritten(self):
+        executor = GoalExecutor.__new__(GoalExecutor)
+        executor._maximum_visual_sweep_speed = 2.0
+        executor._maximum_mapping_rescan_speed = 1.2
+        executor._lock = threading.RLock()
+        executor._locomotion_ready = True
+        executor._goal = None
+        executor._finished = True
+        executor._rescan = None
+        executor._pose = (0.0, 0.0, 0.0, 0.0)
+        executor._rescan_result_pub = mock.Mock()
+
+        first = SimpleNamespace(data=json.dumps({
+            "request_id": "mapping-1",
+            "angle_rad": 2.0 * np.pi,
+            "angular_speed": 1.2,
+            "timeout_sec": 8.0,
+        }))
+        executor._on_rescan_request(first)
+        self.assertEqual(executor._rescan["request_id"], "mapping-1")
+        self.assertAlmostEqual(executor._rescan["angle"], 2.0 * np.pi)
+        self.assertAlmostEqual(executor._rescan["speed"], 1.2)
+        self.assertLess(executor._rescan["duration"], 5.3)
+
+        second = SimpleNamespace(data=json.dumps({
+            "request_id": "mapping-2",
+            "angle_rad": 2.0 * np.pi,
+            "angular_speed": 1.2,
+            "timeout_sec": 8.0,
+        }))
+        executor._on_rescan_request(second)
+        self.assertEqual(executor._rescan["request_id"], "mapping-1")
+        rejection = json.loads(
+            executor._rescan_result_pub.publish.call_args.args[0].data)
+        self.assertEqual(rejection["request_id"], "mapping-2")
+        self.assertFalse(rejection["success"])
+
+    @staticmethod
+    def _exit_refinement_manager(checker, pose):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.enable_scan_lite = False
+        manager.room_two_pose_scan_lite_enabled = False
+        manager.room_two_pose_waypoint_simplification = False
+        manager.scan_config = baseline_manager_module.RefinerConfig()
+        manager.waypoint_spacing = 0.30
+        manager.lock = threading.RLock()
+        manager.pose = (pose[0], pose[1], 0.31, pose[2])
+        manager.trajectory = []
+        manager.fastlio_registration_healthy = True
+        manager.scan_history = []
+        manager.scan_duration_pub = mock.Mock()
+        manager.output_dir = "/tmp"
+        manager.elapsed = mock.Mock(return_value=40.0)
+        manager.corridor_sweep_history = []
+        manager._scan_check = mock.Mock(side_effect=checker)
+        return manager
+
+    @classmethod
+    def _run60_room1_exit_refinement(cls, checker):
+        anchors = [
+            (5.775000587105751, -2.0249996811151494),
+            (6.07500059902668, -0.974999639391898),
+            (5.775000587105751, -0.07499960362911118),
+            (5.776639229569645, 0.27499656042254744),
+        ]
+        current = (7.40660815949865, -2.8896992187080106)
+        manager = cls._exit_refinement_manager(
+            checker, (current[0], current[1], -2.18))
+        goal = {
+            "source": "lightweight_room_exit", "room_role": "EXIT",
+            "room_id": "estimated_room_01",
+            "position": [anchors[-1][0], anchors[-1][1], 0.31],
+            "mandatory_portal_waypoints": anchors,
+            "portal_preflight_verified": True,
+            "corridor_extension_applied": True,
+            "direct_centerline_exit_approach": True,
+        }
+        path = {
+            "success": True, "reason": "portal_path_found",
+            "path": [current] + anchors[:-1],
+        }
+        with mock.patch("builtins.open", mock.mock_open()):
+            result = manager._refine_path(6, path, goal)
+        return manager, result, anchors
+
+    def test_exit_door_center_index_tracks_corridor_extension(self):
+        index = baseline_manager_module.portal_door_center_anchor_index
+        self.assertEqual(index([(0, 0), (1, 0), (2, 0)], False), 1)
+        self.assertEqual(
+            index([(0, 0), (1, 0), (2, 0), (3, 0)], True), 1)
+        self.assertIsNone(index([(0, 0), (1, 0)], True))
+
+    def test_run60_direct_exit_uses_audited_inside_to_corridor_chord(self):
+        def clear(_x, _y, _yaw):
+            return baseline_manager_module.FootprintCheck(
+                map_available=True, occupied_collision=False,
+                minimum_obstacle_clearance=0.30)
+
+        manager, result, anchors = self._run60_room1_exit_refinement(
+            clear)
+        self.assertEqual(result["execution_waypoints"], [anchors[-1]])
+        self.assertTrue(
+            manager.scan_history[-1]["direct_portal_exit_chord"])
+        self.assertTrue(manager.scan_history[-1][
+            "direct_room_to_corridor_exit_chord"])
+        self.assertEqual(
+            len(manager.scan_history[-1]["mandatory_portal_waypoints"]), 4)
+
+    def test_run60_direct_exit_collision_retains_all_anchors(self):
+        def block_direct_midpoint(x, y, _yaw):
+            blocked = abs(x - 5.775) < 0.03 and -1.15 < y < -0.85
+            return baseline_manager_module.FootprintCheck(
+                map_available=True, occupied_collision=blocked,
+                minimum_obstacle_clearance=0.0 if blocked else 0.30)
+
+        manager, result, anchors = self._run60_room1_exit_refinement(
+            block_direct_midpoint)
+        self.assertEqual(result["execution_waypoints"], anchors)
+        self.assertFalse(
+            manager.scan_history[-1]["direct_portal_exit_chord"])
+
+    def test_compacted_exit_drops_prefix_sample_within_eight_cm(self):
+        def clear(_x, _y, _yaw):
+            return baseline_manager_module.FootprintCheck(
+                map_available=True, occupied_collision=False,
+                minimum_obstacle_clearance=0.30)
+
+        manager = self._exit_refinement_manager(clear, (0.0, 0.0, 0.0))
+        anchors = [(2.918, 0.0), (3.5, 0.0),
+                   (4.5, 0.0), (4.85, 0.0)]
+        goal = {
+            "source": "lightweight_room_exit", "room_role": "EXIT",
+            "room_id": "room_02", "position": [4.85, 0.0, 0.31],
+            "mandatory_portal_waypoints": anchors,
+            "portal_preflight_verified": True,
+            "corridor_extension_applied": True,
+        }
+        path = {"success": True, "reason": "portal_path_found",
+                "path": [(0.0, 0.0)] + anchors[:-1]}
+        with mock.patch("builtins.open", mock.mock_open()):
+            result = manager._refine_path(10, path, goal)
+        self.assertEqual(result["execution_waypoints"],
+                         [(1.45, 0.0), anchors[0], anchors[-1]])
+        self.assertFalse(any(
+            abs(point[0] - 2.90) < 1e-6
+            for point in result["execution_waypoints"]))
+
+    def test_dense_3d_probe_is_not_rejected_again_by_stale_2d_map(self):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        result = manager._refine_path(
+            9,
+            {"success": True,
+             "path": [(0.0, 0.0), (0.3, 0.0), (0.6, 0.0)]},
+            {"verified_corridor_3d_probe": True})
+        self.assertTrue(result["success"])
+        self.assertEqual(
+            result["refinement_status"],
+            "dense_live_3d_corridor_probe_verified")
+        self.assertAlmostEqual(result["refined_path_length"], 0.6)
+
+    def test_run116_corridor_resume_bounds_live_start_scan_checks(self):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.enable_scan_lite = True
+        manager.room_two_pose_waypoint_simplification = False
+        manager.scan_config = baseline_manager_module.RefinerConfig()
+        manager.waypoint_spacing = 0.30
+        manager.lock = threading.RLock()
+        manager.pose = (0.0, 0.0, 2.4, 0.0)
+        manager.trajectory = [
+            (0.0, -0.10, 0.0, 2.4, 0.0),
+            (1.0, 0.0, 0.0, 2.4, 0.0),
+        ]
+        manager.fastlio_registration_healthy = True
+        manager.corridor_anchor = np.asarray([0.0, 0.0])
+        manager.corridor_axis = np.asarray([1.0, 0.0])
+        manager.scan_history = []
+        manager.scan_duration_pub = mock.Mock()
+        manager.output_dir = "/tmp"
+        manager.elapsed = mock.Mock(return_value=1.0)
+        occupied = baseline_manager_module.FootprintCheck(
+            map_available=True,
+            occupied_collision=True,
+            unknown_queries=0,
+            occupied_queries=1,
+            status="stale_live_start_collision")
+        clear = baseline_manager_module.FootprintCheck(
+            map_available=True, occupied_collision=False,
+            unknown_queries=0, occupied_queries=0,
+            minimum_obstacle_clearance=0.40, status="clear")
+        manager._scan_check = mock.Mock(
+            side_effect=[occupied] + [clear] * 32)
+
+        with mock.patch("builtins.open", mock.mock_open()):
+            result = manager._refine_path(
+                12,
+                {"success": True, "path": [(0.0, 0.0), (0.55, 0.0)]},
+                {"source": "corridor_resume_centerline",
+                 "position": [0.55, 0.0, 2.4]})
+
+        self.assertTrue(result["success"])
+        self.assertLess(manager._scan_check.call_count, 20)
+        self.assertTrue(manager.scan_history)
+        record = manager.scan_history[-1]
+        self.assertTrue(record["corridor_start_footprint_override"])
+        self.assertEqual(record["corridor_start_footprint_override_reason"],
+                         "healthy_continuous_live_corridor_pose")
+
+
+    def test_executor_rejects_context_without_f2_gate(self):
+        self.assertIsNone(GoalExecutor._validated_floor_context({
+            "mode": "first_floor", "floor_index": 0,
+            "minimum_pose_z": 1.80, "maximum_pose_z": 3.80,
+        }))
+
+    def test_second_floor_localization_uses_relative_frame_disagreement(self):
+        result = SecondFloorMission._localization_disagreement(
+            (0.0, 8.8, 2.9, 1.5),
+            (0.02, 8.81, 2.9, 1.54),
+            (24.0, -0.2, 2.9, -2.7),
+            (24.03, -0.19, 2.9, -2.65))
+        self.assertLess(result["relative_planar_disagreement_m"], 0.02)
+        self.assertAlmostEqual(
+            result["relative_yaw_disagreement_rad"], 0.01, places=6)
+
+    def test_second_floor_localization_detects_stationary_lio_drift(self):
+        result = SecondFloorMission._localization_disagreement(
+            (0.0, 8.8, 2.9, 1.5),
+            (0.0, 8.8, 2.9, 1.5),
+            (24.0, -0.2, 2.9, -2.7),
+            (29.2, -0.2, 2.9, -2.7))
+        self.assertAlmostEqual(
+            result["relative_planar_disagreement_m"], 5.2, places=6)
+
+    def test_second_floor_localization_detects_missed_stair_height(self):
+        result = SecondFloorMission._localization_disagreement(
+            (-0.13, 8.60, 2.912, 1.39),
+            (-0.13, 8.60, 2.912, 1.39),
+            (22.82, 6.18, 1.020, -0.19),
+            (22.82, 6.18, 1.020, -0.19))
+        self.assertAlmostEqual(
+            result["absolute_vertical_disagreement_m"], 1.892, places=6)
+
+    def test_second_floor_localization_accepts_normal_sensor_height_offset(self):
+        result = SecondFloorMission._localization_disagreement(
+            (-0.11, 8.60, 2.912, 1.40),
+            (-0.11, 8.60, 2.912, 1.40),
+            (22.03, -0.07, 2.500, -0.19),
+            (22.03, -0.07, 2.500, -0.19))
+        self.assertLess(
+            result["absolute_vertical_disagreement_m"], 0.65)
+
+    def test_run110_handoff_hint_flips_fresh_axis_out_of_stair_lobby(self):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.corridor_axis = None
+        manager.corridor_forward_axis_hint = np.asarray([
+            np.cos(-0.23), np.sin(-0.23)])
+        oriented = manager._orient_corridor_axis_to_forward_hint(
+            np.asarray([-1.0, 0.0]))
+        self.assertGreater(
+            float(np.dot(oriented, manager.corridor_forward_axis_hint)), 0.0)
+        self.assertGreater(oriented[0], 0.0)
+
+    def test_established_axis_can_reverse_for_terminal_return(self):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.corridor_axis = np.asarray([1.0, 0.0])
+        manager.corridor_forward_axis_hint = np.asarray([1.0, 0.0])
+        reversed_axis = manager._orient_corridor_axis_to_forward_hint(
+            np.asarray([-1.0, 0.0]))
+        self.assertLess(reversed_axis[0], 0.0)
+
+    def test_runtime_truth_floor_loss_cancels_active_floor_manager(self):
+        mission = SecondFloorMission.__new__(SecondFloorMission)
+        mission._lock = threading.RLock()
+        mission._floor_word = "SECOND"
+        mission._truth_pose = None
+        mission._truth_pose_received_at = -1.0
+        mission._second_floor_elevation = 2.6
+        mission._truth_floor_loss_margin = 0.05
+        mission._truth_floor_loss_required_samples = 3
+        mission._truth_floor_loss_count = 0
+        mission._truth_floor_loss_reported = False
+        mission._active_manager = mock.Mock()
+        mission._truth_correction_pub = mock.Mock()
+        mission._cmd_pub = mock.Mock()
+        mission._state_pub = mock.Mock()
+        mission._append_localization_diagnostic = mock.Mock()
+        pose = SimpleNamespace(
+            position=SimpleNamespace(x=1.0, y=2.0, z=1.9),
+            orientation=SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0))
+        twist = SimpleNamespace(
+            linear=SimpleNamespace(x=0.0, y=0.0, z=0.0),
+            angular=SimpleNamespace(x=0.0, y=0.0, z=0.0))
+        message = SimpleNamespace(
+            name=["a1_gazebo"], pose=[pose], twist=[twist])
+        with mock.patch(
+                "second_floor_exploration_manager.rospy.Time.now",
+                return_value=mock.Mock()):
+            for _ in range(3):
+                mission._on_truth_states(message)
+        mission._active_manager.request_external_abort.assert_called_once_with(
+            "SECOND_FLOOR_TRUTH_FLOOR_HEIGHT_LOST")
+        mission._cmd_pub.publish.assert_called_once()
+        mission._append_localization_diagnostic.assert_called_once()
+
+    def test_second_floor_truth_pose_is_relayed_for_runtime_guard(self):
+        mission = SecondFloorMission.__new__(SecondFloorMission)
+        mission._lock = threading.RLock()
+        mission._truth_pose = None
+        mission._truth_pose_received_at = -1.0
+        mission._truth_correction_pub = mock.Mock()
+        pose = SimpleNamespace(
+            position=SimpleNamespace(x=1.0, y=2.0, z=2.9),
+            orientation=SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0))
+        twist = SimpleNamespace(
+            linear=SimpleNamespace(x=0.1, y=0.2, z=0.0),
+            angular=SimpleNamespace(x=0.0, y=0.0, z=0.3))
+        message = SimpleNamespace(
+            name=["ground", "a1_gazebo"],
+            pose=[pose, pose], twist=[twist, twist])
+        with mock.patch(
+                "second_floor_exploration_manager.rospy.Time.now",
+                return_value=mock.Mock()):
+            SecondFloorMission._on_truth_states(mission, message)
+        mission._truth_correction_pub.publish.assert_called_once()
+        relayed = mission._truth_correction_pub.publish.call_args.args[0]
+        self.assertEqual(relayed.header.frame_id, "world")
+        self.assertEqual(relayed.child_frame_id, "a1_gazebo")
+        self.assertAlmostEqual(relayed.pose.pose.position.z, 2.9)
+        self.assertAlmostEqual(relayed.twist.twist.linear.y, 0.2)
+
+    def test_second_floor_corridor_guards_are_process_local(self):
+        overrides = SecondFloorMission._second_floor_only_parameter_overrides(
+            unified_fast_profile=True)
+        self.assertEqual(overrides["corridor_door_post_latch_motion_m"], 0.35)
+        self.assertEqual(
+            overrides["first_room_minimum_corridor_station_m"], -0.25)
+        self.assertNotIn(
+            "corridor_forward_recovery_minimum_advance_m", overrides)
+        self.assertNotIn("corridor_forward_lateral_search_m", overrides)
+        self.assertNotIn("room_require_portal_preflight_for_entry", overrides)
+        self.assertNotIn("room_entry_retry_limit", overrides)
+        self.assertTrue(
+            overrides["corridor_short_door_commit_after_establishment"])
+        self.assertNotIn(
+            "enforce_room_phase_target_deadline", overrides)
+        self.assertTrue(
+            overrides["corridor_guided_entry_door_context"])
+        self.assertAlmostEqual(
+            overrides["corridor_guided_entry_minimum_progress_m"], 3.5)
+        self.assertAlmostEqual(
+            overrides["corridor_door_forward_commit_distance_m"], 0.35)
+        self.assertAlmostEqual(
+            overrides["local_door_minimum_semantic_width_m"], 0.60)
+        self.assertEqual(overrides["planner_timeout"], 8.0)
+        self.assertNotIn("corridor_search_speed", overrides)
+        self.assertNotIn("corridor_forward_distance", overrides)
+        self.assertTrue(
+            overrides["enable_corridor_monotonic_forward_probe"])
+        self.assertAlmostEqual(
+            overrides["corridor_monotonic_probe_distance_m"], 0.60)
+        self.assertAlmostEqual(
+            overrides["corridor_monotonic_probe_sample_spacing_m"], 0.10)
+        self.assertEqual(overrides["corridor_monotonic_probe_limit"], 24)
+        self.assertNotIn(
+            "corridor_side_candidate_max_forward_station_m", overrides)
+        self.assertNotIn("enable_terminal_door_context_fallback", overrides)
+        self.assertFalse(
+            overrides["room_exit_require_raw_corridor_confirmation"])
+        self.assertFalse(
+            overrides["room_exit_require_station_corridor_confirmation"])
+        self.assertTrue(
+            overrides["room_accept_reversed_entry_trace_exit"])
+        self.assertEqual(
+            overrides["room_corridor_side_confirmation_count"], 2)
+        self.assertAlmostEqual(
+            overrides["room_door_minimum_centerline_lateral_m"], 0.25)
+        self.assertAlmostEqual(
+            overrides["room_reversed_entry_trace_exit_tolerance_m"], 0.30)
+        self.assertEqual(
+            overrides["room_reversed_entry_trace_corridor_extension_m"],
+            0.0)
+        self.assertTrue(overrides["enable_terminal_missing_room_retrace"])
+        self.assertAlmostEqual(
+            overrides[
+                "terminal_missing_room_retrace_minimum_outbound_progress_m"],
+            12.0)
+        self.assertAlmostEqual(
+            overrides["room_door_cooldown_seconds"], 20.0)
+        self.assertTrue(overrides["enable_known_unvisited_door_retry"])
+        self.assertAlmostEqual(
+            overrides["known_unvisited_door_retry_distance_m"], 6.5)
+        self.assertNotIn(
+            "terminal_return_blocked_by_known_unvisited_door", overrides)
+
+    def test_guided_upper_floor_arms_from_first_confirmed_door(self):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.corridor_door_detection_armed = False
+        manager.corridor_established = False
+        manager.corridor_entry_forward_lock = False
+        manager.corridor_entry_anchor = None
+        manager.corridor_entry_elapsed_sec = None
+        manager.corridor_entry_source = None
+        manager.corridor_guided_entry_door_context = True
+        manager.corridor_forward_axis_hint = np.asarray([1.0, 0.0])
+        manager.mission_start_pose = (0.0, 0.0, 2.46, 0.0)
+        manager.corridor_local_door_entry_lock_minimum_progress = 2.0
+        manager.corridor_guided_entry_minimum_progress = 3.5
+        manager.corridor_centerline_membership_tolerance = 0.75
+        manager.lock = threading.RLock()
+        manager.local_entry_status = {"candidates": [{
+            "confirmed": True,
+            "astar_reachable": True,
+            "scan_lite_safe": True,
+            "width_m": 0.65,
+            "unknown_behind_m2": 2.0,
+            "free_behind_m2": 0.0,
+        }]}
+        manager.local_door_status = {}
+        manager.local_door_minimum_semantic_width = 0.60
+        manager.local_door_maximum_semantic_width = 1.50
+        manager.local_door_minimum_unknown = 1.0
+        manager.local_door_minimum_free = 6.0
+        manager.corridor_confirmation_count = 0
+        manager.corridor_confirmation_updates = 3
+        manager.corridor_sweep_history = []
+        manager.corridor_door_forward_commit_distance = 0.35
+        manager.elapsed = lambda: 14.0
+
+        armed = manager._update_corridor_door_phase(
+            (3.6, 0.1, 2.46, 0.0), {
+                "axis": [1.0, 0.0],
+                "raw_is_corridor": False,
+                "centerline_point": [3.6, 0.0],
+            })
+
+        self.assertFalse(armed)
+        self.assertTrue(manager.corridor_established)
+        self.assertTrue(manager.corridor_established_from_local_door)
+        self.assertTrue(manager.corridor_entry_forward_lock)
+        self.assertTrue(manager.corridor_door_forward_pending)
+        self.assertFalse(manager.corridor_door_detection_armed)
+        np.testing.assert_allclose(
+            manager.corridor_station_origin, [0.0, 0.0])
+        self.assertAlmostEqual(manager.corridor_door_arm_high_water, 3.6)
+        self.assertTrue(
+            manager.corridor_sweep_history[-2]["guided_entry_context"])
+
+    def test_run108_first_real_door_pair_survives_lobby_throat_guard(self):
+        manager = BaselineExplorationManager.__new__(BaselineExplorationManager)
+        manager.corridor_station_axis = np.asarray([1.0, 0.0])
+        manager.corridor_station_origin = np.asarray([0.0, 0.0])
+        manager.corridor_forward_station_sign = 1.0
+        manager.first_room_minimum_corridor_station = -0.25
+        manager.room_scheduler = SimpleNamespace(detector=SimpleNamespace(doors=[]))
+        manager._missing_room_retrace_active = lambda: False
+        manager.initial_lobby_door_rejections = set()
+        manager.corridor_sweep_history = []
+        manager.elapsed = lambda: 67.83
+        self.assertFalse(manager._reject_initial_lobby_throat((.173, 1.0), "left", "test"))
+        self.assertFalse(manager._reject_initial_lobby_throat((-.047, -1.0), "right", "test"))
+        self.assertTrue(manager._reject_initial_lobby_throat((-4.0, 1.0), "lobby", "test"))
+
+    def test_missing_room_retrace_recovers_near_pair_but_rejects_lobby(self):
+        manager = BaselineExplorationManager.__new__(BaselineExplorationManager)
+        manager.corridor_station_axis = np.asarray([1.0, 0.0])
+        manager.corridor_station_origin = np.asarray([0.0, 0.0])
+        manager.corridor_forward_station_sign = 1.0
+        manager.first_room_minimum_corridor_station = 2.0
+        manager.return_room_retrace_minimum_corridor_station = -2.25
+        manager.room_scheduler = SimpleNamespace(
+            detector=SimpleNamespace(doors=[SimpleNamespace(visited=True)]))
+        manager._missing_room_retrace_active = lambda: True
+        manager.initial_lobby_door_rejections = set()
+        manager.corridor_sweep_history = []
+        manager.elapsed = lambda: 154.0
+
+        self.assertFalse(manager._reject_initial_lobby_throat(
+            (-1.70, 1.0), "near-room", "test"))
+        self.assertTrue(manager._reject_initial_lobby_throat(
+            (-3.20, 1.0), "lobby", "test"))
+        self.assertEqual(
+            manager.corridor_sweep_history[-1]["minimum_station_m"], -2.25)
+
+    def test_run108_verified_short_forward_probe_bypasses_long_goal_filter(self):
+        manager = BaselineExplorationManager.__new__(BaselineExplorationManager)
+        manager.room_scheduler = SimpleNamespace(config=SimpleNamespace(enabled=True))
+        manager.corridor_sweep_history = []
+        manager.elapsed = lambda: 112.5
+        goal = {
+            "source": "corridor_sweep",
+            "position": [37.69, -0.43, 2.46],
+            "corridor_no_frontier_short_probe": True,
+        }
+        path = {"success": True, "path": [(37.2, -0.4), (37.69, -0.43)]}
+        preserved_goal, preserved_path = manager._apply_corridor_sweep(6, goal, path)
+        self.assertIs(preserved_goal, goal)
+        self.assertIs(preserved_path, path)
+        self.assertEqual(manager.corridor_sweep_history[-1]["event"], "CORRIDOR_NO_FRONTIER_SHORT_PROBE_PRESERVED")
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.last_room_exit_side = None
+        manager.last_room_exit_pose = None
+        manager.room_door_minimum_centerline_lateral = 0.25
+        manager.corridor_station_origin = np.asarray(
+            [23.5458, 1.2090], dtype=float)
+        manager.corridor_station_axis = np.asarray(
+            [0.9848, 0.17365], dtype=float)
+        manager.corridor_sweep_history = []
+        manager.elapsed = lambda: 180.555
+
+        # The real room-0 centre lies across the corridor wall, while run75's
+        # estimated room-02 centre lies on the online centreline.
+        self.assertTrue(manager._door_centerline_lateral_admissible(
+            [26.1887, 2.1422], "test", "real"))
+        self.assertFalse(manager._door_centerline_lateral_admissible(
+            [27.3414, 1.9250], "test", "run75-fake"))
+        event = manager.corridor_sweep_history[-1]
+        self.assertEqual(
+            event["event"],
+            "DOOR_REJECTED_INSIDE_CORRIDOR_CENTER_BAND")
+        self.assertLess(event["centerline_lateral_m"], 0.10)
+
+        # Default/F1 remains disabled and admits the same geometry.
+        manager.room_door_minimum_centerline_lateral = 0.0
+        self.assertTrue(manager._door_centerline_lateral_admissible(
+            [27.3414, 1.9250], "test", "f1-default"))
+
+    def test_upper_floor_terminal_return_waits_for_registered_missing_door(self):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.terminal_return_blocked_by_known_unvisited_door = True
+        manager.room_scheduler = SimpleNamespace(
+            detector=SimpleNamespace(doors=[
+                SimpleNamespace(door_id="door_1", visited=True,
+                                completed=False),
+                SimpleNamespace(door_id="door_2", visited=False,
+                                completed=False),
+            ]))
+        self.assertTrue(
+            manager._terminal_return_has_blocking_known_door(False))
+        self.assertFalse(
+            manager._terminal_return_has_blocking_known_door(True))
+        manager.terminal_return_blocked_by_known_unvisited_door = False
+        self.assertFalse(
+            manager._terminal_return_has_blocking_known_door(False))
+
+    def test_failed_second_floor_result_cannot_arm_next_stair(self):
+        self.assertFalse(SecondFloorMission._exploration_handoff_authorized(
+            "ROOM_EXIT_BLOCKED", 1, 4, False))
+        self.assertFalse(SecondFloorMission._exploration_handoff_authorized(
+            "TIME_LIMIT", 4, 4, False))
+
+    def test_completed_return_arms_next_stair_after_four_exits(self):
+        self.assertTrue(SecondFloorMission._exploration_handoff_authorized(
+            "STAIR_CORRIDOR_EXIT_HANDOFF", 4, 4, False))
+
+    def test_upper_stair_trigger_requires_exact_success_token(self):
+        token = "SECOND_FLOOR_EXPLORATION_COMPLETE"
+        self.assertTrue(StairTransition._mission_trigger_matches(token, token))
+        self.assertFalse(StairTransition._mission_trigger_matches(
+            token + "_DIAGNOSTIC", token))
+        self.assertFalse(StairTransition._mission_trigger_matches(
+            "SECOND_FLOOR_EXPLORATION_FAILED", token))
+
+    def test_run114_pre_handoff_wait_can_be_unbounded(self):
+        self.assertFalse(SecondFloorMission._handoff_wait_expired(
+            0.0, None, 0.0, 1200.0, 5000.0))
+        self.assertFalse(SecondFloorMission._handoff_wait_expired(
+            0.0, 100.0, 0.0, 1200.0, 1299.9))
+        self.assertTrue(SecondFloorMission._handoff_wait_expired(
+            0.0, 100.0, 0.0, 1200.0, 1300.0))
+
+    def test_third_floor_waiter_does_not_expire_during_f2_exploration(self):
+        launch = ET.parse(os.path.join(
+            SCRIPT_DIR, "..", "launch",
+            "baseline_fastlio_exploration.launch"))
+        root = launch.getroot()
+        node = next(
+            item for item in root.findall("node")
+            if item.get("name") == "third_floor_exploration_manager")
+        params = {item.get("name"): item.get("value")
+                  for item in node.findall("param")}
+        args = {item.get("name"): item.get("default")
+                for item in root.findall("arg")}
+        self.assertEqual(node.get("required"), "true")
+        self.assertEqual(
+            params["pre_handoff_wait_timeout_sec"],
+            "$(arg third_floor_pre_handoff_wait_timeout_sec)")
+        self.assertEqual(
+            args["third_floor_pre_handoff_wait_timeout_sec"], "0.0")
+        fuel_launch = ET.parse(os.path.join(
+            SCRIPT_DIR, "..", "launch",
+            "fuel_semantic_fastlio_exploration.launch"))
+        fuel_root = fuel_launch.getroot()
+        fuel_args = {item.get("name"): item.get("default")
+                     for item in fuel_root.findall("arg")}
+        baseline_include = next(
+            item for item in fuel_root.findall("include")
+            if item.get("file", "").endswith(
+                "baseline_fastlio_exploration.launch"))
+        forwarded = {item.get("name"): item.get("value")
+                     for item in baseline_include.findall("arg")}
+        self.assertEqual(
+            fuel_args["third_floor_pre_handoff_wait_timeout_sec"], "0.0")
+        self.assertEqual(forwarded[
+            "third_floor_pre_handoff_wait_timeout_sec"],
+            "$(arg third_floor_pre_handoff_wait_timeout_sec)")
+
+    def test_third_floor_waiter_latches_exact_source_floor_failure(self):
+        mission = SecondFloorMission.__new__(SecondFloorMission)
+        mission._lock = threading.RLock()
+        mission._source_floor_failure_token = \
+            "SECOND_FLOOR_EXPLORATION_FAILED"
+        mission._source_floor_failed = False
+        mission._on_source_floor_state(SimpleNamespace(
+            data="SECOND_FLOOR_EXPLORATION_COMPLETE"))
+        self.assertFalse(mission._source_floor_failed)
+        mission._on_source_floor_state(SimpleNamespace(
+            data="SECOND_FLOOR_EXPLORATION_FAILED"))
+        self.assertTrue(mission._source_floor_failed)
+
+    def test_terminal_return_policy_rejects_partial_room_count(self):
+        self.assertFalse(SecondFloorMission._exploration_handoff_authorized(
+            "STAIR_CORRIDOR_EXIT_HANDOFF_TRUTH_GATE", 3, 4, True))
+        self.assertFalse(SecondFloorMission._exploration_handoff_authorized(
+            "STAIR_CORRIDOR_EXIT_HANDOFF_TRUTH_GATE", 3, 4, False))
+        self.assertFalse(SecondFloorMission._exploration_handoff_authorized(
+            "STAIR_CORRIDOR_EXIT_HANDOFF_TRUTH_GATE", 3, 3, True))
+
+    def test_run80_terminal_return_ignores_failed_portal(self):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.terminal_return_blocked_by_known_unvisited_door = False
+        manager.room_scheduler = SimpleNamespace(
+            detector=SimpleNamespace(doors=[SimpleNamespace(
+                door_id="failed_far_portal", visited=False,
+                completed=False)]))
+        self.assertFalse(
+            manager._terminal_return_has_blocking_known_door(False))
+        self.assertFalse(
+            SecondFloorMission._exploration_handoff_authorized(
+                "STAIR_CORRIDOR_EXIT_HANDOFF_TRUTH_GATE", 3, 4, True))
+
+    def test_second_floor_terminal_retrace_requires_outbound_progress(self):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.terminal_missing_room_retrace_minimum_outbound_progress = 12.0
+        manager.corridor_station_axis = np.asarray([1.0, 0.0])
+        manager.corridor_station_origin = np.asarray([3.0, -2.0])
+        manager.corridor_forward_station_sign = 1.0
+        self.assertFalse(
+            manager._terminal_missing_room_retrace_progress_met(
+                (14.9, -2.0, 2.8)))
+        self.assertTrue(
+            manager._terminal_missing_room_retrace_progress_met(
+                (15.1, -2.0, 2.8)))
+
+    def test_run77_axis_relock_synchronizes_station_frame(self):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        old_axis = np.asarray([0.979626310785161, -0.2008290099001019])
+        old_axis /= np.linalg.norm(old_axis)
+        old_origin = np.asarray([15.752156853302639,
+                                 -0.39958992868390775])
+        manager.corridor_station_axis = old_axis.copy()
+        manager.corridor_station_origin = old_origin.copy()
+        manager.corridor_axis = old_axis.copy()
+        manager.corridor_anchor = old_origin.copy()
+        manager.corridor_forward_station_sign = 1.0
+        manager.corridor_forward_station_high_water = 7.0
+        manager.corridor_station_centerline_rebased = False
+        sync = manager._synchronize_corridor_station_frame_after_relock(
+            [1.0, 0.0], [18.45, -0.93],
+            (18.45, -0.93, 2.73, 0.0))
+        self.assertEqual(sync["new_axis"], [1.0, 0.0])
+        self.assertTrue(np.allclose(
+            manager.corridor_station_axis, [1.0, 0.0]))
+        self.assertAlmostEqual(manager.corridor_station_origin[1], -0.93)
+        observed_exit = np.asarray([22.09326083401102,
+                                    -0.9070237629626354])
+        old_lateral = abs(float(np.dot(
+            observed_exit - old_origin, [-old_axis[1], old_axis[0]])))
+        new_lateral = abs(float(np.dot(
+            observed_exit - manager.corridor_station_origin, [0.0, 1.0])))
+        self.assertGreater(old_lateral, 0.75)
+        self.assertLess(new_lateral, 0.05)
+
+    def test_run78_upper_floor_keeps_opposite_door_during_recenter(self):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.pending_paired_opposite_door = {
+            "candidate_id": "local-door-1-track-127",
+            "corridor_side": [29.8555, 0.6764],
+            "stored_elapsed": 104.995,
+        }
+        manager.paired_opposite_recenter_pending_timeout = 30.0
+        manager.lock = threading.RLock()
+        manager.pose = (29.8555, 0.6764, 2.4334, 0.0)
+        manager.grid = object()
+        manager.reached_tolerance = 0.15
+        manager.corridor_sweep_history = []
+        manager.local_candidate_attempts = {}
+        manager.elapsed = lambda: 122.097
+        scheduler = SimpleNamespace(active_door=None)
+        scheduler.consider_local_door_candidate = (
+            lambda *_: SimpleNamespace(door_id="estimated_door_02"))
+        scheduler.next_goal = lambda *_: {
+            "position": [29.9, 1.7, 0.0],
+            "source": "lightweight_room_entry",
+        }
+        manager.room_scheduler = scheduler
+
+        goal = manager._plan_pending_paired_opposite_door()
+
+        self.assertIsNotNone(goal)
+        self.assertEqual(goal["scheduler_phase"],
+                         "PAIRED_OPPOSITE_DOOR_ENTRY")
+        self.assertEqual(goal["door_takeover_source"],
+                         "paired_opposite_door_recenter")
+        self.assertIsNone(manager.pending_paired_opposite_door)
+        self.assertEqual(
+            SecondFloorMission._second_floor_only_parameter_overrides()[
+                "paired_opposite_recenter_pending_timeout_sec"], 30.0)
+
+    def test_run79_pre_ascent_alignment_has_slow_yaw_budget(self):
+        launch_path = os.path.abspath(os.path.join(
+            SCRIPT_DIR, "..", "launch",
+            "baseline_fastlio_exploration.launch"))
+        root = ET.parse(launch_path).getroot()
+        argument = next(item for item in root.findall("arg")
+                        if item.get("name") ==
+                        "pre_ascent_align_timeout_sec")
+        self.assertEqual(float(argument.get("default")), 20.0)
+        stair_nodes = [node for node in root.findall(".//node")
+                       if node.get("type") ==
+                       "stair_transition_manager.py"]
+        self.assertGreaterEqual(len(stair_nodes), 2)
+        for node in stair_nodes:
+            parameter = next(item for item in node.findall("param")
+                             if item.get("name") ==
+                             "pre_ascent_align_timeout_sec")
+            self.assertEqual(parameter.get("value"),
+                             "$(arg pre_ascent_align_timeout_sec)")
+
+    def test_second_floor_raw_corridor_uses_short_door_commit(self):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.corridor_station_origin = np.asarray([0.0, 0.0])
+        manager.corridor_anchor = np.asarray([0.0, 0.0])
+        manager.corridor_door_forward_pending = True
+        manager.corridor_established_from_local_door = False
+        manager.corridor_short_door_commit_after_establishment = True
+        manager.corridor_door_detection_armed = False
+        manager.corridor_door_forward_commit_distance = 1.5
+        manager.corridor_forward_distance = 7.0
+        manager.corridor_forward_recovery_minimum_advance = 0.35
+        manager.corridor_forward_lateral_search = 0.0
+        manager.corridor_minimum_advance = 2.5
+        manager.clearance = 0.38
+        manager.reached_tolerance = 0.15
+        manager.corridor_reversed = False
+        manager.corridor_no_frontier_exhaustion_streak = 0
+        with mock.patch.object(
+                baseline_manager_module, "astar_safe_path",
+                return_value={"success": True,
+                              "path": [(0.0, 0.0), (1.5, 0.0)]}):
+            goal, _ = manager._corridor_forward_plan(
+                1, (0.0, 0.0, 2.8), object(), np.asarray([1.0, 0.0]))
+        self.assertEqual(goal["source"], "corridor_door_forward_commit")
+        self.assertAlmostEqual(goal["corridor_advance_m"], 1.5)
+
+    def test_run81_first_floor_far_pair_search_uses_short_segments(self):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.corridor_station_origin = np.asarray([0.0, 0.0])
+        manager.corridor_anchor = np.asarray([0.0, 0.0])
+        manager.corridor_door_forward_pending = False
+        manager.corridor_forward_distance = 7.0
+        manager.corridor_far_pair_search_advance = 3.0
+        manager.corridor_far_pair_search_target_advance = 0.0
+        manager.corridor_far_pair_search_after_exits = 2
+        manager.corridor_forward_recovery_minimum_advance = 0.35
+        manager.corridor_forward_lateral_search = 0.0
+        manager.corridor_minimum_advance = 2.5
+        manager.clearance = 0.38
+        manager.reached_tolerance = 0.15
+        manager.corridor_reversed = False
+        manager.corridor_no_frontier_exhaustion_streak = 0
+        manager.corridor_terminal_return_latched = False
+        manager.corridor_sweep_history = []
+        manager.elapsed = mock.Mock(return_value=120.0)
+        manager._missing_room_retrace_active = lambda: False
+        manager.room_scheduler = SimpleNamespace(
+            active_door=None, detector=SimpleNamespace(doors=[
+                SimpleNamespace(visited=index < 2) for index in range(4)
+            ]))
+        with mock.patch.object(
+                baseline_manager_module, "astar_safe_path",
+                return_value={"success": True,
+                              "path": [(0.0, 0.0), (3.0, 0.0)]}):
+            goal, _ = manager._corridor_forward_plan(
+                1, (0.0, 0.0, 2.8), object(), np.asarray([1.0, 0.0]))
+        self.assertAlmostEqual(goal["corridor_advance_m"], 3.0)
+        self.assertEqual(manager.corridor_sweep_history[-1]["event"],
+                         "CORRIDOR_FAR_PAIR_SEARCH_ADVANCE_CLAMPED")
+        overrides = SecondFloorMission._second_floor_only_parameter_overrides(
+            unified_fast_profile=True)
+        for shared_parameter in (
+                "corridor_far_pair_search_maximum_advance_m",
+                "corridor_partial_return_minimum_outbound_progress_m",
+                "corridor_partial_return_reserve_seconds",
+                "corridor_partial_return_room_minimum_remaining_seconds"):
+            self.assertNotIn(shared_parameter, overrides)
+
+        continuity = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        continuity.corridor_partial_return_minimum_outbound_progress = 20.0
+        continuity.corridor_partial_return_reserve = 160.0
+        continuity.corridor_forward_station_high_water = 19.8
+        continuity.maximum_duration = 400.0
+        continuity.room_target_count = 4
+        continuity.room_scheduler = SimpleNamespace(
+            active_door=None, detector=SimpleNamespace(doors=[
+                SimpleNamespace(visited=True) for _ in range(4)
+            ]))
+        continuity.elapsed = lambda: 200.0
+        self.assertEqual(continuity._partial_corridor_return_trigger(),
+                         "online_outbound_progress")
+        continuity.corridor_forward_station_high_water = 5.0
+        continuity.elapsed = lambda: 240.0
+        self.assertEqual(continuity._partial_corridor_return_trigger(),
+                         "next_floor_time_reserve")
+
+    def test_run115_room_deadline_defers_until_four_exits_or_hard_limit(self):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.enforce_room_phase_target_deadline = True
+        manager.room_phase_target_seconds = 150.0
+        manager.room_phase_deadline_minimum_exited_rooms = 4
+        manager.room_phase_deadline_hard_overrun = 150.0
+        manager.room_phase_deadline_deferred_logged = False
+        manager.corridor_sweep_history = []
+        manager.room_scheduler = SimpleNamespace(
+            first_room_started_at=10.0,
+            detector=SimpleNamespace(doors=[
+                SimpleNamespace(visited=index < 2) for index in range(4)
+            ]))
+        manager.elapsed = mock.Mock(return_value=170.0)
+
+        self.assertIsNone(manager._partial_corridor_return_trigger())
+        self.assertEqual(
+            manager.corridor_sweep_history[-1]["event"],
+            "ROOM_PHASE_DEADLINE_DEFERRED_FOR_MISSING_ROOMS")
+
+        manager.elapsed.return_value = 310.0
+        self.assertEqual(manager._partial_corridor_return_trigger(),
+                         "room_phase_deadline")
+
+
+    def test_active_corridor_goal_can_arm_confirmed_door_preemption(self):
+        """A long in-flight goal must not starve the room scheduler."""
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+
+        manager.enable_local_doorway_detector = True
+        manager.corridor_door_detection_armed = False
+        manager.room_scheduler = SimpleNamespace(active_door=None)
+        manager.lock = threading.RLock()
+        manager.local_entry_status = {"candidates": []}
+        manager.pose = (10.0, 0.0, 0.0, 0.0)
+        manager.grid = object()
+        manager.last_local_entry_received = 0.5
+        manager.local_candidate_freshness = 2.0
+        manager.corridor_sweep_history = []
+        manager.elapsed = mock.Mock(return_value=1.0)
+
+        def arm_during_refresh(_pose, _context):
+            manager.corridor_door_detection_armed = True
+            return True
+
+        phase_context = {
+            "axis": [1.0, 0.0], "raw_is_corridor": True,
+            "centerline_point": [10.0, 0.0],
+        }
+        with mock.patch.object(
+                manager, "_corridor_context", return_value=phase_context), \
+                mock.patch.object(
+                    manager, "_update_corridor_door_phase",
+                    side_effect=arm_during_refresh) as update_phase, \
+                mock.patch.object(
+                    manager, "_door_search_corridor_context",
+                    return_value=None):
+            candidate = manager._local_door_preemption_candidate()
+
+        self.assertIsNone(candidate)
+        self.assertTrue(manager.corridor_door_detection_armed)
+        update_phase.assert_called_once_with(manager.pose, phase_context)
+        self.assertEqual(
+            manager.corridor_sweep_history[-1]["event"],
+            "CORRIDOR_DOOR_PHASE_ARMED_DURING_ACTIVE_GOAL")
+
+    def test_second_floor_exit_requires_live_raw_corridor(self):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.room_exit_require_raw_corridor_confirmation = True
+        manager.room_exit_require_station_corridor_confirmation = False
+        manager.corridor_station_centerline_rebased = False
+        with mock.patch.object(
+                manager, "_corridor_context",
+                return_value={"raw_is_corridor": False}):
+            confirmed, reason = manager._room_exit_corridor_confirmed(
+                (1.0, 2.0, 2.8, 0.0), object())
+        self.assertFalse(confirmed)
+        self.assertEqual(reason, "exit_raw_corridor_geometry_unconfirmed")
+
+    def test_first_floor_exit_guard_default_is_non_interfering(self):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.room_exit_require_raw_corridor_confirmation = False
+        manager.room_exit_require_station_corridor_confirmation = False
+        confirmed, reason = manager._room_exit_corridor_confirmed(None, None)
+        self.assertTrue(confirmed)
+        self.assertIsNone(reason)
+
+    def test_run67_false_exit_is_outside_established_first_floor_band(self):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.room_exit_require_raw_corridor_confirmation = False
+        manager.room_exit_require_station_corridor_confirmation = True
+        manager.corridor_station_centerline_rebased = True
+        manager.corridor_centerline_membership_tolerance = 0.75
+        manager.room_exit_station_corridor_tolerance = 1.0
+        manager.corridor_station_origin = np.asarray(
+            [7.8780187518297, -1.4396349173917236])
+        manager.corridor_station_axis = np.asarray(
+            [0.9995096416055005, 0.03131255878467945])
+        # Actual run67 fourth-room endpoint: it crossed the estimated oblique
+        # door plane but remained in the physical far room.
+        confirmed, reason = manager._room_exit_corridor_confirmed(
+            (26.1071, -3.4975, 0.0, 0.0), object())
+        self.assertFalse(confirmed)
+        self.assertEqual(reason, "exit_outside_established_corridor_band")
+        # The preceding physical far-room exit lies on the same online line.
+        confirmed, reason = manager._room_exit_corridor_confirmed(
+            (26.4317, -0.7596, 0.0, 0.0), object())
+        self.assertTrue(confirmed)
+        self.assertIsNone(reason)
+
+    def test_run76_real_far_exit_uses_dedicated_executor_margin(self):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.room_exit_require_raw_corridor_confirmation = False
+        manager.room_exit_require_station_corridor_confirmation = True
+        manager.corridor_station_centerline_rebased = True
+        manager.corridor_centerline_membership_tolerance = 0.75
+        manager.room_exit_station_corridor_tolerance = 1.0
+        manager.corridor_station_origin = np.asarray(
+            [7.907010630742262, -0.4753680599130929])
+        manager.corridor_station_axis = np.asarray(
+            [0.9997656327482375, 0.021649008649734652])
+        run76_exit_points = [
+            (28.098851111433678, -0.8617079489616708, 0.0, 0.0),
+            (28.11177007985996, -0.8183295937153728, 0.0, 0.0),
+            (28.13188979279445, -0.8830464686489193, 0.0, 0.0),
+        ]
+        # All three were beyond the generic 0.75 m transit band but inside
+        # the physical corridor and within the EXIT/executor-specific margin.
+        self.assertFalse(manager._on_station_corridor_centerline(
+            run76_exit_points[0]))
+        for point in run76_exit_points:
+            confirmed, reason = manager._room_exit_corridor_confirmed(
+                point, object())
+            self.assertTrue(confirmed)
+            self.assertIsNone(reason)
+
+    def test_second_floor_local_door_rejects_axis_only_room_context(self):
+        manager = BaselineExplorationManager.__new__(
+            BaselineExplorationManager)
+        manager.enable_terminal_door_context_fallback = False
+        with mock.patch.object(
+                manager, "_corridor_context",
+                return_value={"raw_is_corridor": False}), \
+                mock.patch.object(
+                    manager, "_on_established_corridor_centerline",
+                    return_value=True):
+            context = manager._door_search_corridor_context(
+                (1.0, 2.0, 2.8, 0.0), object(), "test")
+        self.assertIsNone(context)
+
+
+    def test_return_pass_entry_requests_immediate_verified_exit(self):
+        scheduler = LightweightRoomScheduler.__new__(
+            LightweightRoomScheduler)
+        scheduler.active_door = SimpleNamespace(door_id="estimated_door_02")
+        scheduler.entry_confirmed = True
+        scheduler.adaptive_route_queue = [{"role": "G1"}]
+        scheduler.next_role_index = 0
+        scheduler.completion_mode = None
+        scheduler.state = "G1_CENTER"
+        scheduler.events = []
+        scheduler.active_room_id = "floor_2_estimated_room_02"
+        self.assertTrue(scheduler.request_immediate_exit(
+            281.623, "return_pass_entry_observation_complete"))
+        self.assertEqual(scheduler.state, "ROOM_RETURN")
+        self.assertEqual(scheduler.next_role_index, 3)
+        self.assertEqual(scheduler.adaptive_route_queue, [])
+        self.assertEqual(scheduler.events[-1]["event"],
+                         "ROOM_RETURN_PASS_IMMEDIATE_EXIT_REQUESTED")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,18 @@
+<launch>
+  <!-- One-shot physical Trotting recovery of the 20260716T032859Z baseline. -->
+  <arg name="output_dir"/>
+  <include file="$(find simenv_competitor)/launch/room0_mapping_check.launch">
+    <arg name="output_dir" value="$(arg output_dir)"/>
+    <arg name="motion_mode" value="classic_trot_baseline"/>
+    <arg name="route_variant" value="small_loop"/>
+    <arg name="require_exit" value="false"/>
+    <arg name="mission_timeout" value="120.0"/>
+    <arg name="waypoint_timeout" value="55.0"/>
+    <arg name="settle_seconds" value="5.0"/>
+    <arg name="route_deviation_limit" value="1.0"/>
+    <arg name="corridor_joy_limit" value="0.52"/>
+    <arg name="door_joy_limit" value="0.40"/>
+    <arg name="room_joy_limit" value="0.55"/>
+    <arg name="scan_pause_seconds" value="0.5"/>
+  </include>
+</launch>

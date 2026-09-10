@@ -1,0 +1,13 @@
+--- generated_building/elevator_three_floor_debug/competition_scene_with_dangers.world.orig
++++ generated_building/elevator_three_floor_debug/competition_scene_with_dangers.world
+@@ -5350,8 +5350,9 @@
+     <link name="stair_flight_b_floor_1_step_6">
+       <pose>-2.4850 2.9600 4.7450 0.0000 0.0000 0.0000</pose>
+       <collision name="stair_flight_b_floor_1_step_6_collision">
++        <pose>0 0 0.055 0 0 0</pose>
+         <geometry>
+           <box>
+-            <size>1.4300 0.2600 0.1300</size>
++            <size>1.4300 0.2600 0.0200</size>
+ 
+ 

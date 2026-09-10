@@ -1,0 +1,109 @@
+<launch>
+  <!--
+    Competition-compliant unknown-environment stack.
+    Inputs are limited to onboard RGB-D, Livox and IMU topics. No layout file,
+    referee odometry, ground-truth topics or Gazebo control services are used.
+  -->
+  <arg name="result_file" default="$(env PWD)/results/detected_danger.json"/>
+  <arg name="trajectory_file" default="$(env PWD)/results/compliant_trajectory.json"/>
+  <arg name="database_path" default="$(env PWD)/results/rtabmap.db"/>
+  <arg name="timeout_seconds" default="600.0"/>
+  <arg name="max_speed" default="0.9"/>
+
+  <include file="$(find rtabmap_launch)/launch/rtabmap.launch">
+    <arg name="use_sim_time" value="true"/>
+    <arg name="frame_id" value="base"/>
+    <arg name="map_frame_id" value="map"/>
+    <arg name="namespace" value="rtabmap"/>
+    <arg name="database_path" value="$(arg database_path)"/>
+    <arg name="rtabmap_viz" value="false"/>
+    <arg name="rviz" value="false"/>
+    <arg name="rgb_topic" value="/real_sense/rgb/image_raw"/>
+    <arg name="depth_topic" value="/real_sense/depth/image_raw"/>
+    <arg name="camera_info_topic" value="/real_sense/rgb/camera_info"/>
+    <arg name="depth_camera_info_topic" value="/real_sense/depth/camera_info"/>
+    <arg name="approx_sync" value="true"/>
+    <arg name="visual_odometry" value="false"/>
+    <arg name="icp_odometry" value="true"/>
+    <arg name="odom_topic" value="odom"/>
+    <arg name="odom_max_rate" value="10.0"/>
+    <arg name="subscribe_scan_cloud" value="true"/>
+    <arg name="scan_cloud_topic" value="/livox/points2"/>
+    <arg name="scan_cloud_max_points" value="4000"/>
+    <arg name="rgbd_decimation" value="2"/>
+    <arg name="args" value="--delete_db_on_start --Rtabmap/DetectionRate 2.0 --RGBD/LinearUpdate 0.20 --RGBD/AngularUpdate 0.15 --Grid/RangeMax 20.0"/>
+    <arg name="odom_args" value="--Reg/Strategy 1 --Icp/VoxelSize 0.15 --Icp/PointToPlane true --Icp/Iterations 20 --Icp/MaxCorrespondenceDistance 1.0 --Odom/ResetCountdown 3"/>
+  </include>
+
+  <node pkg="simenv_competitor" type="livox_slam_bridge.py"
+        name="livox_slam_bridge" output="screen" required="true">
+    <param name="map_frame" value="map"/>
+    <param name="base_frame" value="base"/>
+    <param name="max_range" value="20.0"/>
+    <param name="voxel" value="0.15"/>
+    <param name="max_points" value="4000"/>
+  </node>
+
+  <group>
+    <remap from="/cmd_vel" to="/tare/cmd_vel_stamped"/>
+    <include file="$(find simenv_competitor)/launch/local_planner_headless.launch">
+      <arg name="autonomyMode" value="true"/>
+      <arg name="maxSpeed" value="$(arg max_speed)"/>
+      <arg name="autonomySpeed" value="$(arg max_speed)"/>
+      <arg name="twoWayDrive" value="true"/>
+    </include>
+  </group>
+
+  <node pkg="tare_planner" type="tare_planner_node"
+        name="tare_planner_node" output="screen" required="true"
+        ns="sensor_coverage_planner">
+    <rosparam command="load" file="$(find tare_planner)/config/indoor.yaml"/>
+    <rosparam command="load"
+              file="$(find simenv_competitor)/config/fast_indoor_unknown.yaml"/>
+    <param name="kAutoStart" value="true"/>
+    <param name="kRushHome" value="true"/>
+    <param name="kNoExplorationReturnHome" value="true"/>
+    <param name="kAtHomeDistThreshold" value="0.60"/>
+    <param name="kSensorRange" value="9.0"/>
+    <param name="kLookAheadDistance" value="7.0"/>
+    <param name="kExtendWayPointDistanceBig" value="7.0"/>
+    <param name="kExtendWayPointDistanceSmall" value="3.5"/>
+    <param name="viewpoint_manager/number_z" value="1"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="radar_camera_attention.py"
+        name="radar_camera_attention" output="screen" required="true">
+    <!-- FUEL-style hierarchy: far=radar-only, mid/near=RGB refine -->
+    <param name="attention_spacing" value="3.5"/>
+    <param name="camera_cell_size" value="3.0"/>
+    <param name="camera_range" value="7.5"/>
+    <param name="camera_fov_deg" value="60.0"/>
+    <param name="attention_yaw_rate" value="0.8"/>
+    <param name="sector_count" value="36"/>
+    <param name="near_range" value="4.0"/>
+    <param name="mid_range" value="9.0"/>
+    <param name="radar_max_range" value="20.0"/>
+    <param name="min_viewpoint_score" value="0.12"/>
+    <param name="yaw_blend_seconds" value="1.2"/>
+    <param name="yaw_blend_linear_scale" value="0.55"/>
+    <param name="merge_yaw_deg" value="25.0"/>
+    <param name="frontier_stale_sec" value="8.0"/>
+    <param name="min_sector_points" value="3"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="trajectory_recorder.py"
+        name="trajectory_recorder" output="screen">
+    <param name="output_file" value="$(arg trajectory_file)"/>
+    <param name="odom_topic" value="/state_estimation"/>
+    <param name="min_spacing" value="0.08"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="danger_detector.py"
+        name="danger_detector" output="screen" required="true">
+    <param name="result_file" value="$(arg result_file)"/>
+    <param name="timeout_seconds" value="$(arg timeout_seconds)"/>
+    <param name="home_tolerance" value="0.7"/>
+    <param name="minimum_hits" value="3"/>
+    <param name="dedup_radius" value="0.55"/>
+  </node>
+</launch>

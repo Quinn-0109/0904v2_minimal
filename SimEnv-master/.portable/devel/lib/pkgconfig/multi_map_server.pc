@@ -1,0 +1,8 @@
+prefix=/workspace/0904_v2/SimEnv-master/.portable/devel
+
+Name: multi_map_server
+Description: Description of multi_map_server
+Version: 0.0.0
+Cflags: -I/workspace/0904_v2/SimEnv-master/.portable/devel/include
+Libs: -L${prefix}/lib 
+Requires: geometry_msgs nav_msgs quadrotor_msgs

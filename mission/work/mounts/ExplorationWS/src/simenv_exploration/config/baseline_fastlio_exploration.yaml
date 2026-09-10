@@ -1,0 +1,73 @@
+task_mode: baseline_fastlio_exploration
+
+# Hard baseline boundary. The manager refuses to start if any value is true.
+enable_structured_exploration: false
+enable_room_detection: false
+enable_room_state_machine: false
+enable_door_detection: false
+enable_door_attention: false
+enable_door_commit: false
+enable_door_alignment: false
+enable_cross_door: false
+enable_room_information_gain: false
+enable_room_recovery: false
+enable_scan_lite_refiner: false
+
+baseline_voxel_mapper:
+  cloud_topic: /cloud_registered
+  odom_topic: /Odometry
+  resolution: 0.15
+  minimum_range: 0.30
+  # Remove only below-sensor returns inside the physical A1 body envelope.
+  # Nearby walls above the body remain in the map for collision checking.
+  self_filter_radius: 0.55
+  self_filter_min_relative_z: -0.75
+  self_filter_max_relative_z: -0.08
+  maximum_range: 30.0
+  maximum_scan_points: 12000
+  save_every_updates: 20
+  projection_topic: /simenv/voxel_floor_projection
+  projection_every_updates: 5
+  projection_min_height: -0.05
+  projection_max_height: 1.20
+  # Exact voxel totals require a leaf traversal; use 0.5 Hz to bound overhead.
+  telemetry_map_rate_hz: 0.5
+  map_statistics_warn_ms: 50.0
+
+baseline_exploration_manager:
+  odom_topic: /Odometry
+  cloud_topic: /cloud_registered
+  goal_topic: /exploration_goal
+  startup_timeout: 120.0
+  planner_timeout: 35.0
+  goal_timeout: 180.0
+  maximum_duration: 400.0
+  maximum_goals: 40
+  maximum_consecutive_failures: 3
+  minimum_map_updates: 1
+  minimum_free_voxels: 5000
+  astar_clearance: 0.30
+  reached_tolerance: 0.15
+  waypoint_spacing: 0.30
+  auto_generate_visualization: true
+  enable_scan_lite_refiner: false
+  body_front_offset: 0.06675
+  body_rear_offset: -0.06675
+  body_collision_radius: 0.11772
+  body_min_height: -0.057
+  body_max_height: 0.057
+  body_safety_margin: 0.05
+  scan_lite_unknown_policy: penalize
+  refinement_search_radius: 0.60
+  refinement_search_step: 0.15
+  enable_waypoint_simplification: true
+  waypoint_collinearity_tolerance: 0.08
+  waypoint_max_direct_connect_distance: 1.20
+  waypoint_max_yaw_change: 0.45
+  scan_lite_failure_policy: request_astar_replan
+
+baseline_telemetry:
+  odom_topic: /Odometry
+  command_topic: /cmd_vel
+  telemetry_trajectory_rate_hz: 5.0
+  telemetry_flush_every: 1

@@ -1,0 +1,1728 @@
+{
+  "active_door_id": null,
+  "active_room_id": null,
+  "complete_room_count": 1,
+  "completion_mode": null,
+  "config": {
+    "accept_reversed_entry_trace_exit": true,
+    "adaptive_maximum_viewpoints": 1,
+    "adaptive_minimal_viewpoints": true,
+    "adaptive_minimum_gain_m2": 0.45,
+    "adaptive_occlusion_shadow_trigger_m2": 0.55,
+    "adaptive_path_cost_weight": 0.55,
+    "adaptive_prefer_central_first": true,
+    "adaptive_route_return_weight": 0.65,
+    "adaptive_set_cover_ratio": 0.88,
+    "adaptive_set_cover_residual_m2": 0.75,
+    "allow_single_jamb_strong_expansion": true,
+    "aperture_probe_range": 4.0,
+    "budget_starts_after_entry": true,
+    "candidate_confirmation_count": 2,
+    "confirmation_depth": 1.1,
+    "corridor_side_confirmation_count": 1,
+    "coverage_maximum_shadow_m2": 0.55,
+    "coverage_maximum_unknown_m2": 0.75,
+    "coverage_minimum_observations": 1,
+    "coverage_minimum_ratio": 0.94,
+    "direct_verified_exit": true,
+    "door_approach_offset": 0.6,
+    "door_cooldown_seconds": 90.0,
+    "door_evidence_retry_seconds": 3.0,
+    "door_lookbehind_distance": 6.0,
+    "door_takeover_distance": 5.0,
+    "doorway_width_max": 2.05,
+    "doorway_width_min": 0.6,
+    "duplicate_door_radius": 1.5,
+    "enabled": true,
+    "entry_candidate_astar_limit": 8,
+    "entry_depth": 1.5,
+    "entry_preflight_max_detour_ratio": 3.0,
+    "entry_preflight_max_path_m": 7.5,
+    "entry_retry_limit": 2,
+    "entry_staging_clearance": 0.26,
+    "entry_timeout_seconds": 18.0,
+    "entry_trace_observed_progress_only": true,
+    "exit_anchor_skip_distance": 0.9,
+    "exit_offset": 0.9,
+    "exit_preflight_maximum_expansions": 800,
+    "exit_progress_timeout_seconds": 12.0,
+    "exit_reserve_seconds": 10.0,
+    "exit_retry_limit": 3,
+    "exit_timeout_max_seconds": 60.0,
+    "exit_timeout_overhead_seconds": 8.0,
+    "exit_timeout_seconds_per_meter": 6.5,
+    "expansion_margin": 0.4,
+    "goal_clearance": 0.38,
+    "lidar_effective_range": 8.0,
+    "maximum_center_depth": 3.0,
+    "maximum_side_lateral": 3.0,
+    "minimum_crossing_depth": 0.18,
+    "minimum_goal_separation": 1.0,
+    "near_wall_margin": 0.65,
+    "portal_timeout_seconds": 14.0,
+    "require_portal_preflight_for_entry": false,
+    "reversed_entry_trace_exit_tolerance": 0.3,
+    "room_budget_seconds": 30.0,
+    "room_depth_probe_range": 8.0,
+    "room_goal_timeout_seconds": 12.0,
+    "room_id_prefix": "estimated_room_",
+    "room_side_probe_range": 7.5,
+    "semantic_completion_tolerance": 0.8,
+    "side_depth": 3.0,
+    "side_goal_retry_limit": 2,
+    "single_jamb_minimum_confidence": 0.82,
+    "trajectory_spacing": 0.2,
+    "visited_room_overlap_max_door_separation": 5.0,
+    "visited_room_overlap_min_normal_alignment": 0.25,
+    "visual_breadth_lateral": 1.65,
+    "visual_breadth_min_baseline": 1.15,
+    "visual_two_pose_lateral_enabled": false
+  },
+  "coverage_status": null,
+  "door_cooldowns": [
+    {
+      "center": [
+        13.6283,
+        -1.8686
+      ],
+      "key": [
+        18,
+        -2
+      ],
+      "until": 159.65995291504078
+    }
+  ],
+  "doors": [
+    {
+      "center": [
+        13.6283,
+        -1.8686
+      ],
+      "completed": false,
+      "confidence": 0.7999999999999999,
+      "corridor_side": [
+        13.6422,
+        -1.2687
+      ],
+      "coverage_complete": false,
+      "door_id": "estimated_door_01",
+      "entered_at": 37.23447958298493,
+      "interior_side": [
+        13.6053,
+        -2.8683
+      ],
+      "left_frame_point": [
+        13.928220314006632,
+        -1.8755141337969776
+      ],
+      "normal_direction": -1.5938454802595066,
+      "right_frame_point": [
+        13.328379685993367,
+        -1.8616858662030225
+      ],
+      "temporarily_failed": true,
+      "visited": true,
+      "width": 0.6
+    },
+    {
+      "center": [
+        13.828009884212685,
+        -0.16554596805885363
+      ],
+      "completed": true,
+      "confidence": 0.85,
+      "corridor_side": [
+        13.845825274508408,
+        -1.26540169126468
+      ],
+      "coverage_complete": true,
+      "door_id": "estimated_door_02",
+      "entered_at": 70.66350735502783,
+      "interior_side": [
+        13.817482608128847,
+        0.48436877747186163
+      ],
+      "left_frame_point": [
+        13.22808858064587,
+        -0.17526345367470428
+      ],
+      "normal_direction": 1.5869928442764818,
+      "right_frame_point": [
+        14.4279311877795,
+        -0.15582848244300299
+      ],
+      "temporarily_failed": false,
+      "visited": true,
+      "width": 1.2
+    }
+  ],
+  "entry_confirmed": false,
+  "events": [
+    {
+      "candidate_id": "local-door--1-track-7",
+      "center": [
+        13.6283,
+        -1.8686
+      ],
+      "elapsed_sec": 37.234,
+      "entry_goal": [
+        13.6053,
+        -2.8683
+      ],
+      "event": "LOCAL_DOOR_CANDIDATE_PROMOTED",
+      "source": "robot_local_8m_geometry",
+      "width_m": 0.6
+    },
+    {
+      "elapsed_sec": 37.234,
+      "event": "ROOM_STATE_CHANGED",
+      "from": "CORRIDOR_SWEEP",
+      "reason": "proactive_path_intercept",
+      "to": "DOOR_COMMIT"
+    },
+    {
+      "door": {
+        "center": [
+          13.6283,
+          -1.8686
+        ],
+        "completed": false,
+        "confidence": 0.7999999999999999,
+        "corridor_side": [
+          13.6422,
+          -1.2687
+        ],
+        "coverage_complete": false,
+        "door_id": "estimated_door_01",
+        "entered_at": 37.23447958298493,
+        "interior_side": [
+          13.6053,
+          -2.8683
+        ],
+        "left_frame_point": [
+          13.928220314006632,
+          -1.8755141337969776
+        ],
+        "normal_direction": -1.5938454802595066,
+        "right_frame_point": [
+          13.328379685993367,
+          -1.8616858662030225
+        ],
+        "temporarily_failed": false,
+        "visited": false,
+        "width": 0.6
+      },
+      "elapsed_sec": 37.234,
+      "event": "DOOR_COMMIT_STARTED",
+      "proactive": true,
+      "room_id": "estimated_room_01"
+    },
+    {
+      "door_id": "estimated_door_01",
+      "elapsed_sec": 41.069,
+      "event": "ROOM_ENTRY_PATH_REFRESHED_AFTER_PREEMPTION",
+      "new_path_length_m": 2.236,
+      "old_path_length_m": 3.791,
+      "room_id": "estimated_room_01",
+      "stale_start_error_m": 1.749
+    },
+    {
+      "door_id": "estimated_door_01",
+      "elapsed_sec": 46.287,
+      "event": "ROOM_GOAL_RESULT",
+      "execution_progress": {
+        "completed_waypoints": 1,
+        "progress_timeout_sec": null,
+        "progressive_timeout": null,
+        "reason": "goal_reached",
+        "waypoints": 1
+      },
+      "goal": [
+        13.6053,
+        -2.8683,
+        -0.0023793001423541016
+      ],
+      "reason": null,
+      "reported_execution_success": true,
+      "role": "ENTRY",
+      "room_id": "estimated_room_01",
+      "success": true
+    },
+    {
+      "door_id": "estimated_door_01",
+      "elapsed_sec": 46.287,
+      "event": "ROOM_ENTRY_TRAVERSAL_CAPTURED",
+      "observed_progress_only": true,
+      "planned_waypoint_count": 16,
+      "room_id": "estimated_room_01",
+      "source": "entry_staging_astar_path",
+      "waypoint_count": 15
+    },
+    {
+      "door_id": "estimated_door_01",
+      "elapsed_sec": 46.287,
+      "entry_source": "entry_goal_success",
+      "event": "ROOM_ENTERED",
+      "room_id": "estimated_room_01"
+    },
+    {
+      "elapsed_sec": 46.287,
+      "event": "ROOM_STATE_CHANGED",
+      "from": "DOOR_COMMIT",
+      "reason": "entry_confirmed",
+      "to": "G1_CENTER"
+    },
+    {
+      "door_id": "estimated_door_01",
+      "elapsed_sec": 47.053,
+      "event": "ADAPTIVE_ROOM_FAST_SINGLE_VIEW_SELECTED",
+      "position": [
+        13.125000610947609,
+        -4.87499973475933
+      ],
+      "reason": "central_first_measured_coverage_then_side_if_needed",
+      "role": "G1",
+      "room_id": "estimated_room_01"
+    },
+    {
+      "coverage_before": {
+        "boundary_complete": true,
+        "boundary_directions_seen": 3,
+        "configured_lidar_range_m": 8.0,
+        "coverage_complete": false,
+        "estimated_room_cells": 3778,
+        "far_wall_seen": true,
+        "free_cells": 4430,
+        "known_cells": 3714,
+        "largest_shadow_m2": 0.6300000500679026,
+        "largest_unknown_m2": 1.305000103712084,
+        "left_wall_seen": true,
+        "lidar_ratio": 0.9830598200105876,
+        "obstacle_components": 8,
+        "right_wall_seen": true,
+        "shadow_cells": 32,
+        "unknown_cells": 64,
+        "viewpoint_count": 1,
+        "wall_components": 1
+      },
+      "door_id": "estimated_door_01",
+      "elapsed_sec": 47.053,
+      "event": "ADAPTIVE_ROOM_VIEW_SELECTED",
+      "marginal_gain_m2": 1.0,
+      "path_length_m": 2.5891389386094033,
+      "role": "G1",
+      "room_id": "estimated_room_01",
+      "utility": 1.1775702183524905
+    },
+    {
+      "door_id": "estimated_door_01",
+      "elapsed_sec": 52.453,
+      "event": "ROOM_GOAL_RESULT",
+      "execution_progress": {
+        "completed_waypoints": 1,
+        "progress_timeout_sec": null,
+        "progressive_timeout": null,
+        "reason": "goal_reached",
+        "waypoints": 1
+      },
+      "goal": [
+        13.125000610947609,
+        -4.87499973475933,
+        -0.0023793001423541016
+      ],
+      "reason": null,
+      "reported_execution_success": true,
+      "role": "G1",
+      "room_id": "estimated_room_01",
+      "success": true
+    },
+    {
+      "elapsed_sec": 58.718,
+      "event": "ROOM_STATE_CHANGED",
+      "from": "G1_CENTER",
+      "reason": "adaptive_viewpoint_budget",
+      "to": "ROOM_RETURN"
+    },
+    {
+      "attempted_roles": [
+        "G1"
+      ],
+      "coverage": {
+        "boundary_complete": true,
+        "boundary_directions_seen": 3,
+        "configured_lidar_range_m": 8.0,
+        "coverage_complete": false,
+        "estimated_room_cells": 3778,
+        "far_wall_seen": true,
+        "free_cells": 4350,
+        "known_cells": 3778,
+        "largest_shadow_m2": 0.6300000500679026,
+        "largest_unknown_m2": 0.0,
+        "left_wall_seen": true,
+        "lidar_ratio": 1.0,
+        "obstacle_components": 7,
+        "right_wall_seen": true,
+        "shadow_cells": 31,
+        "unknown_cells": 0,
+        "viewpoint_count": 2,
+        "wall_components": 1
+      },
+      "door_id": "estimated_door_01",
+      "elapsed_sec": 58.718,
+      "event": "ADAPTIVE_ROOM_OBSERVATION_STOPPED",
+      "reason": "adaptive_viewpoint_budget",
+      "room_id": "estimated_room_01"
+    },
+    {
+      "door_id": "estimated_door_01",
+      "elapsed_sec": 58.718,
+      "event": "ROOM_RETURN_FOLDED_INTO_EXIT",
+      "reason": "direct_astar_scan_verified_exit",
+      "room_id": "estimated_room_01"
+    },
+    {
+      "elapsed_sec": 58.718,
+      "event": "ROOM_STATE_CHANGED",
+      "from": "ROOM_RETURN",
+      "reason": null,
+      "to": "ROOM_EXIT"
+    },
+    {
+      "door_id": "estimated_door_01",
+      "elapsed_sec": 58.718,
+      "entry_waypoint_count": 15,
+      "event": "ROOM_EXIT_PREFLIGHT_SKIPPED_REVERSE_ENTRY_TRACE",
+      "room_id": "estimated_room_01"
+    },
+    {
+      "attempt": 1,
+      "breadcrumb_waypoint_count": 5,
+      "distance_to_inside_anchor_m": 1.708,
+      "door_id": "estimated_door_01",
+      "elapsed_sec": 58.771,
+      "event": "ROOM_EXIT_PATH_PREPARED",
+      "execution_timeout_sec": 35.391,
+      "inside_anchor_skipped": false,
+      "remaining_path_length_m": 4.214,
+      "room_id": "estimated_room_01"
+    },
+    {
+      "door_id": "estimated_door_01",
+      "elapsed_sec": 69.66,
+      "event": "ROOM_GOAL_RESULT",
+      "execution_progress": {
+        "completed_waypoints": 10,
+        "progress_timeout_sec": null,
+        "progressive_timeout": null,
+        "reason": "goal_reached",
+        "waypoints": 10
+      },
+      "goal": [
+        13.425000622868538,
+        -1.1249995857477177,
+        -0.0023793001423541016
+      ],
+      "reason": null,
+      "reported_execution_success": true,
+      "role": "EXIT",
+      "room_id": "estimated_room_01",
+      "success": true
+    },
+    {
+      "breadcrumb_fallback": true,
+      "completed_observation_count": 1,
+      "completion_mode": "adaptive_viewpoint_budget",
+      "corridor_exit_confirmed": true,
+      "coverage": {
+        "boundary_complete": true,
+        "boundary_directions_seen": 3,
+        "configured_lidar_range_m": 8.0,
+        "coverage_complete": false,
+        "estimated_room_cells": 3778,
+        "far_wall_seen": true,
+        "free_cells": 4350,
+        "known_cells": 3778,
+        "largest_shadow_m2": 0.6300000500679026,
+        "largest_unknown_m2": 0.0,
+        "left_wall_seen": true,
+        "lidar_ratio": 1.0,
+        "obstacle_components": 7,
+        "right_wall_seen": true,
+        "shadow_cells": 31,
+        "unknown_cells": 0,
+        "viewpoint_count": 2,
+        "wall_components": 1
+      },
+      "door_id": "estimated_door_01",
+      "door_plane_depth": -0.537,
+      "elapsed_sec": 69.66,
+      "event": "ROOM_EXITED",
+      "failed_roles": [],
+      "final_point": [
+        13.4343,
+        -1.3269
+      ],
+      "near_complete_coverage_accepted": false,
+      "required_roles": [
+        "G1",
+        "G3",
+        "G4"
+      ],
+      "room_complete": false,
+      "room_elapsed_sec": 23.373,
+      "room_id": "estimated_room_01",
+      "successful_roles": [
+        "G1"
+      ]
+    },
+    {
+      "elapsed_sec": 69.66,
+      "event": "ROOM_STATE_CHANGED",
+      "from": "ROOM_EXIT",
+      "reason": "room_completed",
+      "to": "CORRIDOR_RESUME"
+    },
+    {
+      "candidate_id": "mirrored-pair-side_branch_01",
+      "center": [
+        13.828009884212685,
+        -0.16554596805885363
+      ],
+      "elapsed_sec": 70.664,
+      "entry_goal": [
+        13.817482608128847,
+        0.48436877747186163
+      ],
+      "event": "LOCAL_DOOR_CANDIDATE_PROMOTED",
+      "source": "robot_local_8m_geometry",
+      "width_m": 1.2
+    },
+    {
+      "elapsed_sec": 70.664,
+      "event": "ROOM_STATE_CHANGED",
+      "from": "CORRIDOR_RESUME",
+      "reason": "proactive_path_intercept",
+      "to": "DOOR_COMMIT"
+    },
+    {
+      "door": {
+        "center": [
+          13.828009884212685,
+          -0.16554596805885363
+        ],
+        "completed": false,
+        "confidence": 0.85,
+        "corridor_side": [
+          13.845825274508408,
+          -1.26540169126468
+        ],
+        "coverage_complete": false,
+        "door_id": "estimated_door_02",
+        "entered_at": 70.66350735502783,
+        "interior_side": [
+          13.817482608128847,
+          0.48436877747186163
+        ],
+        "left_frame_point": [
+          13.22808858064587,
+          -0.17526345367470428
+        ],
+        "normal_direction": 1.5869928442764818,
+        "right_frame_point": [
+          14.4279311877795,
+          -0.15582848244300299
+        ],
+        "temporarily_failed": false,
+        "visited": false,
+        "width": 1.2
+      },
+      "elapsed_sec": 70.664,
+      "event": "DOOR_COMMIT_STARTED",
+      "proactive": true,
+      "room_id": "estimated_room_02"
+    },
+    {
+      "candidate_id": "mirrored-pair-side_branch_01",
+      "door_id": "estimated_door_02",
+      "elapsed_sec": 70.664,
+      "event": "LOCAL_DOOR_PREVALIDATED_ENTRY_REUSED",
+      "policy": "reuse_observed_free_normal_ray"
+    },
+    {
+      "door_id": "estimated_door_02",
+      "elapsed_sec": 76.316,
+      "event": "ROOM_GOAL_RESULT",
+      "execution_progress": {
+        "completed_waypoints": 2,
+        "progress_timeout_sec": null,
+        "progressive_timeout": null,
+        "reason": "goal_reached",
+        "waypoints": 2
+      },
+      "goal": [
+        13.875000640749931,
+        0.5250004798173915,
+        -0.0023793001423541016
+      ],
+      "reason": null,
+      "reported_execution_success": true,
+      "role": "ENTRY",
+      "room_id": "estimated_room_02",
+      "success": true
+    },
+    {
+      "door_id": "estimated_door_02",
+      "elapsed_sec": 76.316,
+      "entry_source": "entry_goal_success",
+      "event": "ROOM_ENTERED",
+      "room_id": "estimated_room_02"
+    },
+    {
+      "elapsed_sec": 76.316,
+      "event": "ROOM_STATE_CHANGED",
+      "from": "DOOR_COMMIT",
+      "reason": "entry_confirmed",
+      "to": "G1_CENTER"
+    },
+    {
+      "door_id": "estimated_door_02",
+      "elapsed_sec": 77.162,
+      "event": "ADAPTIVE_ROOM_FAST_SINGLE_VIEW_SELECTED",
+      "position": [
+        14.025000646710396,
+        2.925000575184823
+      ],
+      "reason": "central_first_measured_coverage_then_side_if_needed",
+      "role": "G1",
+      "room_id": "estimated_room_02"
+    },
+    {
+      "coverage_before": {
+        "boundary_complete": true,
+        "boundary_directions_seen": 3,
+        "configured_lidar_range_m": 8.0,
+        "coverage_complete": false,
+        "estimated_room_cells": 4499,
+        "far_wall_seen": true,
+        "free_cells": 4434,
+        "known_cells": 4322,
+        "largest_shadow_m2": 1.012500080466272,
+        "largest_unknown_m2": 3.690000293254858,
+        "left_wall_seen": true,
+        "lidar_ratio": 0.9606579239831073,
+        "obstacle_components": 8,
+        "right_wall_seen": true,
+        "shadow_cells": 59,
+        "unknown_cells": 177,
+        "viewpoint_count": 1,
+        "wall_components": 3
+      },
+      "door_id": "estimated_door_02",
+      "elapsed_sec": 77.162,
+      "event": "ADAPTIVE_ROOM_VIEW_SELECTED",
+      "marginal_gain_m2": 1.0,
+      "path_length_m": 2.70653367326425,
+      "role": "G1",
+      "room_id": "estimated_room_02",
+      "utility": 1.2474267840759152
+    },
+    {
+      "door_id": "estimated_door_02",
+      "elapsed_sec": 82.768,
+      "event": "ROOM_GOAL_RESULT",
+      "execution_progress": {
+        "completed_waypoints": 1,
+        "progress_timeout_sec": null,
+        "progressive_timeout": null,
+        "reason": "goal_reached",
+        "waypoints": 1
+      },
+      "goal": [
+        14.025000646710396,
+        2.925000575184823,
+        -0.0023793001423541016
+      ],
+      "reason": null,
+      "reported_execution_success": true,
+      "role": "G1",
+      "room_id": "estimated_room_02",
+      "success": true
+    },
+    {
+      "door_id": "estimated_door_02",
+      "elapsed_sec": 89.418,
+      "event": "ROOM_GOAL_SKIPPED",
+      "reason": "lidar_coverage_complete",
+      "role": "G2"
+    },
+    {
+      "door_id": "estimated_door_02",
+      "elapsed_sec": 89.418,
+      "event": "ROOM_GOAL_SKIPPED",
+      "reason": "lidar_coverage_complete",
+      "role": "G3"
+    },
+    {
+      "door_id": "estimated_door_02",
+      "elapsed_sec": 89.418,
+      "event": "ROOM_GOAL_SKIPPED",
+      "reason": "lidar_coverage_complete",
+      "role": "G4"
+    },
+    {
+      "elapsed_sec": 89.418,
+      "event": "ROOM_STATE_CHANGED",
+      "from": "G1_CENTER",
+      "reason": "lidar_coverage_complete",
+      "to": "ROOM_RETURN"
+    },
+    {
+      "coverage": {
+        "boundary_complete": true,
+        "boundary_directions_seen": 3,
+        "configured_lidar_range_m": 8.0,
+        "coverage_complete": true,
+        "estimated_room_cells": 4499,
+        "far_wall_seen": true,
+        "free_cells": 4494,
+        "known_cells": 4490,
+        "largest_shadow_m2": 0.04500000357627876,
+        "largest_unknown_m2": 0.06750000536441814,
+        "left_wall_seen": true,
+        "lidar_ratio": 0.9979995554567682,
+        "obstacle_components": 10,
+        "right_wall_seen": true,
+        "shadow_cells": 6,
+        "unknown_cells": 9,
+        "viewpoint_count": 2,
+        "wall_components": 3
+      },
+      "door_id": "estimated_door_02",
+      "elapsed_sec": 89.418,
+      "event": "ROOM_COVERAGE_COMPLETE",
+      "room_id": "estimated_room_02",
+      "two_pose_visual_complete": false
+    },
+    {
+      "door_id": "estimated_door_02",
+      "elapsed_sec": 89.418,
+      "event": "ROOM_RETURN_FOLDED_INTO_EXIT",
+      "reason": "direct_astar_scan_verified_exit",
+      "room_id": "estimated_room_02"
+    },
+    {
+      "elapsed_sec": 89.418,
+      "event": "ROOM_STATE_CHANGED",
+      "from": "ROOM_RETURN",
+      "reason": null,
+      "to": "ROOM_EXIT"
+    },
+    {
+      "attempt": 1,
+      "breadcrumb_waypoint_count": 0,
+      "distance_to_inside_anchor_m": 1.622,
+      "door_id": "estimated_door_02",
+      "elapsed_sec": 89.505,
+      "event": "ROOM_EXIT_PATH_PREPARED",
+      "execution_timeout_sec": 33.177,
+      "inside_anchor_skipped": false,
+      "remaining_path_length_m": 3.873,
+      "room_id": "estimated_room_02"
+    },
+    {
+      "door_id": "estimated_door_02",
+      "elapsed_sec": 99.891,
+      "event": "ROOM_GOAL_RESULT",
+      "execution_progress": {
+        "completed_waypoints": 4,
+        "progress_timeout_sec": null,
+        "progressive_timeout": null,
+        "reason": "goal_reached",
+        "waypoints": 4
+      },
+      "goal": [
+        13.875000640749931,
+        -1.1249995857477177,
+        -0.0023793001423541016
+      ],
+      "reason": null,
+      "reported_execution_success": true,
+      "role": "EXIT",
+      "room_id": "estimated_room_02",
+      "success": true
+    },
+    {
+      "breadcrumb_fallback": false,
+      "completed_observation_count": 1,
+      "completion_mode": "lidar_coverage",
+      "corridor_exit_confirmed": true,
+      "coverage": {
+        "boundary_complete": true,
+        "boundary_directions_seen": 3,
+        "configured_lidar_range_m": 8.0,
+        "coverage_complete": true,
+        "estimated_room_cells": 4499,
+        "far_wall_seen": true,
+        "free_cells": 4494,
+        "known_cells": 4490,
+        "largest_shadow_m2": 0.04500000357627876,
+        "largest_unknown_m2": 0.06750000536441814,
+        "left_wall_seen": true,
+        "lidar_ratio": 0.9979995554567682,
+        "obstacle_components": 10,
+        "right_wall_seen": true,
+        "shadow_cells": 6,
+        "unknown_cells": 9,
+        "viewpoint_count": 2,
+        "wall_components": 3
+      },
+      "door_id": "estimated_door_02",
+      "door_plane_depth": -0.782,
+      "elapsed_sec": 99.891,
+      "event": "ROOM_EXITED",
+      "failed_roles": [],
+      "final_point": [
+        13.8981,
+        -0.946
+      ],
+      "near_complete_coverage_accepted": true,
+      "required_roles": [
+        "G1",
+        "G3",
+        "G4"
+      ],
+      "room_complete": true,
+      "room_elapsed_sec": 23.575,
+      "room_id": "estimated_room_02",
+      "successful_roles": [
+        "G1"
+      ]
+    },
+    {
+      "elapsed_sec": 99.891,
+      "event": "ROOM_STATE_CHANGED",
+      "from": "ROOM_EXIT",
+      "reason": "room_completed",
+      "to": "CORRIDOR_RESUME"
+    },
+    {
+      "elapsed_sec": 106.961,
+      "event": "ROOM_STATE_CHANGED",
+      "from": "CORRIDOR_RESUME",
+      "reason": "corridor_recenter_succeeded",
+      "to": "CORRIDOR_SWEEP"
+    },
+    {
+      "elapsed_sec": 111.225,
+      "event": "ROOM_STATE_CHANGED",
+      "from": "CORRIDOR_SWEEP",
+      "reason": "corridor_side_aperture",
+      "to": "DOOR_APPROACH"
+    },
+    {
+      "center": [
+        16.898997662100196,
+        -2.192586967586188
+      ],
+      "confidence": 0.8018750060349703,
+      "confirmation_count": 1,
+      "elapsed_sec": 111.225,
+      "event": "DOOR_CANDIDATE_CONFIRMED",
+      "required_count": 1,
+      "source": "corridor_side_scan"
+    },
+    {
+      "center": [
+        16.898997662100196,
+        -2.192586967586188
+      ],
+      "door_center_separation_m": 3.287,
+      "elapsed_sec": 111.225,
+      "event": "DOOR_CANDIDATE_REJECTED",
+      "normal_alignment": 0.999,
+      "overlapping_door_id": "estimated_door_01",
+      "reason": "inward_ray_overlaps_visited_room"
+    },
+    {
+      "elapsed_sec": 111.225,
+      "event": "ROOM_STATE_CHANGED",
+      "from": "DOOR_APPROACH",
+      "reason": "visited_room_overlap",
+      "to": "CORRIDOR_SWEEP"
+    }
+  ],
+  "exit_attempts": 0,
+  "exit_blocked": false,
+  "exit_fallback_issued": false,
+  "exited_room_count": 2,
+  "failed_roles": [],
+  "first_room_started_at": 46.28687119507231,
+  "online_inputs": [
+    "FAST-LIO trajectory",
+    "observed occupancy grid"
+  ],
+  "pending_door_candidates": 0,
+  "return_completed": false,
+  "room_count": 2,
+  "room_started_at": null,
+  "schema": "simenv_lightweight_room_recognition_v5",
+  "selected_goals": [
+    {
+      "_preplanned_path_result": {
+        "execution_waypoints": [
+          [
+            13.6053,
+            -2.8683
+          ]
+        ],
+        "expansions": 30,
+        "path": [
+          [
+            13.367892413499352,
+            -0.8960218169948666
+          ],
+          [
+            13.425000622868538,
+            -0.9749995797872533
+          ],
+          [
+            13.425000622868538,
+            -1.1249995857477177
+          ],
+          [
+            13.425000622868538,
+            -1.2749995917081822
+          ],
+          [
+            13.425000622868538,
+            -1.4249995976686467
+          ],
+          [
+            13.425000622868538,
+            -1.5749996036291112
+          ],
+          [
+            13.425000622868538,
+            -1.7249996095895757
+          ],
+          [
+            13.425000622868538,
+            -1.8749996155500401
+          ],
+          [
+            13.425000622868538,
+            -2.0249996215105046
+          ],
+          [
+            13.425000622868538,
+            -2.174999627470969
+          ],
+          [
+            13.425000622868538,
+            -2.3249996334314336
+          ],
+          [
+            13.425000622868538,
+            -2.474999639391898
+          ],
+          [
+            13.425000622868538,
+            -2.6249996453523625
+          ],
+          [
+            13.425000622868538,
+            -2.774999651312827
+          ],
+          [
+            13.425000622868538,
+            -2.9249996572732915
+          ],
+          [
+            13.6053,
+            -2.8683
+          ]
+        ],
+        "reason": "path_found_start_override",
+        "refined_path": [
+          [
+            13.367892413499352,
+            -0.8960218169948666
+          ],
+          [
+            13.6053,
+            -2.8683
+          ]
+        ],
+        "refined_path_length": 1.9865154399818024,
+        "refined_waypoints": [
+          [
+            13.6053,
+            -2.8683
+          ]
+        ],
+        "refinement_status": "path_safe",
+        "success": true
+      },
+      "entry_staging_preflight_verified": true,
+      "estimated_door_id": "estimated_door_01",
+      "execution_timeout_sec": 16.16511217900552,
+      "information_gain": 0.0,
+      "mandatory_portal_waypoints": [],
+      "planned_at": 41.069,
+      "portal_clearance_m": 0.0,
+      "portal_preflight_verified": false,
+      "portal_resume_inside": false,
+      "position": [
+        13.6053,
+        -2.8683,
+        -0.0023793001423541016
+      ],
+      "progress_timeout_sec": 15.0,
+      "progressive_timeout": true,
+      "room_goal_attempt": 1,
+      "room_goal_diagnostic": {
+        "clearance": 0.5400000214576721,
+        "depth": 0.9999645432992059,
+        "entry_staging_fallback": true,
+        "entry_staging_path_result": {
+          "expansions": 30,
+          "path": [
+            [
+              13.367892413499352,
+              -0.8960218169948666
+            ],
+            [
+              13.425000622868538,
+              -0.9749995797872533
+            ],
+            [
+              13.425000622868538,
+              -1.1249995857477177
+            ],
+            [
+              13.425000622868538,
+              -1.2749995917081822
+            ],
+            [
+              13.425000622868538,
+              -1.4249995976686467
+            ],
+            [
+              13.425000622868538,
+              -1.5749996036291112
+            ],
+            [
+              13.425000622868538,
+              -1.7249996095895757
+            ],
+            [
+              13.425000622868538,
+              -1.8749996155500401
+            ],
+            [
+              13.425000622868538,
+              -2.0249996215105046
+            ],
+            [
+              13.425000622868538,
+              -2.174999627470969
+            ],
+            [
+              13.425000622868538,
+              -2.3249996334314336
+            ],
+            [
+              13.425000622868538,
+              -2.474999639391898
+            ],
+            [
+              13.425000622868538,
+              -2.6249996453523625
+            ],
+            [
+              13.425000622868538,
+              -2.774999651312827
+            ],
+            [
+              13.425000622868538,
+              -2.9249996572732915
+            ],
+            [
+              13.6053,
+              -2.8683
+            ]
+          ],
+          "reason": "path_found_start_override",
+          "success": true
+        },
+        "fallback_candidate": true,
+        "lateral": 4.630778228658164e-05,
+        "portal_preflight": null,
+        "position": [
+          13.6053,
+          -2.8683
+        ],
+        "predicted_local_gain_m2": 0.0,
+        "preflight_path_length_m": 2.236466583366431,
+        "role": "ENTRY_STAGING",
+        "score": 0.0,
+        "unknown_neighbors": 0
+      },
+      "room_id": "estimated_room_01",
+      "room_role": "ENTRY",
+      "score": 0.0,
+      "source": "lightweight_room_entry"
+    },
+    {
+      "adaptive_minimal_viewpoint": true,
+      "estimated_door_id": "estimated_door_01",
+      "execution_timeout_sec": 12.0,
+      "fallback_candidate": true,
+      "information_gain": 1.0,
+      "planned_at": 47.053,
+      "position": [
+        13.125000610947609,
+        -4.87499973475933,
+        -0.0023793001423541016
+      ],
+      "progress_timeout_sec": 12.0,
+      "progressive_timeout": true,
+      "room_goal_attempt": 1,
+      "room_goal_diagnostic": {
+        "adaptive_marginal_gain_m2": 1.0,
+        "adaptive_utility": 1.1775702183524905,
+        "boundary_probe": false,
+        "center_adjustment_reason": "geometric_center_reachable",
+        "center_displacement_m": 0.03256916607877618,
+        "center_target": [
+          3.0,
+          -0.4062203330151708
+        ],
+        "clearance": 1.1475000455975533,
+        "coverage_cell_count": 0,
+        "depth": 3.0172007726477412,
+        "depth_fraction_target": 0.45,
+        "estimated_room_width": 13.230000525712967,
+        "fallback_candidate": true,
+        "fast_unobserved_room_entry": false,
+        "lateral": -0.4338768693020528,
+        "left_wall_distance": 6.5475002601742744,
+        "left_wall_distance_samples": [
+          6.5475002601742744,
+          6.412500254809856
+        ],
+        "occlusion_anchor": [
+          13.569605567400737,
+          -2.7359377749831366
+        ],
+        "occlusion_revealing": false,
+        "position": [
+          13.125000610947609,
+          -4.87499973475933
+        ],
+        "predicted_local_gain_m2": 0.0,
+        "preflight_path_length_m": 2.5891389386094033,
+        "right_wall_distance": 6.6825002655386925,
+        "right_wall_distance_samples": [
+          6.6825002655386925,
+          2.4975000992417336
+        ],
+        "role": "G1",
+        "score": 1.1775702183524905,
+        "side_extent_fraction": null,
+        "unknown_neighbors": 0
+      },
+      "room_id": "estimated_room_01",
+      "room_role": "G1",
+      "score": 1.1775702183524905,
+      "source": "lightweight_room_semantic"
+    },
+    {
+      "_preplanned_path_result": {
+        "path": [
+          [
+            13.148290451399927,
+            -4.349418188938973
+          ],
+          [
+            13.564253432667376,
+            -2.6930454584310746
+          ],
+          [
+            13.425000622868538,
+            -2.6930454584310746
+          ],
+          [
+            13.425000622868538,
+            -2.6249996453523625
+          ],
+          [
+            13.425000622868538,
+            -2.474999639391898
+          ],
+          [
+            13.425000622868538,
+            -2.3249996334314336
+          ],
+          [
+            13.425000622868538,
+            -2.174999627470969
+          ],
+          [
+            13.425000622868538,
+            -2.0249996215105046
+          ],
+          [
+            13.425000622868538,
+            -1.8749996155500401
+          ],
+          [
+            13.425000622868538,
+            -1.7249996095895757
+          ],
+          [
+            13.425000622868538,
+            -1.5749996036291112
+          ],
+          [
+            13.425000622868538,
+            -1.4249995976686467
+          ],
+          [
+            13.425000622868538,
+            -1.2749995917081822
+          ],
+          [
+            13.425000622868538,
+            -1.1249995857477177
+          ]
+        ],
+        "reason": "reversed_physically_traversed_entry_portal",
+        "success": true
+      },
+      "breadcrumb_fallback": true,
+      "estimated_door_id": "estimated_door_01",
+      "execution_timeout_sec": 14.0,
+      "information_gain": 0.0,
+      "mandatory_portal_waypoints": [
+        [
+          13.564253432667376,
+          -2.6930454584310746
+        ],
+        [
+          13.425000622868538,
+          -2.6930454584310746
+        ],
+        [
+          13.425000622868538,
+          -2.6249996453523625
+        ],
+        [
+          13.425000622868538,
+          -2.474999639391898
+        ],
+        [
+          13.425000622868538,
+          -2.3249996334314336
+        ],
+        [
+          13.425000622868538,
+          -2.174999627470969
+        ],
+        [
+          13.425000622868538,
+          -2.0249996215105046
+        ],
+        [
+          13.425000622868538,
+          -1.8749996155500401
+        ],
+        [
+          13.425000622868538,
+          -1.7249996095895757
+        ],
+        [
+          13.425000622868538,
+          -1.5749996036291112
+        ],
+        [
+          13.425000622868538,
+          -1.4249995976686467
+        ],
+        [
+          13.425000622868538,
+          -1.2749995917081822
+        ],
+        [
+          13.425000622868538,
+          -1.1249995857477177
+        ]
+      ],
+      "observed_doorway_trace_fallback": true,
+      "observed_portal_recovery": false,
+      "planned_at": 58.718,
+      "portal_clearance_m": 0.17,
+      "portal_preflight_verified": false,
+      "position": [
+        13.425000622868538,
+        -1.1249995857477177,
+        -0.0023793001423541016
+      ],
+      "progress_timeout_sec": 12.0,
+      "progressive_timeout": true,
+      "reversed_entry_portal_fallback": true,
+      "room_exit_attempt": 1,
+      "room_id": "estimated_room_01",
+      "room_role": "EXIT",
+      "score": 0.0,
+      "source": "lightweight_room_exit_fallback",
+      "verified_trajectory_backtrack": true
+    },
+    {
+      "_preplanned_path_result": {
+        "execution_waypoints": [
+          [
+            13.875000640749931,
+            -1.2749995917081822
+          ],
+          [
+            13.875000640749931,
+            0.5250004798173915
+          ]
+        ],
+        "path": [
+          [
+            13.431020256527574,
+            -1.2909210627653391
+          ],
+          [
+            13.575000628829002,
+            -1.2749995917081822
+          ],
+          [
+            13.725000634789467,
+            -1.2749995917081822
+          ],
+          [
+            13.875000640749931,
+            -1.2749995917081822
+          ],
+          [
+            13.875000640749931,
+            -1.1249995857477177
+          ],
+          [
+            13.875000640749931,
+            -0.9749995797872533
+          ],
+          [
+            13.875000640749931,
+            -0.8249995738267888
+          ],
+          [
+            13.875000640749931,
+            -0.6749995678663243
+          ],
+          [
+            13.875000640749931,
+            -0.5249995619058598
+          ],
+          [
+            13.875000640749931,
+            -0.37499955594539536
+          ],
+          [
+            13.875000640749931,
+            -0.22499954998493088
+          ],
+          [
+            13.875000640749931,
+            -0.0749995440244664
+          ],
+          [
+            13.875000640749931,
+            0.07500046193599808
+          ],
+          [
+            13.875000640749931,
+            0.22500046789646255
+          ],
+          [
+            13.875000640749931,
+            0.37500047385692703
+          ],
+          [
+            13.875000640749931,
+            0.5250004798173915
+          ]
+        ],
+        "reason": "room_entry_astar_preflight_path",
+        "refined_path": [
+          [
+            13.431020256527574,
+            -1.2909210627653391
+          ],
+          [
+            13.875000640749931,
+            -1.2749995917081822
+          ],
+          [
+            13.875000640749931,
+            -0.22499954998493088
+          ],
+          [
+            13.875000640749931,
+            0.5250004798173915
+          ]
+        ],
+        "refined_path_length": 2.2442658419995722,
+        "refined_waypoints": [
+          [
+            13.875000640749931,
+            -1.2749995917081822
+          ],
+          [
+            13.875000640749931,
+            0.5250004798173915
+          ]
+        ],
+        "refinement_status": "path_safe",
+        "success": true
+      },
+      "entry_preflight_reused": true,
+      "estimated_door_id": "estimated_door_02",
+      "execution_timeout_sec": 18.0,
+      "information_gain": 0.0,
+      "mandatory_portal_waypoints": [
+        [
+          13.875000640749931,
+          -1.2749995917081822
+        ],
+        [
+          13.875000640749931,
+          -0.22499954998493088
+        ],
+        [
+          13.875000640749931,
+          0.5250004798173915
+        ]
+      ],
+      "planned_at": 70.664,
+      "portal_clearance_m": 0.38,
+      "portal_preflight_verified": true,
+      "portal_resume_inside": false,
+      "position": [
+        13.875000640749931,
+        0.5250004798173915,
+        -0.0023793001423541016
+      ],
+      "progress_timeout_sec": 15.0,
+      "progressive_timeout": true,
+      "room_goal_attempt": 1,
+      "room_goal_diagnostic": {
+        "clearance": 0.7425000295042992,
+        "depth": 0.6499999999999998,
+        "fallback_candidate": false,
+        "lateral": 5.204170427930421e-18,
+        "position": [
+          13.817482608128847,
+          0.48436877747186163
+        ],
+        "predicted_local_gain_m2": 0.0,
+        "preflight_path_length_m": 1.816867404643116,
+        "prevalidated_local_entry": true,
+        "role": "ENTRY",
+        "score": 0.0,
+        "unknown_neighbors": 0
+      },
+      "room_id": "estimated_room_02",
+      "room_role": "ENTRY",
+      "score": 0.0,
+      "source": "lightweight_room_entry"
+    },
+    {
+      "adaptive_minimal_viewpoint": true,
+      "estimated_door_id": "estimated_door_02",
+      "execution_timeout_sec": 12.0,
+      "fallback_candidate": true,
+      "information_gain": 1.0,
+      "planned_at": 77.162,
+      "position": [
+        14.025000646710396,
+        2.925000575184823,
+        -0.0023793001423541016
+      ],
+      "progress_timeout_sec": 12.0,
+      "progressive_timeout": true,
+      "room_goal_attempt": 1,
+      "room_goal_diagnostic": {
+        "adaptive_marginal_gain_m2": 1.0,
+        "adaptive_utility": 1.2474267840759152,
+        "boundary_probe": false,
+        "center_adjustment_reason": "geometric_center_reachable",
+        "center_displacement_m": 0.15483585227849422,
+        "center_target": [
+          3.0,
+          -0.375134816025803
+        ],
+        "clearance": 1.5,
+        "coverage_cell_count": 0,
+        "depth": 3.0869507600927193,
+        "depth_fraction_target": 0.45,
+        "estimated_room_width": 13.297500528395176,
+        "fallback_candidate": true,
+        "fast_unobserved_room_entry": false,
+        "lateral": -0.24701882767889113,
+        "left_wall_distance": 6.5475002601742744,
+        "left_wall_distance_samples": [
+          6.5475002601742744,
+          6.5475002601742744
+        ],
+        "occlusion_anchor": [
+          13.865725537334638,
+          0.36874193893149526
+        ],
+        "occlusion_revealing": false,
+        "position": [
+          14.025000646710396,
+          2.925000575184823
+        ],
+        "predicted_local_gain_m2": 0.0,
+        "preflight_path_length_m": 2.70653367326425,
+        "right_wall_distance": 6.7500002682209015,
+        "right_wall_distance_samples": [
+          6.7500002682209015,
+          2.7000001072883606
+        ],
+        "role": "G1",
+        "score": 1.2474267840759152,
+        "side_extent_fraction": null,
+        "unknown_neighbors": 0
+      },
+      "room_id": "estimated_room_02",
+      "room_role": "G1",
+      "score": 1.2474267840759152,
+      "source": "lightweight_room_semantic"
+    },
+    {
+      "_preplanned_path_result": {
+        "execution_waypoints": [
+          [
+            13.875000640749931,
+            0.9984465519846046
+          ],
+          [
+            13.875000640749931,
+            0.8250004917383205
+          ],
+          [
+            13.875000640749931,
+            0.37500047385692703
+          ],
+          [
+            13.875000640749931,
+            -1.1249995857477177
+          ]
+        ],
+        "path": [
+          [
+            13.853586787870668,
+            2.4465750633892034
+          ],
+          [
+            13.875000640749931,
+            2.3250005513429652
+          ],
+          [
+            13.875000640749931,
+            2.1750005453825008
+          ],
+          [
+            13.875000640749931,
+            2.0250005394220363
+          ],
+          [
+            13.875000640749931,
+            1.8750005334615718
+          ],
+          [
+            13.875000640749931,
+            1.7250005275011073
+          ],
+          [
+            13.875000640749931,
+            1.5750005215406429
+          ],
+          [
+            13.875000640749931,
+            1.4250005155801784
+          ],
+          [
+            13.875000640749931,
+            1.275000509619714
+          ],
+          [
+            13.875000640749931,
+            1.1250005036592494
+          ],
+          [
+            13.875000640749931,
+            0.9750004976987849
+          ],
+          [
+            13.875000640749931,
+            0.8250004917383205
+          ],
+          [
+            13.875000640749931,
+            0.675000485777856
+          ],
+          [
+            13.875000640749931,
+            0.5250004798173915
+          ],
+          [
+            13.875000640749931,
+            0.37500047385692703
+          ],
+          [
+            13.875000640749931,
+            0.22500046789646255
+          ],
+          [
+            13.725000634789467,
+            0.22500046789646255
+          ],
+          [
+            13.725000634789467,
+            0.07500046193599808
+          ],
+          [
+            13.725000634789467,
+            -0.0749995440244664
+          ],
+          [
+            13.725000634789467,
+            -0.22499954998493088
+          ],
+          [
+            13.725000634789467,
+            -0.37499955594539536
+          ],
+          [
+            13.725000634789467,
+            -0.5249995619058598
+          ],
+          [
+            13.725000634789467,
+            -0.6749995678663243
+          ],
+          [
+            13.725000634789467,
+            -0.8249995738267888
+          ],
+          [
+            13.725000634789467,
+            -0.9749995797872533
+          ],
+          [
+            13.725000634789467,
+            -1.1249995857477177
+          ],
+          [
+            13.875000640749931,
+            -1.1249995857477177
+          ]
+        ],
+        "reason": "centered_exit_preflight_path",
+        "refined_path": [
+          [
+            13.853586787870668,
+            2.4465750633892034
+          ],
+          [
+            13.875000640749931,
+            0.9984465519846046
+          ],
+          [
+            13.875000640749931,
+            0.8250004917383205
+          ],
+          [
+            13.875000640749931,
+            0.37500047385692703
+          ],
+          [
+            13.725000634789467,
+            -0.22499954998493088
+          ],
+          [
+            13.875000640749931,
+            -1.1249995857477177
+          ]
+        ],
+        "refined_path_length": 3.6026131912028654,
+        "refined_waypoints": [
+          [
+            13.875000640749931,
+            0.9984465519846046
+          ],
+          [
+            13.875000640749931,
+            0.8250004917383205
+          ],
+          [
+            13.875000640749931,
+            0.37500047385692703
+          ],
+          [
+            13.875000640749931,
+            -1.1249995857477177
+          ]
+        ],
+        "refinement_status": "path_safe",
+        "success": true
+      },
+      "breadcrumb_fallback": false,
+      "estimated_door_id": "estimated_door_02",
+      "execution_timeout_sec": 14.0,
+      "information_gain": 0.0,
+      "mandatory_portal_waypoints": [
+        [
+          13.875000640749931,
+          0.8250004917383205
+        ],
+        [
+          13.875000640749931,
+          0.37500047385692703
+        ],
+        [
+          13.725000634789467,
+          -0.22499954998493088
+        ],
+        [
+          13.875000640749931,
+          -1.1249995857477177
+        ]
+      ],
+      "planned_at": 89.418,
+      "portal_clearance_m": 0.38,
+      "portal_preflight_verified": true,
+      "position": [
+        13.875000640749931,
+        -1.1249995857477177,
+        -0.0023793001423541016
+      ],
+      "progress_timeout_sec": 12.0,
+      "progressive_timeout": true,
+      "room_exit_attempt": 1,
+      "room_id": "estimated_room_02",
+      "room_role": "EXIT",
+      "score": 0.0,
+      "source": "lightweight_room_exit"
+    }
+  ],
+  "state": "CORRIDOR_SWEEP",
+  "successful_roles": [],
+  "truth_used_online": false
+}

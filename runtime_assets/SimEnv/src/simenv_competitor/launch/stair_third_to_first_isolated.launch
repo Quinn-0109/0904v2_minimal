@@ -1,0 +1,112 @@
+<launch>
+  <!-- Isolated physical acceptance test for the production F3->F2->F1
+       descent manager.  Only spawn/trigger are synthetic; the world,
+       controller, policies, state topic, geometry and completion gates are
+       identical to the full mission. -->
+  <arg name="output_dir"
+       default="$(find simenv_competitor)/../../results/f3_to_f1_isolated_run"/>
+  <arg name="gazebo_gui" default="false"/>
+  <arg name="robot_spawn_x" default="-1.94"/>
+  <arg name="robot_spawn_y" default="1.22"/>
+  <arg name="robot_spawn_z" default="5.80"/>
+  <arg name="robot_spawn_yaw" default="2.95"/>
+  <arg name="descent_speed_mps" default="0.52"/>
+  <arg name="descent_segment_timeout_sec" default="120.0"/>
+  <arg name="spawn_ready_ros_timeout_sec" default="45.0"/>
+  <arg name="spawn_ready_wall_timeout_sec" default="180.0"/>
+
+  <env name="GAZEBO_MODEL_PATH"
+       value="$(find simenv_competitor)/../../generated_building/models:$(optenv GAZEBO_MODEL_PATH)"/>
+
+  <include file="$(find simenv_competitor)/launch/baseline_fastlio_exploration.launch">
+    <arg name="output_dir" value="$(arg output_dir)"/>
+    <arg name="world_file"
+         value="$(find simenv_competitor)/../../generated_building/elevator_three_floor_official_count/competition_scene_with_dangers.world"/>
+    <arg name="offline_stair_model_sdf"
+         value="$(find simenv_competitor)/../../generated_building/elevator_three_floor_official_count/model.sdf"/>
+    <arg name="offline_truth_layout_metadata"
+         value="$(find simenv_competitor)/../../generated_building/elevator_three_floor_official_count/layout_metadata.json"/>
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)"/>
+    <arg name="robot_spawn_x" value="$(arg robot_spawn_x)"/>
+    <arg name="robot_spawn_y" value="$(arg robot_spawn_y)"/>
+    <arg name="robot_spawn_z" value="$(arg robot_spawn_z)"/>
+    <arg name="robot_spawn_yaw" value="$(arg robot_spawn_yaw)"/>
+    <arg name="first_floor_start_x" value="0.0"/>
+    <arg name="first_floor_start_y" value="0.8"/>
+    <arg name="first_floor_start_yaw" value="1.5708"/>
+    <arg name="enable_realsense" value="false"/>
+    <arg name="enable_danger_detection" value="false"/>
+    <arg name="enable_truth_lidar_coverage_logger" value="false"/>
+    <arg name="enable_baseline_exploration_manager" value="false"/>
+    <arg name="enable_goal_executor" value="false"/>
+    <arg name="stair_auto_start" value="false"/>
+    <arg name="first_floor_stair_required" value="false"/>
+    <arg name="enable_first_floor_stair_manager" value="false"/>
+    <arg name="enable_second_floor_exploration" value="false"/>
+    <arg name="enable_third_floor_exploration" value="false"/>
+    <arg name="enable_third_floor_truth_corridor_guide" value="false"/>
+    <arg name="enable_visual_stair_alignment" value="false"/>
+    <arg name="first_floor_auto_generate_visualization" value="false"/>
+    <arg name="second_floor_auto_generate_combined_visualization" value="false"/>
+    <arg name="third_floor_auto_generate_combined_visualization" value="false"/>
+    <arg name="enable_third_floor_descent" value="true"/>
+    <arg name="enable_compliant_fall_recovery" value="false"/>
+    <arg name="enable_fastlio_stack" value="false"/>
+    <arg name="enable_voxel_mapper" value="false"/>
+    <arg name="enable_local_doorway_detector" value="false"/>
+    <arg name="localization_truth_recovery_enabled" value="false"/>
+    <arg name="descent_speed_mps" value="$(arg descent_speed_mps)"/>
+    <arg name="descent_maximum_speed_mps" value="0.52"/>
+    <arg name="descent_pre_stand_seconds" value="1.5"/>
+    <arg name="descent_segment_timeout_sec"
+         value="$(arg descent_segment_timeout_sec)"/>
+    <arg name="descent_trigger_timeout_sec" value="180.0"/>
+    <arg name="descent_skip_entry_guide" value="true"/>
+    <arg name="descent_mission_failure_tokens"
+         value="ISOLATED_F3_SPAWN_NOT_READY"/>
+    <arg name="descent_terminate_on_mission_failure" value="true"/>
+    <!-- Acceptance runs prohibit any post-trigger Gazebo teleport. -->
+    <arg name="truth_descent_no_drop_correction_enabled" value="false"/>
+    <arg name="truth_descent_flight_max_stall_recoveries" value="2"/>
+    <arg name="truth_descent_landing_heading_tolerance_rad" value="0.28"/>
+    <arg name="truth_descent_landing_settle_seconds" value="1.5"/>
+    <arg name="truth_descent_landing_yaw_stall_sec" value="2.5"/>
+    <arg name="truth_descent_landing_slip_max_attempts" value="2"/>
+    <arg name="truth_descent_east_align_minimum_speed_mps" value="0.30"/>
+    <arg name="truth_descent_step_pause_seconds" value="0.10"/>
+    <arg name="truth_descent_step_pause_interval_m" value="0.26"/>
+    <arg name="first_floor_home_return_speed_mps" value="0.85"/>
+    <arg name="first_floor_home_return_yaw_rate_rps" value="0.65"/>
+    <arg name="first_floor_home_return_wall_timeout_sec" value="180.0"/>
+  </include>
+
+  <node pkg="simenv_competitor" type="controller_mode_bootstrap.py"
+        name="isolated_descent_rl_bootstrap" output="screen">
+    <param name="stand_after_seconds" value="1.0"/>
+    <param name="fixed_stand_max_duration_sec" value="120.0"/>
+    <param name="rl_repeat_seconds" value="240.0"/>
+    <param name="release_after_rl_request" value="true"/>
+  </node>
+
+  <!-- Required supervisor ends the otherwise persistent simulator only after
+       the descent manager has written its terminal log and visualization. -->
+  <node pkg="simenv_competitor" type="isolated_descent_trigger.py"
+        name="isolated_descent_trigger" output="screen" required="true">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="minimum_x" value="-2.05"/>
+    <param name="maximum_x" value="-1.83"/>
+    <param name="minimum_y" value="1.10"/>
+    <param name="maximum_y" value="1.34"/>
+    <param name="minimum_z" value="5.50"/>
+    <param name="maximum_z" value="5.68"/>
+    <param name="maximum_tilt_rad" value="0.25"/>
+    <param name="stable_ros_seconds" value="1.0"/>
+    <param name="ready_ros_timeout_seconds"
+           value="$(arg spawn_ready_ros_timeout_sec)"/>
+    <param name="ready_wall_timeout_seconds"
+           value="$(arg spawn_ready_wall_timeout_sec)"/>
+    <param name="trigger_topic" value="/simenv/third_floor_state"/>
+    <param name="trigger_token" value="THIRD_FLOOR_STAIR_RETURN_READY"/>
+    <param name="failure_token" value="ISOLATED_F3_SPAWN_NOT_READY"/>
+  </node>
+</launch>

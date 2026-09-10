@@ -1,0 +1,146 @@
+<launch>
+  <!-- Exploration chain:
+       FAST-LIO -> voxel/occupancy map -> official TARE
+       -> truth-free room-aware goal refinement -> official FAR
+       -> SCAN-lite -> Goal Executor -> RL locomotion.
+
+       The refiner only post-processes official TARE waypoints.  It consumes
+       online frontier clusters and the voxel collision service; it does not
+       use the simulator truth layout. -->
+  <arg name="output_dir"
+       default="$(find simenv_competitor)/../../results/tare_far_exploration"/>
+  <arg name="world_file"
+       default="$(find simenv_competitor)/../../generated_building/competition_scene.world"/>
+  <arg name="rl_policy"
+       default="$(find unitree_guide)/../../logs/policy_act_inference_stair.pt"/>
+  <!-- A complete four-room tour needs time for doorway turns, in-room
+       coverage and corridor returns.  Short 300 s diagnostics can still
+       override this argument explicitly. -->
+  <arg name="maximum_duration" default="700.0"/>
+  <arg name="world_frame" default="map"/>
+  <arg name="robot_spawn_x" default="0.0"/>
+  <arg name="robot_spawn_y" default="0.8"/>
+  <arg name="robot_spawn_z" default="0.6"/>
+  <arg name="robot_spawn_yaw" default="1.5708"/>
+
+  <include file="$(find simenv_competitor)/launch/fastlio_mapping.launch">
+    <arg name="output_dir" value="$(arg output_dir)"/>
+    <arg name="world_file" value="$(arg world_file)"/>
+    <arg name="rl_policy" value="$(arg rl_policy)"/>
+    <arg name="robot_spawn_x" value="$(arg robot_spawn_x)"/>
+    <arg name="robot_spawn_y" value="$(arg robot_spawn_y)"/>
+    <arg name="robot_spawn_z" value="$(arg robot_spawn_z)"/>
+    <arg name="robot_spawn_yaw" value="$(arg robot_spawn_yaw)"/>
+  </include>
+
+  <include file="$(find simenv_competitor)/launch/tare_exploration.launch">
+    <arg name="world_frame" value="$(arg world_frame)"/>
+    <arg name="scenario" value="indoor"/>
+    <arg name="output_dir" value="$(arg output_dir)"/>
+  </include>
+
+  <!-- Online, truth-free arbitration: FUEL bootstraps out of the lobby,
+       Official TARE cruises through confirmed corridors, and FUEL supplies
+       room frontier batches when doorway topology or stagnation requires it. -->
+  <node pkg="simenv_competitor" type="tare_fuel_hybrid_selector.py"
+        name="tare_fuel_hybrid_selector" output="screen" required="true">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="map_file" value="$(arg output_dir)/voxel_map.bt"/>
+    <param name="world_frame" value="$(arg world_frame)"/>
+    <param name="tare_goal_topic" value="/refined_exploration_goal"/>
+    <param name="map_topic" value="/simenv/voxel_floor_projection"/>
+    <param name="output_goal_topic" value="/hybrid_exploration_goal"/>
+    <param name="arbitration_status_topic"
+           value="/tare/arbitration_status"/>
+    <param name="tare_invalidation_match_distance" value="1.0"/>
+    <param name="room_goal_limit" value="3"/>
+    <param name="covered_endpoint_radius" value="1.0"/>
+    <param name="coverage_cell_size" value="0.45"/>
+    <param name="frontier_repeat_radius" value="1.5"/>
+    <param name="frontier_direction_tolerance_deg" value="35.0"/>
+    <param name="tare_debounce_distance" value="0.45"/>
+    <param name="tare_debounce_period" value="2.0"/>
+    <param name="blacklist_duration" value="20.0"/>
+    <param name="fuel_failure_limit" value="3"/>
+    <param name="repeat_goal_count" value="4"/>
+    <param name="repeat_region_radius" value="1.45"/>
+    <param name="stall_window" value="28.0"/>
+    <param name="stall_region_radius" value="0.85"/>
+    <param name="corridor_entry_min_progress" value="2.0"/>
+    <param name="default_forward_delay" value="3.0"/>
+  </node>
+
+  <!-- Receding-horizon free-space path layer.  Hybrid goals are directional
+       exploration intent; this node commits a short waypoint sequence and
+       releases its current waypoint to the normal FAR/SCAN/Executor chain. -->
+  <node pkg="simenv_competitor" type="local_exploration_path_generator.py"
+        name="local_exploration_path_generator" output="screen" required="true">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="world_frame" value="$(arg world_frame)"/>
+    <param name="map_topic" value="/simenv/voxel_floor_projection"/>
+    <param name="odom_topic" value="/tare/state_estimation_at_scan"/>
+    <param name="intent_goal_topic" value="/hybrid_exploration_goal"/>
+    <param name="frontier_topic" value="/simenv/frontier_clusters"/>
+    <param name="output_goal_topic" value="/local_exploration_goal"/>
+    <param name="output_path_topic" value="/simenv/local_exploration_path"/>
+    <param name="output_waypoint_list_topic"
+           value="/simenv/local_exploration_waypoints"/>
+    <param name="far_status_topic" value="/simenv/tare_far_status"/>
+    <param name="execution_result_topic"
+           value="/simenv/goal_execution_result"/>
+    <param name="scan_service"
+           value="/tare_far_voxel_mapper/check_twin_cylinder"/>
+    <param name="alpha" value="1.0"/>
+    <param name="beta" value="0.4"/>
+    <param name="gamma" value="1.0"/>
+    <param name="delta" value="0.5"/>
+    <param name="eta" value="1.0"/>
+    <param name="mu" value="1.5"/>
+    <param name="waypoint_spacing" value="0.75"/>
+    <param name="waypoint_count" value="4"/>
+    <param name="minimum_waypoints" value="2"/>
+    <param name="free_clearance" value="0.30"/>
+    <param name="sensor_range" value="3.0"/>
+    <param name="risk_radius" value="0.75"/>
+    <param name="revisit_radius" value="0.65"/>
+    <param name="backward_penalty" value="5.0"/>
+    <param name="min_commit_waypoints" value="3"/>
+    <param name="min_commit_distance" value="1.5"/>
+    <param name="min_commit_time" value="12.0"/>
+    <param name="minimum_remaining_information_gain" value="1.0"/>
+    <param name="failure_blacklist_duration" value="20.0"/>
+  </node>
+
+  <include file="$(find simenv_competitor)/launch/far_navigation.launch">
+    <arg name="output_dir" value="$(arg output_dir)"/>
+    <arg name="maximum_duration" value="$(arg maximum_duration)"/>
+    <arg name="world_frame" value="$(arg world_frame)"/>
+    <arg name="tare_goal_topic" value="/local_exploration_goal"/>
+  </include>
+
+  <include file="$(find simenv_competitor)/launch/goal_executor.launch">
+    <arg name="output_dir" value="$(arg output_dir)"/>
+    <arg name="start_rl_mode" value="true"/>
+    <arg name="shutdown_on_result" value="false"/>
+    <arg name="command_topic" value="/cmd_vel"/>
+    <!-- TARE/FAR goals use the official TARE world frame "map".  Consume
+         the same normalized odometry so Goal Executor does not reject every
+         command as map vs camera_init. -->
+    <arg name="odom_topic" value="/tare/state_estimation_at_scan"/>
+    <arg name="enable_takeover_monitor" value="false"/>
+    <arg name="enable_rl_guard" value="false"/>
+    <arg name="arm_rl_guard" value="false"/>
+    <arg name="goal_tolerance" value="0.15"/>
+    <arg name="minimum_speed" value="0.32"/>
+    <arg name="maximum_speed" value="0.42"/>
+    <arg name="acceleration" value="0.24"/>
+    <arg name="log_file" value="goal_execution_history.json"/>
+  </include>
+
+  <node pkg="simenv_competitor" type="baseline_telemetry.py"
+        name="tare_far_telemetry" output="screen" required="false">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="ground_truth_topic" value="/gazebo/model_states"/>
+    <param name="ground_truth_model" value="a1_gazebo"/>
+  </node>
+</launch>

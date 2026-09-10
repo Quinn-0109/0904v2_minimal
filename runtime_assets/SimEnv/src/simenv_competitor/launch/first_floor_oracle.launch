@@ -1,0 +1,48 @@
+<launch>
+  <!--
+    Planner/perception integration baseline. This launch uses referee odometry
+    through oracle_tare_bridge and is therefore NOT competition compliant.
+  -->
+  <arg name="result_file" default="$(env PWD)/results/detected_danger.json"/>
+  <arg name="timeout_seconds" default="150.0"/>
+  <arg name="max_speed" default="0.8"/>
+
+  <node pkg="simenv_competitor" type="oracle_tare_bridge.py"
+        name="oracle_tare_bridge" output="screen" required="true">
+    <param name="max_linear_speed" value="$(arg max_speed)"/>
+    <param name="max_yaw_rate" value="1.0"/>
+  </node>
+
+  <group>
+    <remap from="/cmd_vel" to="/tare/cmd_vel_stamped"/>
+    <include file="$(find simenv_competitor)/launch/local_planner_headless.launch">
+      <arg name="autonomyMode" value="true"/>
+      <arg name="maxSpeed" value="$(arg max_speed)"/>
+      <arg name="autonomySpeed" value="$(arg max_speed)"/>
+      <arg name="twoWayDrive" value="true"/>
+    </include>
+  </group>
+
+  <node pkg="tare_planner" type="tare_planner_node"
+        name="tare_planner_node" output="screen" required="true"
+        ns="sensor_coverage_planner">
+    <rosparam command="load" file="$(find tare_planner)/config/indoor.yaml"/>
+    <param name="kAutoStart" value="true"/>
+    <param name="kRushHome" value="true"/>
+    <param name="kNoExplorationReturnHome" value="true"/>
+    <param name="kAtHomeDistThreshold" value="0.55"/>
+    <param name="kSensorRange" value="7.0"/>
+    <param name="kLookAheadDistance" value="5.0"/>
+    <param name="kExtendWayPointDistanceBig" value="5.0"/>
+    <param name="kExtendWayPointDistanceSmall" value="2.5"/>
+    <param name="viewpoint_manager/number_z" value="1"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="danger_detector.py"
+        name="danger_detector" output="screen" required="true">
+    <param name="result_file" value="$(arg result_file)"/>
+    <param name="timeout_seconds" value="$(arg timeout_seconds)"/>
+    <param name="home_tolerance" value="0.7"/>
+    <param name="minimum_hits" value="3"/>
+  </node>
+</launch>

@@ -1,0 +1,156 @@
+# FAST-LIO2 for SimEnv Mid-360 after pitch-leveling adapter.
+common:
+  lid_topic: /simenv/fast_lio/points
+  imu_topic: /simenv/fast_lio/imu
+  time_sync_en: false
+  time_offset_lidar_to_imu: 0.0
+
+preprocess:
+  # PointCloud2 follows FAST-LIO's Velodyne-compatible field parser. SimEnv's
+  # rays are sampled at one physics instant, so the adapter supplies a tiny
+  # positive constant time rather than fabricating a rotating 100 ms sweep.
+  lidar_type: 2
+  scan_line: 6
+  scan_rate: 10
+  timestamp_unit: 0  # seconds
+  blind: 0.25
+
+mapping:
+  # Slightly looser IMU noise for Gazebo Mid-360 sim.
+  # RL foot strikes are much harsher than handheld/vehicle IMUs. Let LiDAR
+  # registration correct translation instead of over-trusting acceleration.
+  acc_cov: 1.0
+  gyr_cov: 0.1
+  b_acc_cov: 0.0001
+  b_gyr_cov: 0.0001
+  fov_degree: 360
+  det_range: 30.0
+  extrinsic_est_en: false
+  # The adapter levels both sensors but does not erase their physical offset.
+  # FAST-LIO expects the LiDAR origin expressed in the IMU frame. The URDF
+  # stores the opposite direction, so the levelled offset is negated here.
+  extrinsic_T: [-0.023404, 0.023290, -0.038985]
+  extrinsic_R: [1, 0, 0,
+                0, 1, 0,
+                0, 0, 1]
+
+publish:
+  path_en: false
+  scan_publish_en: true
+  dense_publish_en: false
+  scan_bodyframe_pub_en: false
+
+pcd_save:
+  pcd_save_en: false
+  interval: -1
+
+# Command-conditioned zero-motion update for longitudinally degenerate
+# corridors.  It uses /cmd_vel only; Gazebo truth is never consumed by LIO.
+motion_guard:
+  enabled: true
+  linear_command_threshold: 0.03
+  angular_command_threshold: 0.05
+  stationary_hold_seconds: 0.35
+  command_timeout_seconds: 1.0
+
+# A weak-correspondence scan has no trustworthy LiDAR localization constraint.
+# Freeze at the last constrained state and refuse to add predicted points to
+# the map.  Run26 dropped from >500 effective points to 27 during room ingress.
+registration_guard:
+  enabled: true
+  minimum_effective_points: 120
+  # The upper floor has fewer visible returns near the stair opening.  Enable
+  # this lower but still guarded threshold only after the validated F2
+  # corridor handoff; F1 and stair localization keep the 120-point gate.
+  second_floor_minimum_effective_points: 60
+  # FAST-LIO runs at 10 Hz here.  Corrections beyond these per-scan distances
+  # are physically impossible for the robot and indicate registration loss.
+  maximum_horizontal_step_m: 0.45
+  maximum_vertical_step_m: 0.18
+  # Allow delayed, high-speed scans a bounded command-consistent margin.
+  # The 1.20 m hard cap, vertical gate and effective-point gate remain active.
+  command_motion_margin: 1.50
+  maximum_dynamic_horizontal_step_m: 1.20
+  # A scan with strong planar support may contain a bounded false z update on
+  # flat floors.  Constrain z and retain x/y instead of entering a permanent
+  # freeze.  This is disabled for jumps larger than 0.35 m or weak scans.
+  planar_vertical_recovery: true
+  maximum_planar_recovery_vertical_step_m: 0.35
+  # A sustained invalid streak creates a recovery REQUEST; it never writes
+  # Gazebo coordinates directly. The shared quiet-body/fresh-truth gate still
+  # requires an anchored SE(2) residual before applying a one-shot correction.
+  # The lower point threshold is used only for the bounded post-recovery warmup.
+  self_recovery_invalid_count: 4
+  self_recovery_minimum_effective_points: 15
+  # Run4: shorten the retained-map 0.35 m warmup gate from 90 scans.
+  self_recovery_frames: 20
+
+# Simulator-only relative-motion monitor. It is armed only in flat-floor
+# mission phases and released for both stairs. It records synchronized anchors
+# but does not alter normal FAST-LIO unless the recovery gate accepts a fault.
+second_floor_truth_motion_guard:
+  enabled: true
+  # Raw x/y/yaw rebasing is forbidden. Anchors preserve the existing FAST-LIO
+  # frame and only relative truth motion may be used by fault recovery.
+  rebase_planar_pose: false
+  maximum_age_seconds: 0.50
+  # Preserve the normal base-to-IMU height offset, but repair a missed stair
+  # climb before upper-floor exploration starts (run73 error was 1.89 m).
+  absolute_height_recovery_threshold_m: 0.75
+
+# Simulator truth is only a bounded localization-fault fallback. The request
+# monitor compares synchronized motion in anchored SE(2); FAST-LIO consumes a
+# request only while the physical body is quiet, applies one estimator update
+# in its existing frame, skips the pre-correction cloud, then returns to LIO.
+truth_recovery:
+  enabled: true
+  # Keep planner/map/goal coordinates continuous under simulator truth localization.
+  continuous_planar_localization: true
+  request_timeout_seconds: 3.0
+  minimum_planar_residual_m: 0.20
+  minimum_yaw_residual_rad: 0.15
+  maximum_planar_correction_m: 2.0
+  maximum_yaw_correction_rad: 2.60
+  # A large estimator re-anchor invalidates retained world-frame map points.
+  # Rebuild only the LIO map; room and mission state are unaffected.
+  rebuild_map_after_planar_correction_m: 1.50
+  truth_linear_quiet_threshold_mps: 0.12
+  truth_angular_quiet_threshold_rps: 0.12
+  anchor_maximum_age_seconds: 0.15
+  # Reject a moving ICP result once cumulative anchored-SE(2) error reaches a
+  # bounded limit. This freezes registration only; pose correction still
+  # requires a separate request, fresh truth and a physically quiet robot.
+  divergence_gate_enabled: true
+  divergence_planar_threshold_m: 1.25
+  # Tighten the gate while the retained map settles after one-shot recovery.
+  divergence_self_recovery_planar_threshold_m: 0.35
+  divergence_yaw_threshold_rad: 0.55
+
+# During a physical fall, consume IMU packets but keep every fallen-body scan
+# out of ICP, the ikd-tree and registered clouds. After recovery, require a
+# clean registration streak before publishing or changing the map.
+fall_quarantine:
+  enabled: true
+  required_clean_scans: 10
+
+# Detect weak horizontal LiDAR registration in long parallel-wall corridors.
+# A bounded /cmd_vel-derived displacement supplies only the missing component;
+# no Gazebo pose, layout metadata, or room coordinates are used online.
+degeneracy_assist:
+  # Enable only as a tightly bounded stabilizer.  It cannot accumulate a
+  # second dead-reckoning trajectory because total correction is capped below.
+  enabled: true
+  # Long, feature-poor corridors can remain numerically stable while their
+  # weak translation axis slowly drifts.  Detect that earlier so the bounded
+  # command-motion assist engages before multi-metre accumulated error.
+  information_ratio_threshold: 0.30
+  minimum_strong_information: 0.05
+  command_timeout_seconds: 0.35
+  minimum_command_speed: 0.08
+  maximum_angular_speed: 0.55
+  command_velocity_scale: 0.65
+  minimum_observed_ratio: 0.30
+  activation_seconds: 0.50
+  maximum_correction_speed: 0.38
+  maximum_total_correction: 0.75
+  minimum_axis_alignment: 0.72

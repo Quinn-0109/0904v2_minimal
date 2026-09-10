@@ -1,0 +1,68 @@
+<launch>
+  <arg name="enabled" default="true"/>
+  <arg name="node_name"/>
+  <arg name="output_dir"/>
+  <arg name="trigger_topic"/>
+  <arg name="trigger_token"/>
+  <arg name="state_topic"/>
+  <arg name="ready_token"/>
+  <node if="$(arg enabled)" pkg="simenv_competitor"
+        type="stair_entry_mission_adapter.py" name="$(arg node_name)" output="screen"
+        launch-prefix="/usr/bin/python3">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="mission_trigger_topic" value="$(arg trigger_topic)"/>
+    <param name="mission_trigger_token" value="$(arg trigger_token)"/>
+    <param name="mission_trigger_timeout_sec" value="900.0"/>
+    <param name="entry_state_topic" value="$(arg state_topic)"/>
+    <param name="entry_ready_token" value="$(arg ready_token)"/>
+    <rosparam>
+      direct_forward_wall_mode: true
+      direct_forward_goal_distance_m: 14.0
+      direct_forward_guard_distance_m: 12.0
+      direct_forward_line_tracking_enabled: true
+      direct_forward_lookahead_m: 2.0
+      direct_forward_update_period_sec: 0.10
+      return_wall_stop_distance_m: 1.00
+      return_wall_confirmations: 2
+      wall_range_safety_only: false
+      require_stair_context_for_wall_stop: true
+      stair_context_confirmations: 2
+      entry_wall_station_stop_enabled: true
+      entry_wall_station_standoff_m: 1.20
+      entry_wall_station_confirmations: 4
+      entry_wall_station_max_spread_m: 0.28
+      entry_wall_station_min_progress_span_m: 0.45
+      entry_wall_station_min_support: 0.55
+      entry_wall_station_min_lead_m: 0.65
+      entry_wall_station_min_observation_lead_m: 3.00
+      entry_wall_station_required_clusters: 1
+      entry_wall_station_cluster_separation_m: 1.50
+      entry_wall_plane_min_depth_m: 1.80
+      entry_wall_plane_max_depth_m: 4.80
+      door_visual_stop_enabled: false
+      side_stair_projection_stop_enabled: false
+      fast_goal_turn_enabled: true
+      fast_turn_virtual_goal_m: 4.0
+      fast_turn_lateral_limit_mps: 0.005
+      fast_turn_restore_lateral_limit_mps: 0.20
+      fast_turn_tolerance_rad: 0.10
+      fast_turn_target_offset_rad: 0.15
+      fast_turn_update_period_sec: 0.03
+      fast_turn_timeout_sec: 6.0
+      post_turn_settle_sec: 0.10
+      require_wall_step_midpoint: true
+      entry_aisle_path_enabled: true
+      entry_stage_forward_m: 0.60
+      entry_stage_lateral_fraction: 1.0
+      entry_pass_through_enabled: true
+      entry_pass_through_radius_m: 0.24
+      entry_stage_goal_extension_m: 0.30
+      entry_stage_min_progress_fraction: 0.85
+      entry_arrival_tolerance_m: 0.35
+      profiled_final_enabled: true
+      profiled_cruise_speed_mps: 2.0
+      profiled_approach_speed_mps: 1.2
+      profiled_brake_distance_m: 0.9
+    </rosparam>
+  </node>
+</launch>

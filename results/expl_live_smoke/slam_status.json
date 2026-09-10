@@ -1,0 +1,7 @@
+{
+  "first_odometry_elapsed_sec": 36.61863388295751,
+  "first_registered_cloud_elapsed_sec": 36.62173148803413,
+  "odometry_topic": "/simenv/fastlio_stabilized_odometry",
+  "ready": true,
+  "registered_cloud_topic": "/cloud_registered"
+}

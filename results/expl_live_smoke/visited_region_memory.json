@@ -1,0 +1,47 @@
+[
+  {
+    "branch_id": "side_branch_01",
+    "elapsed_sec": 47.022,
+    "point": [
+      13.569605567400737,
+      -2.7359377749831366
+    ],
+    "side": -1
+  },
+  {
+    "branch_id": "side_branch_01",
+    "elapsed_sec": 58.683,
+    "point": [
+      13.148290451399927,
+      -4.349418188938973
+    ],
+    "side": -1
+  },
+  {
+    "branch_id": "side_branch_02",
+    "elapsed_sec": 77.122,
+    "point": [
+      13.865725537334638,
+      0.36874193893149526
+    ],
+    "side": 1
+  },
+  {
+    "branch_id": "side_branch_02",
+    "elapsed_sec": 89.379,
+    "point": [
+      13.853586787870668,
+      2.4465750633892034
+    ],
+    "side": 1
+  },
+  {
+    "branch_id": "side_branch_03",
+    "elapsed_sec": 133.342,
+    "point": [
+      21.902049196873065,
+      -1.3968025353299298
+    ],
+    "side": 1
+  }
+]

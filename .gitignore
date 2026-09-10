@@ -1,0 +1,5 @@
+﻿.portable_build/
+runtime_assets/SimEnv/runtime_bin/
+*.o
+*.a
+*.so

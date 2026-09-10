@@ -1,0 +1,124 @@
+<launch>
+  <!-- Headless seed-77 SLAM diagnostic. Gazebo truth/layout are confined to
+       the test controller and offline reports; FAST-LIO remains independent. -->
+  <arg name="output_dir"/>
+  <arg name="mission_timeout" default="240.0"/>
+  <arg name="waypoint_timeout" default="55.0"/>
+  <arg name="settle_seconds" default="1.0"/>
+  <arg name="motion_mode" default="kinematic_gt_diagnostic"/>
+  <arg name="route_variant" default="full_loop"/>
+  <arg name="route_waypoint_limit" default="0"/>
+  <arg name="require_exit" default="true"/>
+  <arg name="route_deviation_limit" default="1.5"/>
+  <arg name="corridor_joy_limit" default="0.52"/>
+  <arg name="door_joy_limit" default="0.40"/>
+  <arg name="room_joy_limit" default="0.55"/>
+  <arg name="scan_pause_seconds" default="1.2"/>
+  <arg name="max_stall_recoveries" default="2"/>
+  <arg name="enable_rl_guard" default="false"/>
+  <arg name="controller_dt" default="0.002"/>
+  <arg name="controller_cpu_affinity" default="0,1,2,3"/>
+  <arg name="rl_policy"
+       default="$(find unitree_guide)/../../logs/policy_act_inference_plane.pt"/>
+  <arg name="rl_corridor_speed" default="0.35"/>
+  <arg name="rl_door_speed" default="0.20"/>
+  <arg name="rl_room_speed" default="0.25"/>
+  <arg name="rl_maximum_yaw" default="0.35"/>
+  <arg name="rl_arc_turning" default="false"/>
+  <arg name="rl_holonomic" default="false"/>
+  <arg name="rl_device" default="auto"/>
+  <arg name="mapping_controller_required" default="true"/>
+  <arg name="rl_guard_recovery_minimum_height" default="0.285"/>
+  <!-- default corridor_joy_limit: name="corridor_joy_limit" value="0.52" -->
+  <arg name="layout_file"
+       default="$(find simenv_competitor)/../../generated_building/layout_metadata.json"/>
+
+  <include file="$(find simenv_competitor)/launch/mapping_test.launch">
+    <arg name="gui" value="false"/>
+    <arg name="rviz" value="false"/>
+    <arg name="teleop" value="false"/>
+    <arg name="start_controller" value="true"/>
+    <arg name="enable_realsense" value="false"/>
+    <arg name="sensor_warmup_seconds" value="25.0"/>
+    <arg name="slam_startup_delay_seconds" value="8.0"/>
+    <!-- Exact gait tuple from 20260716T032859Z: completed the full 56.58 m
+         Room0 route without falling under the mapping workload. -->
+    <arg name="gait_profile" value="trot"/>
+    <arg name="gait_period" value="0.55"/>
+    <arg name="gait_stance_ratio" value="0.68"/>
+    <arg name="gait_height" value="0.08"/>
+    <arg name="controller_dt" value="$(arg controller_dt)"/>
+    <arg name="controller_cpu_affinity" value="$(arg controller_cpu_affinity)"/>
+    <arg name="rl_policy" value="$(arg rl_policy)"/>
+    <arg name="rl_device" value="$(arg rl_device)"/>
+  </include>
+
+  <node if="$(arg enable_rl_guard)" pkg="simenv_competitor"
+        type="rl_mapping_speed_guard.py" name="rl_mapping_speed_guard"
+        output="screen" required="true">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="maximum_linear" value="$(arg rl_corridor_speed)"/>
+    <param name="maximum_lateral" value="0.35"/>
+    <param name="maximum_yaw" value="$(arg rl_maximum_yaw)"/>
+    <param name="acceleration" value="0.20"/>
+    <param name="deceleration" value="0.60"/>
+    <param name="warning_tilt" value="0.26"/>
+    <param name="abort_tilt" value="0.35"/>
+    <param name="minimum_height" value="0.24"/>
+    <param name="recovery_tilt" value="0.28"/>
+    <param name="recovery_release_tilt" value="0.24"/>
+    <param name="recovery_minimum_height"
+           value="$(arg rl_guard_recovery_minimum_height)"/>
+    <param name="recovery_release_seconds" value="0.8"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="localization_health_monitor.py"
+        name="room0_localization_health" output="screen">
+    <param name="output_file" value="$(arg output_dir)/health.json"/>
+    <param name="odom_topic" value="/Odometry"/>
+    <param name="imu_topic" value="/livox/imu"/>
+    <param name="max_speed_mps" value="1.5"/>
+    <param name="max_jump_m" value="0.45"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="room0_mapping_controller.py"
+        name="room0_mapping_controller" output="screen"
+        required="$(arg mapping_controller_required)"
+        launch-prefix="bash -c 'sleep 8; exec &quot;$@&quot;' --">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="layout_file" value="$(arg layout_file)"/>
+    <param name="motion_mode" value="$(arg motion_mode)"/>
+    <param name="route_variant" value="$(arg route_variant)"/>
+    <param name="route_waypoint_limit" value="$(arg route_waypoint_limit)"/>
+    <param name="require_exit" value="$(arg require_exit)"/>
+    <param name="kinematic_corridor_speed" value="0.65"/>
+    <param name="kinematic_door_speed" value="0.35"/>
+    <param name="kinematic_room_speed" value="0.50"/>
+    <param name="mission_timeout" value="$(arg mission_timeout)"/>
+    <param name="waypoint_timeout" value="$(arg waypoint_timeout)"/>
+    <param name="settle_seconds" value="$(arg settle_seconds)"/>
+    <param name="stand_seconds" value="5.0"/>
+    <param name="trotting_warmup_seconds" value="4.0"/>
+    <param name="pre_motion_dwell_seconds" value="1.5"/>
+    <param name="stand_timeout_seconds" value="12.0"/>
+    <param name="stable_pose_seconds" value="1.5"/>
+    <param name="stand_min_z" value="0.23"/>
+    <param name="stagnation_seconds" value="6.0"/>
+    <param name="max_stall_recoveries" value="$(arg max_stall_recoveries)"/>
+    <param name="route_deviation_limit" value="$(arg route_deviation_limit)"/>
+    <param name="corridor_joy_limit" value="0.52"/>
+    <!-- overridden by the launch argument below -->
+    <!-- Proven no-fall band with the obstacle-aware Room0 loop. -->
+    <param name="corridor_joy_limit" value="$(arg corridor_joy_limit)"/>
+    <param name="door_joy_limit" value="$(arg door_joy_limit)"/>
+    <param name="room_joy_limit" value="$(arg room_joy_limit)"/>
+    <param name="scan_pause_seconds" value="$(arg scan_pause_seconds)"/>
+    <param name="rl_corridor_speed" value="$(arg rl_corridor_speed)"/>
+    <param name="rl_door_speed" value="$(arg rl_door_speed)"/>
+    <param name="rl_room_speed" value="$(arg rl_room_speed)"/>
+    <param name="rl_maximum_yaw" value="$(arg rl_maximum_yaw)"/>
+    <param name="rl_arc_turning" value="$(arg rl_arc_turning)"/>
+    <param name="rl_holonomic" value="$(arg rl_holonomic)"/>
+    <param name="rl_zero_warmup_seconds" value="3.0"/>
+  </node>
+</launch>

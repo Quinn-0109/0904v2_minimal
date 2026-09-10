@@ -1,0 +1,88 @@
+<launch>
+  <!-- Physical F2 stair-lobby -> F3 acceptance test in the same official
+       three-floor world used by full runs.  The robot starts on the flat F2
+       lobby, so the test covers truth-guided stair approach/alignment as well
+       as both flights, the F3 landing handoff, and F3 exploration.  Publish
+       SECOND_FLOOR_EXPLORATION_COMPLETE after startup. -->
+  <arg name="output_dir" default="$(find simenv_competitor)/../../results/stair_f2_to_f3_isolated_run1"/>
+  <arg name="gazebo_gui" default="false"/>
+  <arg name="robot_spawn_x" default="-0.94"/>
+  <arg name="robot_spawn_y" default="1.55"/>
+  <arg name="robot_spawn_z" default="3.20"/>
+  <arg name="robot_spawn_yaw" default="1.5708"/>
+  <arg name="flight_b_timeout_sec" default="120.0"/>
+  <arg name="third_floor_maximum_duration" default="300.0"/>
+  <arg name="stall_wrench_enabled" default="false"/>
+  <arg name="stall_wrench_forward_n" default="30.0"/>
+  <arg name="stall_wrench_upward_n" default="90.0"/>
+  <arg name="stall_wrench_duration_sec" default="0.5"/>
+  <arg name="stall_recovery_limit" default="2"/>
+  <!-- Match the full-flow bounded truth correction policy: one real
+       Flight-A attempt, then at most one correction to its verified top. -->
+  <arg name="physical_only_recovery" default="false"/>
+  <arg name="smooth_nudge_enabled" default="true"/>
+  <arg name="smooth_nudge_after_recoveries" default="1"/>
+  <arg name="smooth_nudge_forward_m" default="0.260"/>
+  <arg name="smooth_nudge_upward_m" default="0.130"/>
+  <arg name="flight_b_recovery_heading_error_rad" default="0.15"/>
+  <arg name="flight_b_recovery_release_heading_error_rad" default="0.08"/>
+  <env name="GAZEBO_MODEL_PATH"
+       value="$(find simenv_competitor)/../../generated_building/models:$(optenv GAZEBO_MODEL_PATH)"/>
+  <include file="$(find simenv_competitor)/launch/baseline_fastlio_exploration.launch">
+    <arg name="output_dir" value="$(arg output_dir)"/>
+    <arg name="world_file" value="$(find simenv_competitor)/../../generated_building/elevator_three_floor_official_count/competition_scene_with_dangers.world"/>
+    <arg name="offline_stair_model_sdf" value="$(find simenv_competitor)/../../generated_building/elevator_three_floor_official_count/model.sdf"/>
+    <arg name="offline_truth_layout_metadata" value="$(find simenv_competitor)/../../generated_building/elevator_three_floor_official_count/layout_metadata.json"/>
+    <arg name="maximum_duration" value="300.0"/>
+    <arg name="maximum_goals" value="100"/>
+    <arg name="enable_realsense" value="false"/>
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)"/>
+    <arg name="robot_spawn_x" value="$(arg robot_spawn_x)"/>
+    <arg name="robot_spawn_y" value="$(arg robot_spawn_y)"/>
+    <arg name="robot_spawn_z" value="$(arg robot_spawn_z)"/>
+    <arg name="robot_spawn_yaw" value="$(arg robot_spawn_yaw)"/>
+    <arg name="enable_baseline_exploration_manager" value="false"/>
+    <arg name="stair_auto_start" value="false"/>
+    <arg name="first_floor_stair_required" value="false"/>
+    <arg name="enable_first_floor_stair_manager" value="false"/>
+    <arg name="enable_goal_executor" value="true"/>
+    <arg name="two_flight_stair" value="true"/>
+    <arg name="second_to_third_flight_b_timeout_sec" value="$(arg flight_b_timeout_sec)"/>
+    <arg name="second_to_third_flight_b_stall_wrench_enabled"
+         value="$(arg stall_wrench_enabled)"/>
+    <arg name="second_to_third_flight_b_stall_wrench_forward_n"
+         value="$(arg stall_wrench_forward_n)"/>
+    <arg name="second_to_third_flight_b_stall_wrench_upward_n"
+         value="$(arg stall_wrench_upward_n)"/>
+    <arg name="second_to_third_flight_b_stall_wrench_duration_sec"
+         value="$(arg stall_wrench_duration_sec)"/>
+    <arg name="second_to_third_flight_b_stall_recovery_limit"
+         value="$(arg stall_recovery_limit)"/>
+    <arg name="truth_f2_f3_physical_only_recovery"
+         value="$(arg physical_only_recovery)"/>
+    <arg name="second_to_third_flight_b_stall_nudge_enabled"
+         value="$(arg smooth_nudge_enabled)"/>
+    <arg name="second_to_third_flight_b_stall_nudge_after_recoveries"
+         value="$(arg smooth_nudge_after_recoveries)"/>
+    <arg name="second_to_third_flight_b_stall_nudge_forward_m"
+         value="$(arg smooth_nudge_forward_m)"/>
+    <arg name="second_to_third_flight_b_stall_nudge_upward_m"
+         value="$(arg smooth_nudge_upward_m)"/>
+    <arg name="second_to_third_flight_b_recovery_heading_error_rad"
+         value="$(arg flight_b_recovery_heading_error_rad)"/>
+    <arg name="second_to_third_flight_b_recovery_release_heading_error_rad"
+         value="$(arg flight_b_recovery_release_heading_error_rad)"/>
+    <arg name="enable_second_floor_exploration" value="false"/>
+    <arg name="enable_third_floor_exploration" value="true"/>
+    <arg name="third_floor_maximum_duration"
+         value="$(arg third_floor_maximum_duration)"/>
+    <arg name="third_floor_maximum_goals" value="100"/>
+  </include>
+  <node pkg="simenv_competitor" type="controller_mode_bootstrap.py"
+        name="stair_f2_to_f3_rl_bootstrap" output="screen">
+    <param name="stand_after_seconds" value="1.0"/>
+    <param name="fixed_stand_max_duration_sec" value="180.0"/>
+    <param name="rl_repeat_seconds" value="300.0"/>
+    <param name="release_after_rl_request" value="true"/>
+  </node>
+</launch>

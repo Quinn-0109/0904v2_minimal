@@ -1,0 +1,8 @@
+prefix=/workspace/0904_v2/SimEnv-master/.portable/devel
+
+Name: quadrotor_msgs
+Description: Description of quadrotor_msgs
+Version: 0.0.0
+Cflags: -I/workspace/0904_v2/SimEnv-master/.portable/devel/include
+Libs: -L${prefix}/lib -lencode_msgs -ldecode_msgs
+Requires: message_runtime

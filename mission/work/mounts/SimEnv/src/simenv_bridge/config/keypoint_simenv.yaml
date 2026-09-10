@@ -1,0 +1,19 @@
+# SCAN-Planner navi_mode=2 (PRESET_TARGET) room-sequence waypoints for SimEnv.
+# Loaded into /scan_planner_node/ ns (FSM reads private fsm/waypoint{i}_{x,y,z}).
+# Source: SimEnv/generated_building/layout_metadata.json target_points.rooms.
+# Sweep order: left-front -> left-back -> cross-over -> right-back -> right-front
+# (boustrophedon over the 4 rooms on floor 0). z=0 (2D floor; FSM adds body height).
+fsm:
+  waypoint_num: 4
+  waypoint0_x: -4.8
+  waypoint0_y: 14.865
+  waypoint0_z: 0.0
+  waypoint1_x: -4.8
+  waypoint1_y: 28.895
+  waypoint1_z: 0.0
+  waypoint2_x: 4.8
+  waypoint2_y: 28.895
+  waypoint2_z: 0.0
+  waypoint3_x: 4.8
+  waypoint3_y: 14.865
+  waypoint3_z: 0.0

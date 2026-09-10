@@ -1,0 +1,51 @@
+<launch>
+  <!--
+    First-floor ORACLE baseline using RealSense + direct waypoint tracking.
+    Uses referee odometry and layout_metadata. NOT competition compliant.
+
+    This is the roomsweep configuration that produced:
+      results/exploration_coverage_roomsweep.png
+      (~271.6s, 5/6 detections, ~85% coverage)
+  -->
+  <arg name="result_file" default="$(env PWD)/results/detected_danger.json"/>
+  <arg name="timeout_seconds" default="360.0"/>
+  <arg name="max_speed" default="0.9"/>
+  <arg name="sensor_range" default="7.5"/>
+  <arg name="workspace_root" default="$(env PWD)"/>
+  <arg name="floor_index" default="0"/>
+
+  <node pkg="simenv_competitor" type="realsense_tare_bridge.py"
+        name="realsense_tare_bridge" output="screen" required="true">
+    <param name="max_linear_speed" value="$(arg max_speed)"/>
+    <param name="max_yaw_rate" value="1.0"/>
+    <param name="max_range" value="$(arg sensor_range)"/>
+    <param name="voxel" value="0.08"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="oracle_room_tour.py"
+        name="oracle_room_tour" output="screen" required="true">
+    <param name="workspace_root" value="$(arg workspace_root)"/>
+    <param name="goal_tolerance" value="0.55"/>
+    <param name="max_speed" value="$(arg max_speed)"/>
+    <param name="max_yaw_rate" value="1.0"/>
+    <param name="scan_angle_deg" value="120.0"/>
+    <param name="coverage_profile" value="room_sweep"/>
+    <param name="floor_index" value="$(arg floor_index)"/>
+    <param name="start_delay" value="3.0"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="trajectory_recorder.py"
+        name="trajectory_recorder" output="screen">
+    <param name="output_file" value="$(arg workspace_root)/results/exploration_trajectory.json"/>
+    <param name="odom_topic" value="/state_estimation"/>
+    <param name="min_spacing" value="0.08"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="danger_detector.py"
+        name="danger_detector" output="screen" required="true">
+    <param name="result_file" value="$(arg result_file)"/>
+    <param name="timeout_seconds" value="$(arg timeout_seconds)"/>
+    <param name="home_tolerance" value="0.7"/>
+    <param name="minimum_hits" value="2"/>
+  </node>
+</launch>

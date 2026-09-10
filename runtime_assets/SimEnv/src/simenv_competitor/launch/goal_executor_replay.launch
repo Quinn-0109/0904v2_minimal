@@ -1,0 +1,40 @@
+<launch>
+  <!-- Attach to a running Gazebo + FAST-LIO + official-RL stack and replay
+       exactly one FUEL-lite goal. This launch does not start the environment. -->
+  <arg name="output_dir"/>
+  <arg name="goal_x" default="15.225"/>
+  <arg name="goal_y" default="8.625"/>
+  <arg name="goal_z" default="0.476"/>
+  <arg name="goal_yaw" default="1.495467"/>
+  <arg name="start_rl_mode" default="true"/>
+  <arg name="command_topic" default="/cmd_vel"/>
+  <arg name="arm_rl_guard" default="false"/>
+  <arg name="goal_delay_after_odometry" default="3.0"/>
+
+  <include file="$(find simenv_competitor)/launch/goal_executor.launch">
+    <arg name="output_dir" value="$(arg output_dir)"/>
+    <arg name="start_rl_mode" value="$(arg start_rl_mode)"/>
+    <arg name="shutdown_on_result" value="true"/>
+    <arg name="command_topic" value="$(arg command_topic)"/>
+    <arg name="arm_rl_guard" value="$(arg arm_rl_guard)"/>
+  </include>
+
+  <node pkg="simenv_competitor" type="single_exploration_goal.py"
+        name="single_exploration_goal" output="screen">
+    <param name="odom_topic" value="/Odometry"/>
+    <param name="frame_id" value="camera_init"/>
+    <param name="delay_after_odometry" value="$(arg goal_delay_after_odometry)"/>
+    <param name="x" value="$(arg goal_x)"/>
+    <param name="y" value="$(arg goal_y)"/>
+    <param name="z" value="$(arg goal_z)"/>
+    <param name="yaw" value="$(arg goal_yaw)"/>
+  </node>
+
+  <!-- Passive test instrumentation only; never used by goal_executor. -->
+  <node pkg="simenv_competitor" type="goal_stability_monitor.py"
+        name="goal_stability_monitor" output="screen">
+    <param name="output_file" value="$(arg output_dir)/goal_stability.json"/>
+    <param name="tilt_limit" value="0.35"/>
+    <param name="height_limit" value="0.24"/>
+  </node>
+</launch>

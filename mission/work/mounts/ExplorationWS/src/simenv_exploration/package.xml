@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>simenv_exploration</name>
+  <version>0.1.0</version>
+  <description>Multi-floor autonomous exploration stack (FUEL-lite + FAST-LIO + stair transitions + goal executor) extracted from SimEnv. Danger-source detection removed.</description>
+  <maintainer email="competitor@example.com">SimEnv exploration</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  <build_depend>liboctomap-dev</build_depend>
+  <build_depend>libopencv-dev</build_depend>
+  <build_depend>message_generation</build_depend>
+  <build_depend>nav_msgs</build_depend>
+  <build_depend>roscpp</build_depend>
+  <build_depend>sensor_msgs</build_depend>
+  <build_depend>std_msgs</build_depend>
+  <build_export_depend>liboctomap-dev</build_export_depend>
+  <build_export_depend>libopencv-dev</build_export_depend>
+  <build_export_depend>nav_msgs</build_export_depend>
+  <build_export_depend>roscpp</build_export_depend>
+  <build_export_depend>sensor_msgs</build_export_depend>
+  <build_export_depend>std_msgs</build_export_depend>
+  <exec_depend>liboctomap-dev</exec_depend>
+  <exec_depend>libopencv-dev</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-matplotlib</exec_depend>
+  <exec_depend>message_runtime</exec_depend>
+  <exec_depend>controller_manager_msgs</exec_depend>
+  <exec_depend>gazebo_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>message_filters</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>roscpp</exec_depend>
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>rosgraph_msgs</exec_depend>
+  <exec_depend>rviz</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>tf2_geometry_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>visualization_msgs</exec_depend>
+  <!-- External support packages that must already exist in the workspace. -->
+  <exec_depend>unitree_guide</exec_depend>
+  <exec_depend>fast_lio</exec_depend>
+  <exec_depend>building_generator_classic</exec_depend>
+  <exec_depend>building_generator_interfaces</exec_depend>
+</package>

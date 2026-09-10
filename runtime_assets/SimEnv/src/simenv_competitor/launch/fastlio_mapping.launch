@@ -1,0 +1,40 @@
+<launch>
+  <!-- Existing simulation, RL locomotion and FAST-LIO stack. -->
+  <arg name="output_dir"/>
+  <arg name="world_file"/>
+  <arg name="rl_policy"/>
+  <arg name="robot_spawn_x" default="0.0"/>
+  <arg name="robot_spawn_y" default="0.8"/>
+  <arg name="robot_spawn_z" default="0.6"/>
+  <arg name="robot_spawn_yaw" default="1.5708"/>
+
+  <include file="$(find simenv_competitor)/launch/mapping_test.launch">
+    <arg name="world_file" value="$(arg world_file)"/>
+    <arg name="gui" value="false"/>
+    <arg name="rviz" value="false"/>
+    <arg name="teleop" value="false"/>
+    <arg name="start_controller" value="true"/>
+    <arg name="enable_realsense" value="false"/>
+    <arg name="enable_referee_odom" value="false"/>
+    <arg name="enable_ground_truth" value="false"/>
+    <arg name="enable_building_control" value="false"/>
+    <arg name="open_mapping_entrance" value="false"/>
+    <arg name="enable_mapping_visualizer" value="false"/>
+    <arg name="sensor_warmup_seconds" value="25.0"/>
+    <arg name="slam_startup_delay_seconds" value="8.0"/>
+    <arg name="controller_dt" value="0.004"/>
+    <arg name="controller_cpu_affinity" value=""/>
+    <arg name="controller_clock_stall_timeout" value="30.0"/>
+    <arg name="rl_policy" value="$(arg rl_policy)"/>
+    <arg name="rl_device" value="cuda"/>
+    <arg name="robot_x" value="$(arg robot_spawn_x)"/>
+    <arg name="robot_y" value="$(arg robot_spawn_y)"/>
+    <arg name="robot_z" value="$(arg robot_spawn_z)"/>
+    <arg name="robot_yaw" value="$(arg robot_spawn_yaw)"/>
+  </include>
+
+  <node pkg="simenv_competitor" type="fastlio_voxel_mapper"
+        name="tare_far_voxel_mapper" output="screen" required="true">
+    <param name="output_dir" value="$(arg output_dir)"/>
+  </node>
+</launch>

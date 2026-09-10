@@ -1,0 +1,1078 @@
+xacro: in-order processing became default in ROS Melodic. You can drop the option.
+... logging to /root/.ros/log/3292885a-abf0-11f1-a75e-f261bfe1b366/roslaunch-dbbc73012ee9-10912.log
+Checking log directory for disk usage. This may take a while.
+Press Ctrl-C to interrupt
+Done checking log file disk usage. Usage is <1GB.
+]2;/workspace/0904_v2/mission/work/mounts/ExplorationWS/src/simenv_exploration/launch/fuel_semantic_fastlio_exploration.launch
+[1mstarted roslaunch server http://dbbc73012ee9:38117/[0m
+
+SUMMARY
+========
+
+PARAMETERS
+ * /a1_gazebo/FL_calf_controller/joint: FL_calf_joint
+ * /a1_gazebo/FL_calf_controller/pid/d: 8.0
+ * /a1_gazebo/FL_calf_controller/pid/i: 0.0
+ * /a1_gazebo/FL_calf_controller/pid/p: 300.0
+ * /a1_gazebo/FL_calf_controller/type: unitree_legged_co...
+ * /a1_gazebo/FL_hip_controller/joint: FL_hip_joint
+ * /a1_gazebo/FL_hip_controller/pid/d: 5.0
+ * /a1_gazebo/FL_hip_controller/pid/i: 0.0
+ * /a1_gazebo/FL_hip_controller/pid/p: 100.0
+ * /a1_gazebo/FL_hip_controller/type: unitree_legged_co...
+ * /a1_gazebo/FL_thigh_controller/joint: FL_thigh_joint
+ * /a1_gazebo/FL_thigh_controller/pid/d: 8.0
+ * /a1_gazebo/FL_thigh_controller/pid/i: 0.0
+ * /a1_gazebo/FL_thigh_controller/pid/p: 300.0
+ * /a1_gazebo/FL_thigh_controller/type: unitree_legged_co...
+ * /a1_gazebo/FR_calf_controller/joint: FR_calf_joint
+ * /a1_gazebo/FR_calf_controller/pid/d: 8.0
+ * /a1_gazebo/FR_calf_controller/pid/i: 0.0
+ * /a1_gazebo/FR_calf_controller/pid/p: 300.0
+ * /a1_gazebo/FR_calf_controller/type: unitree_legged_co...
+ * /a1_gazebo/FR_hip_controller/joint: FR_hip_joint
+ * /a1_gazebo/FR_hip_controller/pid/d: 5.0
+ * /a1_gazebo/FR_hip_controller/pid/i: 0.0
+ * /a1_gazebo/FR_hip_controller/pid/p: 100.0
+ * /a1_gazebo/FR_hip_controller/type: unitree_legged_co...
+ * /a1_gazebo/FR_thigh_controller/joint: FR_thigh_joint
+ * /a1_gazebo/FR_thigh_controller/pid/d: 8.0
+ * /a1_gazebo/FR_thigh_controller/pid/i: 0.0
+ * /a1_gazebo/FR_thigh_controller/pid/p: 300.0
+ * /a1_gazebo/FR_thigh_controller/type: unitree_legged_co...
+ * /a1_gazebo/RL_calf_controller/joint: RL_calf_joint
+ * /a1_gazebo/RL_calf_controller/pid/d: 8.0
+ * /a1_gazebo/RL_calf_controller/pid/i: 0.0
+ * /a1_gazebo/RL_calf_controller/pid/p: 300.0
+ * /a1_gazebo/RL_calf_controller/type: unitree_legged_co...
+ * /a1_gazebo/RL_hip_controller/joint: RL_hip_joint
+ * /a1_gazebo/RL_hip_controller/pid/d: 5.0
+ * /a1_gazebo/RL_hip_controller/pid/i: 0.0
+ * /a1_gazebo/RL_hip_controller/pid/p: 100.0
+ * /a1_gazebo/RL_hip_controller/type: unitree_legged_co...
+ * /a1_gazebo/RL_thigh_controller/joint: RL_thigh_joint
+ * /a1_gazebo/RL_thigh_controller/pid/d: 8.0
+ * /a1_gazebo/RL_thigh_controller/pid/i: 0.0
+ * /a1_gazebo/RL_thigh_controller/pid/p: 300.0
+ * /a1_gazebo/RL_thigh_controller/type: unitree_legged_co...
+ * /a1_gazebo/RR_calf_controller/joint: RR_calf_joint
+ * /a1_gazebo/RR_calf_controller/pid/d: 8.0
+ * /a1_gazebo/RR_calf_controller/pid/i: 0.0
+ * /a1_gazebo/RR_calf_controller/pid/p: 300.0
+ * /a1_gazebo/RR_calf_controller/type: unitree_legged_co...
+ * /a1_gazebo/RR_hip_controller/joint: RR_hip_joint
+ * /a1_gazebo/RR_hip_controller/pid/d: 5.0
+ * /a1_gazebo/RR_hip_controller/pid/i: 0.0
+ * /a1_gazebo/RR_hip_controller/pid/p: 100.0
+ * /a1_gazebo/RR_hip_controller/type: unitree_legged_co...
+ * /a1_gazebo/RR_thigh_controller/joint: RR_thigh_joint
+ * /a1_gazebo/RR_thigh_controller/pid/d: 8.0
+ * /a1_gazebo/RR_thigh_controller/pid/i: 0.0
+ * /a1_gazebo/RR_thigh_controller/pid/p: 300.0
+ * /a1_gazebo/RR_thigh_controller/type: unitree_legged_co...
+ * /a1_gazebo/joint_limits/FL_calf_joint/has_position_limits: False
+ * /a1_gazebo/joint_limits/FR_calf_joint/has_position_limits: False
+ * /a1_gazebo/joint_limits/RL_calf_joint/has_position_limits: False
+ * /a1_gazebo/joint_limits/RR_calf_joint/has_position_limits: False
+ * /a1_gazebo/joint_state_controller/publish_rate: 1000
+ * /a1_gazebo/joint_state_controller/type: joint_state_contr...
+ * /baseline_exploration_manager/astar_clearance: 0.3
+ * /baseline_exploration_manager/auto_generate_visualization: True
+ * /baseline_exploration_manager/body_collision_radius: 0.11772
+ * /baseline_exploration_manager/body_front_offset: 0.06675
+ * /baseline_exploration_manager/body_max_height: 0.057
+ * /baseline_exploration_manager/body_min_height: -0.057
+ * /baseline_exploration_manager/body_rear_offset: -0.06675
+ * /baseline_exploration_manager/body_safety_margin: 0.05
+ * /baseline_exploration_manager/cloud_topic: /cloud_registered
+ * /baseline_exploration_manager/corridor_acquisition_distance: 4.0
+ * /baseline_exploration_manager/corridor_acquisition_maximum_detour_ratio: 1.18
+ * /baseline_exploration_manager/corridor_acquisition_minimum_advance: 1.5
+ * /baseline_exploration_manager/corridor_branch_entry_target_tolerance: 0.9
+ * /baseline_exploration_manager/corridor_branch_retry_cooldown_seconds: 45.0
+ * /baseline_exploration_manager/corridor_branch_station_tolerance: 1.75
+ * /baseline_exploration_manager/corridor_centerline_membership_tolerance: 0.75
+ * /baseline_exploration_manager/corridor_confirmation_updates: 3
+ * /baseline_exploration_manager/corridor_door_detection_minimum_progress_m: 0.0
+ * /baseline_exploration_manager/corridor_door_forward_commit_distance_m: 0.35
+ * /baseline_exploration_manager/corridor_door_post_latch_motion_m: 2.0
+ * /baseline_exploration_manager/corridor_entry_forward_lock_distance_m: 1.0
+ * /baseline_exploration_manager/corridor_exit_centerline_rebase_maximum_m: 2.5
+ * /baseline_exploration_manager/corridor_far_pair_search_after_exits: 2
+ * /baseline_exploration_manager/corridor_far_pair_search_maximum_advance_m: 3.0
+ * /baseline_exploration_manager/corridor_forward_distance: 7.0
+ * /baseline_exploration_manager/corridor_forward_lateral_search_m: 0.4
+ * /baseline_exploration_manager/corridor_forward_recovery_minimum_advance_m: 0.8
+ * /baseline_exploration_manager/corridor_lateral_speed_limit: 0.55
+ * /baseline_exploration_manager/corridor_local_door_entry_lock_minimum_progress_m: 2.0
+ * /baseline_exploration_manager/corridor_maximum_width_spread: 0.9
+ * /baseline_exploration_manager/corridor_minimum_advance: 2.5
+ * /baseline_exploration_manager/corridor_minimum_aspect_ratio: 1.6
+ * /baseline_exploration_manager/corridor_minimum_visible_length: 4.0
+ * /baseline_exploration_manager/corridor_monotonic_probe_after: 2
+ * /baseline_exploration_manager/corridor_monotonic_probe_distance_m: 0.6
+ * /baseline_exploration_manager/corridor_monotonic_probe_limit: 24
+ * /baseline_exploration_manager/corridor_monotonic_probe_max_unknown_queries: 8
+ * /baseline_exploration_manager/corridor_monotonic_probe_sample_spacing_m: 0.1
+ * /baseline_exploration_manager/corridor_new_branch_maximum_lookbehind_m: 1.8
+ * /baseline_exploration_manager/corridor_no_frontier_probe_after: 2
+ * /baseline_exploration_manager/corridor_no_frontier_probe_distance_m: 0.45
+ * /baseline_exploration_manager/corridor_partial_return_minimum_outbound_progress_m: 23.0
+ * /baseline_exploration_manager/corridor_partial_return_reserve_seconds: 70.0
+ * /baseline_exploration_manager/corridor_partial_return_room_minimum_remaining_seconds: 45.0
+ * /baseline_exploration_manager/corridor_recent_exclusion: 1.5
+ * /baseline_exploration_manager/corridor_resume_failure_limit: 1
+ * /baseline_exploration_manager/corridor_reversal_limit: 2
+ * /baseline_exploration_manager/corridor_search_speed: 1.55
+ * /baseline_exploration_manager/corridor_side_entry_depth: 2.1
+ * /baseline_exploration_manager/corridor_side_frontier_maximum_longitudinal: 3.0
+ * /baseline_exploration_manager/corridor_side_frontier_minimum_lateral: 1.2
+ * /baseline_exploration_manager/corridor_side_minimum_mission_progress: 2.5
+ * /baseline_exploration_manager/corridor_side_raw_frontier_minimum_size: 40
+ * /baseline_exploration_manager/corridor_side_staging_minimum_depth: 1.05
+ * /baseline_exploration_manager/corridor_side_station_search_radius: 1.2
+ * /baseline_exploration_manager/corridor_side_station_search_step: 0.3
+ * /baseline_exploration_manager/corridor_start_collision_backtrack_distance: 0.9
+ * /baseline_exploration_manager/corridor_start_collision_backtrack_limit: 2
+ * /baseline_exploration_manager/corridor_start_collision_backtrack_spacing: 0.25
+ * /baseline_exploration_manager/corridor_terminal_return_distance_m: 5.0
+ * /baseline_exploration_manager/corridor_transit_speed: 1.55
+ * /baseline_exploration_manager/corridor_uniform_width_sample_offset: 1.5
+ * /baseline_exploration_manager/depth_breadth_exclusion_radius: 4.0
+ * /baseline_exploration_manager/depth_breadth_maximum_goals: 3
+ * /baseline_exploration_manager/depth_breadth_maximum_path_length: 10.0
+ * /baseline_exploration_manager/depth_breadth_maximum_seconds: 75.0
+ * /baseline_exploration_manager/depth_breadth_region_radius: 5.0
+ * /baseline_exploration_manager/empty_visual_supplement_angle_rad: 1.55
+ * /baseline_exploration_manager/empty_visual_supplement_enabled: False
+ * /baseline_exploration_manager/empty_visual_supplement_minimum_remaining_s: 8.0
+ * /baseline_exploration_manager/enable_corridor_acquisition: True
+ * /baseline_exploration_manager/enable_corridor_branch_scheduler: True
+ * /baseline_exploration_manager/enable_corridor_monotonic_forward_probe: True
+ * /baseline_exploration_manager/enable_corridor_side_coverage_priority: True
+ * /baseline_exploration_manager/enable_depth_breadth_scheduler: False
+ * /baseline_exploration_manager/enable_known_unvisited_door_retry: True
+ * /baseline_exploration_manager/enable_lightweight_room_scheduler: True
+ * /baseline_exploration_manager/enable_local_doorway_detector: True
+ * /baseline_exploration_manager/enable_planned_room_path_intercept: True
+ * /baseline_exploration_manager/enable_post_room_corridor_sweep: True
+ * /baseline_exploration_manager/enable_region_coverage_completion: True
+ * /baseline_exploration_manager/enable_scan_lite_refiner: True
+ * /baseline_exploration_manager/enable_semantic_side_door_candidate: True
+ * /baseline_exploration_manager/enable_terminal_missing_room_retrace: True
+ * /baseline_exploration_manager/enable_waypoint_simplification: True
+ * /baseline_exploration_manager/enforce_room_phase_target_deadline: True
+ * /baseline_exploration_manager/fastlio_registration_abort_invalid_count: 3
+ * /baseline_exploration_manager/first_room_minimum_corridor_station_m: 2.0
+ * /baseline_exploration_manager/fuel_allow_transit_revisit_fallback: False
+ * /baseline_exploration_manager/fuel_execution_duplicate_radius: 0.9
+ * /baseline_exploration_manager/fuel_minimum_selected_score: 0.0
+ * /baseline_exploration_manager/goal_timeout: 180.0
+ * /baseline_exploration_manager/goal_topic: /exploration_goal
+ * /baseline_exploration_manager/known_unvisited_door_retry_distance_m: 6.5
+ * /baseline_exploration_manager/lidar_visual_cue_cell_size_m: 0.18
+ * /baseline_exploration_manager/lidar_visual_cue_enabled: True
+ * /baseline_exploration_manager/lidar_visual_cue_height_max_m: 0.85
+ * /baseline_exploration_manager/lidar_visual_cue_height_min_m: -0.25
+ * /baseline_exploration_manager/lidar_visual_cue_max_cells: 9
+ * /baseline_exploration_manager/lidar_visual_cue_max_range_m: 6.5
+ * /baseline_exploration_manager/lidar_visual_cue_min_range_m: 0.7
+ * /baseline_exploration_manager/local_candidate_freshness_seconds: 8.0
+ * /baseline_exploration_manager/local_candidate_recent_window_seconds: 20.0
+ * /baseline_exploration_manager/local_door_forward_high_water_tolerance_m: 1.8
+ * /baseline_exploration_manager/local_door_maximum_corridor_alignment: 0.82
+ * /baseline_exploration_manager/local_door_maximum_semantic_width_m: 2.1
+ * /baseline_exploration_manager/local_door_minimum_free_behind_m2: 6.0
+ * /baseline_exploration_manager/local_door_minimum_unknown_behind_m2: 1.0
+ * /baseline_exploration_manager/local_rescan_angle_rad: 1.570796327
+ * /baseline_exploration_manager/local_rescan_angular_speed: 0.5
+ * /baseline_exploration_manager/local_rescan_cooldown_seconds: 8.0
+ * /baseline_exploration_manager/local_rescan_maximum_seconds: 4.0
+ * /baseline_exploration_manager/map_file: /workspace/0904_v...
+ * /baseline_exploration_manager/maximum_consecutive_failures: 3
+ * /baseline_exploration_manager/maximum_duration: 300.0
+ * /baseline_exploration_manager/maximum_goals: 40
+ * /baseline_exploration_manager/minimum_free_voxels: 5000
+ * /baseline_exploration_manager/minimum_map_updates: 1
+ * /baseline_exploration_manager/oblique_minimum_depth_convexity_m: 0.018
+ * /baseline_exploration_manager/odom_topic: /simenv/fastlio_s...
+ * /baseline_exploration_manager/offline_stair_model_sdf: /workspace/0904_v...
+ * /baseline_exploration_manager/offline_truth_layout_metadata: /workspace/0904_v...
+ * /baseline_exploration_manager/offline_truth_sensor_forward_offset: 0.2
+ * /baseline_exploration_manager/output_dir: /workspace/0904_v...
+ * /baseline_exploration_manager/paired_opposite_maximum_backtrack_m: 2.0
+ * /baseline_exploration_manager/planner_timeout: 35.0
+ * /baseline_exploration_manager/post_room_corridor_sweep_max_goals: 1
+ * /baseline_exploration_manager/reached_tolerance: 0.2
+ * /baseline_exploration_manager/refinement_search_radius: 0.6
+ * /baseline_exploration_manager/refinement_search_step: 0.15
+ * /baseline_exploration_manager/region_coverage_minimum_entry_depth: 1.25
+ * /baseline_exploration_manager/region_coverage_minimum_post_entry_goals: 1
+ * /baseline_exploration_manager/replan_grid_wait_seconds: 0.4
+ * /baseline_exploration_manager/return_goal_distance_gain: 1.35
+ * /baseline_exploration_manager/robot_spawn_x: 0.0
+ * /baseline_exploration_manager/robot_spawn_y: 0.8
+ * /baseline_exploration_manager/robot_spawn_yaw: 1.5708
+ * /baseline_exploration_manager/room_accept_reversed_entry_trace_exit: True
+ * /baseline_exploration_manager/room_adaptive_maximum_viewpoints: 1
+ * /baseline_exploration_manager/room_adaptive_minimal_viewpoints: True
+ * /baseline_exploration_manager/room_adaptive_minimum_gain_m2: 0.45
+ * /baseline_exploration_manager/room_adaptive_occlusion_shadow_trigger_m2: 0.55
+ * /baseline_exploration_manager/room_adaptive_path_cost_weight: 0.55
+ * /baseline_exploration_manager/room_adaptive_prefer_central_first: True
+ * /baseline_exploration_manager/room_adaptive_route_return_weight: 0.65
+ * /baseline_exploration_manager/room_adaptive_set_cover_ratio: 0.88
+ * /baseline_exploration_manager/room_adaptive_set_cover_residual_m2: 0.75
+ * /baseline_exploration_manager/room_allow_single_jamb_strong_expansion: True
+ * /baseline_exploration_manager/room_budget_starts_after_entry: True
+ * /baseline_exploration_manager/room_camera_sweep_angle_rad: 6.283185307
+ * /baseline_exploration_manager/room_camera_sweep_angular_speed: 1.7
+ * /baseline_exploration_manager/room_camera_sweep_enabled: True
+ * /baseline_exploration_manager/room_camera_sweep_max_per_room: 1
+ * /baseline_exploration_manager/room_confirmation_depth: 1.1
+ * /baseline_exploration_manager/room_corridor_minimum_progress: 2.0
+ * /baseline_exploration_manager/room_coverage_maximum_shadow_m2: 0.55
+ * /baseline_exploration_manager/room_coverage_maximum_unknown_m2: 0.75
+ * /baseline_exploration_manager/room_coverage_minimum_observations: 1
+ * /baseline_exploration_manager/room_coverage_minimum_ratio: 0.94
+ * /baseline_exploration_manager/room_direct_verified_exit: True
+ * /baseline_exploration_manager/room_door_approach_offset: 0.6
+ * /baseline_exploration_manager/room_door_confirmation_count: 2
+ * /baseline_exploration_manager/room_door_cooldown_seconds: 90.0
+ * /baseline_exploration_manager/room_door_lookbehind_distance: 6.0
+ * /baseline_exploration_manager/room_door_maximum_corridor_alignment: 0.55
+ * /baseline_exploration_manager/room_door_takeover_distance: 5.0
+ * /baseline_exploration_manager/room_doorway_width_max: 2.05
+ * /baseline_exploration_manager/room_doorway_width_min: 0.6
+ * /baseline_exploration_manager/room_entry_candidate_astar_limit: 8
+ * /baseline_exploration_manager/room_entry_depth: 1.5
+ * /baseline_exploration_manager/room_entry_preflight_max_detour_ratio: 3.0
+ * /baseline_exploration_manager/room_entry_preflight_max_path_m: 7.5
+ * /baseline_exploration_manager/room_entry_refinement_retry_cooldown_seconds: 12.0
+ * /baseline_exploration_manager/room_entry_replan_wait_seconds: 0.25
+ * /baseline_exploration_manager/room_entry_speed: 1.1
+ * /baseline_exploration_manager/room_entry_staging_clearance: 0.26
+ * /baseline_exploration_manager/room_entry_timeout_seconds: 18.0
+ * /baseline_exploration_manager/room_entry_trace_observed_progress_only: True
+ * /baseline_exploration_manager/room_exit_anchor_skip_distance: 0.9
+ * /baseline_exploration_manager/room_exit_lateral_speed_limit: 0.3
+ * /baseline_exploration_manager/room_exit_opposite_door_revisit_radius_m: 2.75
+ * /baseline_exploration_manager/room_exit_opposite_door_revisit_time_s: 5.0
+ * /baseline_exploration_manager/room_exit_preflight_maximum_expansions: 800
+ * /baseline_exploration_manager/room_exit_progress_timeout_seconds: 12.0
+ * /baseline_exploration_manager/room_exit_require_station_corridor_confirmation: True
+ * /baseline_exploration_manager/room_exit_reserve_seconds: 10.0
+ * /baseline_exploration_manager/room_exit_resume_distance_m: 3.5
+ * /baseline_exploration_manager/room_exit_resume_time_s: 8.0
+ * /baseline_exploration_manager/room_exit_retry_limit: 3
+ * /baseline_exploration_manager/room_exit_speed: 0.65
+ * /baseline_exploration_manager/room_exit_station_corridor_tolerance_m: 1.0
+ * /baseline_exploration_manager/room_exit_terminal_wall_distance_m: 8.0
+ * /baseline_exploration_manager/room_exit_timeout_max_seconds: 60.0
+ * /baseline_exploration_manager/room_exit_timeout_overhead_seconds: 8.0
+ * /baseline_exploration_manager/room_exit_timeout_seconds_per_meter: 6.5
+ * /baseline_exploration_manager/room_expansion_margin: 0.4
+ * /baseline_exploration_manager/room_goal_timeout_seconds: 12.0
+ * /baseline_exploration_manager/room_lateral_speed_limit: 0.42
+ * /baseline_exploration_manager/room_lidar_effective_range: 8.0
+ * /baseline_exploration_manager/room_maximum_center_depth: 3.0
+ * /baseline_exploration_manager/room_maximum_side_lateral: 3.0
+ * /baseline_exploration_manager/room_minimum_crossing_depth: 0.18
+ * /baseline_exploration_manager/room_minimum_goal_separation: 1.0
+ * /baseline_exploration_manager/room_mission_entry_minimum_remaining_seconds: 24.0
+ * /baseline_exploration_manager/room_new_door_maximum_lookbehind: 1.8
+ * /baseline_exploration_manager/room_phase_target_seconds: 150.0
+ * /baseline_exploration_manager/room_portal_timeout_seconds: 14.0
+ * /baseline_exploration_manager/room_reversed_entry_trace_exit_tolerance_m: 0.3
+ * /baseline_exploration_manager/room_side_goal_depth: 3.0
+ * /baseline_exploration_manager/room_single_jamb_minimum_confidence: 0.82
+ * /baseline_exploration_manager/room_visit_budget_seconds: 30.0
+ * /baseline_exploration_manager/room_visited_overlap_max_door_separation: 5.0
+ * /baseline_exploration_manager/room_visited_overlap_min_normal_alignment: 0.25
+ * /baseline_exploration_manager/room_visual_breadth_lateral_m: 1.65
+ * /baseline_exploration_manager/room_visual_breadth_min_baseline_m: 1.15
+ * /baseline_exploration_manager/room_visual_completion_angle_rad: 1.55
+ * /baseline_exploration_manager/room_visual_completion_minimum_rooms: 1
+ * /baseline_exploration_manager/room_visual_completion_room_budget: 4
+ * /baseline_exploration_manager/room_visual_coverage_target: 1.0
+ * /baseline_exploration_manager/room_visual_deepening_budget: 0
+ * /baseline_exploration_manager/room_visual_deepening_enabled: False
+ * /baseline_exploration_manager/room_visual_deepening_min_completed_rooms: 0
+ * /baseline_exploration_manager/room_visual_deepening_min_remaining_s: 18.0
+ * /baseline_exploration_manager/room_visual_force_g1_fan: True
+ * /baseline_exploration_manager/room_visual_full_sweep_angle_rad: 6.283185307
+ * /baseline_exploration_manager/room_visual_occlusion_sweep_angle_rad: 1.570796327
+ * /baseline_exploration_manager/room_visual_one_sector_completion_angle_rad: 0.7
+ * /baseline_exploration_manager/room_visual_one_sector_completion_enabled: False
+ * /baseline_exploration_manager/room_visual_pending_strict_nudge_enabled: False
+ * /baseline_exploration_manager/room_visual_primary_min_angle_rad: 6.283185307
+ * /baseline_exploration_manager/room_visual_second_view_budget: 1
+ * /baseline_exploration_manager/room_visual_second_view_min_coverage: 0.7
+ * /baseline_exploration_manager/room_visual_secondary_sweep_angle_rad: 3.141592654
+ * /baseline_exploration_manager/room_visual_sweep_maximum_seconds: 5.0
+ * /baseline_exploration_manager/room_visual_two_pose_full_sweep_enabled: False
+ * /baseline_exploration_manager/scan_lite_failure_policy: request_astar_replan
+ * /baseline_exploration_manager/scan_lite_unknown_policy: penalize
+ * /baseline_exploration_manager/semantic_side_door_minimum_observations: 3
+ * /baseline_exploration_manager/semantic_side_door_minimum_penetration: 1.35
+ * /baseline_exploration_manager/stair_handoff_on_corridor_exit: True
+ * /baseline_exploration_manager/stair_return_breadcrumb_spacing: 2.4
+ * /baseline_exploration_manager/stair_return_centerline_tolerance: 0.85
+ * /baseline_exploration_manager/stair_return_grace_seconds: 90.0
+ * /baseline_exploration_manager/stair_return_relocation_radius: 2.4
+ * /baseline_exploration_manager/stair_wait_tolerance_m: 0.6
+ * /baseline_exploration_manager/startup_timeout: 120.0
+ * /baseline_exploration_manager/statistics_file: /workspace/0904_v...
+ * /baseline_exploration_manager/stop_after_all_room_exits: False
+ * /baseline_exploration_manager/terminal_door_context_fallback_drawdown_m: 1.75
+ * /baseline_exploration_manager/terminal_door_context_fallback_lateral_m: 1.1
+ * /baseline_exploration_manager/terminal_missing_room_rescan_limit: 3
+ * /baseline_exploration_manager/terminal_missing_room_retrace_max_distance_m: 8.0
+ * /baseline_exploration_manager/terminal_missing_room_retrace_wall_distance_m: 2.25
+ * /baseline_exploration_manager/termination_local_unknown_area_m2: 3.0
+ * /baseline_exploration_manager/trajectory_history_spacing: 0.75
+ * /baseline_exploration_manager/waypoint_collinearity_tolerance: 0.1
+ * /baseline_exploration_manager/waypoint_max_direct_connect_distance: 4.0
+ * /baseline_exploration_manager/waypoint_max_yaw_change: 0.55
+ * /baseline_exploration_manager/waypoint_spacing: 0.45
+ * /baseline_telemetry/command_topic: /cmd_vel
+ * /baseline_telemetry/ground_truth_model: a1_gazebo
+ * /baseline_telemetry/ground_truth_topic: /gazebo/model_states
+ * /baseline_telemetry/odom_topic: /Odometry
+ * /baseline_telemetry/output_dir: /workspace/0904_v...
+ * /baseline_telemetry/telemetry_flush_every: 10
+ * /baseline_telemetry/telemetry_trajectory_rate_hz: 5.0
+ * /baseline_voxel_mapper/cloud_topic: /cloud_registered
+ * /baseline_voxel_mapper/collision_request_pose_is_stabilized: True
+ * /baseline_voxel_mapper/map_statistics_warn_ms: 50.0
+ * /baseline_voxel_mapper/maximum_range: 30.0
+ * /baseline_voxel_mapper/maximum_scan_points: 12000
+ * /baseline_voxel_mapper/minimum_range: 0.3
+ * /baseline_voxel_mapper/odom_topic: /Odometry
+ * /baseline_voxel_mapper/output_dir: /workspace/0904_v...
+ * /baseline_voxel_mapper/planar_height_stabilization_enabled: True
+ * /baseline_voxel_mapper/projection_every_updates: 5
+ * /baseline_voxel_mapper/projection_max_height: 1.2
+ * /baseline_voxel_mapper/projection_min_height: -0.05
+ * /baseline_voxel_mapper/projection_topic: /simenv/voxel_flo...
+ * /baseline_voxel_mapper/resolution: 0.15
+ * /baseline_voxel_mapper/save_every_updates: 240
+ * /baseline_voxel_mapper/self_filter_max_relative_z: -0.08
+ * /baseline_voxel_mapper/self_filter_min_relative_z: -0.75
+ * /baseline_voxel_mapper/self_filter_radius: 0.55
+ * /baseline_voxel_mapper/stabilized_odom_topic: /simenv/fastlio_s...
+ * /baseline_voxel_mapper/telemetry_map_rate_hz: 0.5
+ * /common/imu_topic: /simenv/fast_lio/imu
+ * /common/lid_topic: /simenv/fast_lio/...
+ * /common/time_offset_lidar_to_imu: 0.0
+ * /common/time_sync_en: False
+ * /cube_side_length: 80.0
+ * /degeneracy_assist/activation_seconds: 0.5
+ * /degeneracy_assist/command_timeout_seconds: 0.35
+ * /degeneracy_assist/command_velocity_scale: 0.65
+ * /degeneracy_assist/enabled: True
+ * /degeneracy_assist/information_ratio_threshold: 0.3
+ * /degeneracy_assist/maximum_angular_speed: 0.55
+ * /degeneracy_assist/maximum_correction_speed: 0.38
+ * /degeneracy_assist/maximum_total_correction: 0.75
+ * /degeneracy_assist/minimum_axis_alignment: 0.72
+ * /degeneracy_assist/minimum_command_speed: 0.08
+ * /degeneracy_assist/minimum_observed_ratio: 0.3
+ * /degeneracy_assist/minimum_strong_information: 0.05
+ * /enable_cross_door: False
+ * /enable_door_alignment: False
+ * /enable_door_attention: False
+ * /enable_door_commit: False
+ * /enable_door_detection: False
+ * /enable_room_detection: False
+ * /enable_room_information_gain: False
+ * /enable_room_recovery: False
+ * /enable_room_state_machine: False
+ * /enable_scan_lite_refiner: True
+ * /enable_structured_exploration: False
+ * /fastlio_pointcloud_adapter/acc_filter_alpha: 0.1
+ * /fastlio_pointcloud_adapter/blind: 0.25
+ * /fastlio_pointcloud_adapter/gyr_filter_alpha: 0.2
+ * /fastlio_pointcloud_adapter/max_acceleration_mps2: 45.0
+ * /fastlio_pointcloud_adapter/model_acquisition_time: False
+ * /fastlio_pointcloud_adapter/raw_imu_topic: /livox/imu
+ * /fastlio_pointcloud_adapter/rotate_imu: True
+ * /fastlio_pointcloud_adapter/scan_lines: 6
+ * /fastlio_pointcloud_adapter/scan_period_s: 0.1
+ * /fastlio_pointcloud_adapter/unpitch_rad: 0.785
+ * /fastlio_pointcloud_adapter/warmup_seconds: 25.0
+ * /feature_extract_enable: False
+ * /filter_size_map: 0.15
+ * /filter_size_surf: 0.15
+ * /gazebo/enable_ros_network: True
+ * /goal_executor/acceleration: 1.35
+ * /goal_executor/arm_rl_guard: False
+ * /goal_executor/cancel_topic: /simenv/cancel_ex...
+ * /goal_executor/command_topic: /cmd_vel
+ * /goal_executor/deceleration: 1.1
+ * /goal_executor/distance_gain: 1.3
+ * /goal_executor/dynamic_speed_cap: 1.55
+ * /goal_executor/external_pause_topic: /simenv/goal_exec...
+ * /goal_executor/goal_timeout: 180.0
+ * /goal_executor/goal_tolerance: 0.22
+ * /goal_executor/goal_topic: /exploration_goal
+ * /goal_executor/heading_gain: 0.7
+ * /goal_executor/heading_slowdown_threshold: 0.45
+ * /goal_executor/lateral_speed_limit: 0.35
+ * /goal_executor/localization_degraded_speed_cap: 0.85
+ * /goal_executor/log_file: goal_execution_hi...
+ * /goal_executor/maximum_pose_z: 1.2
+ * /goal_executor/maximum_speed: 1.55
+ * /goal_executor/maximum_stall_recoveries: 2
+ * /goal_executor/maximum_vertical_pose_jump: 0.45
+ * /goal_executor/maximum_yaw_rate: 0.55
+ * /goal_executor/minimum_pose_z: -0.8
+ * /goal_executor/minimum_progress: 0.05
+ * /goal_executor/minimum_speed: 0.6
+ * /goal_executor/odom_timeout: 1.5
+ * /goal_executor/odom_topic: /simenv/fastlio_s...
+ * /goal_executor/output_dir: /workspace/0904_v...
+ * /goal_executor/preemption_deceleration: 0.55
+ * /goal_executor/preemption_settle_command_speed: 0.08
+ * /goal_executor/preemption_settle_measured_speed: 0.18
+ * /goal_executor/preemption_settle_seconds: 0.3
+ * /goal_executor/preemption_timeout: 4.0
+ * /goal_executor/progress_timeout: 8.0
+ * /goal_executor/registration_abort_invalid_count: 3
+ * /goal_executor/shutdown_on_result: False
+ * /goal_executor/stall_recovery_seconds: 1.2
+ * /goal_executor/stall_recovery_speed: 0.16
+ * /goal_executor/turning_speed_limit: 0.45
+ * /goal_executor_rl_bootstrap/fixed_stand_max_duration_sec: 15.0
+ * /goal_executor_rl_bootstrap/rl_repeat_seconds: 45.0
+ * /goal_executor_rl_bootstrap/stand_after_seconds: 1.0
+ * /local_doorway_detector/clearance: 0.25
+ * /local_doorway_detector/confirmation_updates: 2
+ * /local_doorway_detector/doorway_width_min: 0.6
+ * /local_doorway_detector/enable_candidate_astar: False
+ * /local_doorway_detector/enable_scan_lite: False
+ * /local_doorway_detector/entry_depth: 1.0
+ * /local_doorway_detector/local_window_size: 10.0
+ * /local_doorway_detector/minimum_open_area_m2: 1.2
+ * /local_doorway_detector/opening_probe_depth: 5.0
+ * /local_doorway_detector/output_dir: /workspace/0904_v...
+ * /local_doorway_detector/track_match_radius_m: 1.05
+ * /local_doorway_detector/track_max_age_seconds: 5.0
+ * /local_doorway_detector/wall_search_range: 3.6
+ * /mapping/acc_cov: 1.0
+ * /mapping/b_acc_cov: 0.0001
+ * /mapping/b_gyr_cov: 0.0001
+ * /mapping/det_range: 30.0
+ * /mapping/extrinsic_R: [1, 0, 0, 0, 1, 0...
+ * /mapping/extrinsic_T: [-0.023404, 0.023...
+ * /mapping/extrinsic_est_en: False
+ * /mapping/fov_degree: 360
+ * /mapping/gyr_cov: 0.1
+ * /max_iteration: 6
+ * /motion_consistency_guard/maximum_distance_ratio: 1.8
+ * /motion_consistency_guard/minimum_distance_ratio: 0.5
+ * /motion_consistency_guard/output_dir: /workspace/0904_v...
+ * /motion_consistency_guard/windows_seconds: [5.0, 10.0, 20.0]
+ * /motion_guard/angular_command_threshold: 0.05
+ * /motion_guard/command_timeout_seconds: 1.0
+ * /motion_guard/enabled: True
+ * /motion_guard/linear_command_threshold: 0.03
+ * /motion_guard/stationary_hold_seconds: 0.35
+ * /pcd_save/interval: -1
+ * /pcd_save/pcd_save_en: False
+ * /point_filter_num: 1
+ * /preprocess/blind: 0.25
+ * /preprocess/lidar_type: 4
+ * /preprocess/scan_line: 6
+ * /preprocess/scan_rate: 10
+ * /preprocess/timestamp_unit: 0
+ * /publish/dense_publish_en: False
+ * /publish/path_en: True
+ * /publish/scan_bodyframe_pub_en: False
+ * /publish/scan_publish_en: True
+ * /registration_guard/command_motion_margin: 1.5
+ * /registration_guard/enabled: True
+ * /registration_guard/maximum_dynamic_horizontal_step_m: 1.2
+ * /registration_guard/maximum_horizontal_step_m: 0.45
+ * /registration_guard/maximum_planar_recovery_vertical_step_m: 0.35
+ * /registration_guard/maximum_vertical_step_m: 0.18
+ * /registration_guard/minimum_effective_points: 120
+ * /registration_guard/planar_vertical_recovery: True
+ * /registration_guard/second_floor_minimum_effective_points: 60
+ * /robot_description: <?xml version="1....
+ * /robot_name: a1
+ * /rosdistro: noetic
+ * /rosversion: 1.17.4
+ * /runtime_pos_log_enable: False
+ * /second_floor_exploration_manager/auto_generate_combined_visualization: False
+ * /second_floor_exploration_manager/corridor_acquisition_heading_range_m: 12.0
+ * /second_floor_exploration_manager/corridor_acquisition_heading_samples: 16
+ * /second_floor_exploration_manager/corridor_acquisition_heading_search: False
+ * /second_floor_exploration_manager/corridor_acquisition_parallel_wall_semantic: False
+ * /second_floor_exploration_manager/corridor_acquisition_preferred_heading: 1.5707963267948966
+ * /second_floor_exploration_manager/corridor_acquisition_semantic_minimum_length_m: 4.0
+ * /second_floor_exploration_manager/corridor_acquisition_semantic_search_radius_m: 12.0
+ * /second_floor_exploration_manager/enable_second_floor_lobby_rescan: False
+ * /second_floor_exploration_manager/enable_second_floor_truth_corridor_guide: True
+ * /second_floor_exploration_manager/locomotion_recovery_reset: False
+ * /second_floor_exploration_manager/map_file: /workspace/0904_v...
+ * /second_floor_exploration_manager/maximum_duration: 400.0
+ * /second_floor_exploration_manager/maximum_goals: 40
+ * /second_floor_exploration_manager/offline_stair_model_sdf: /workspace/0904_v...
+ * /second_floor_exploration_manager/offline_truth_layout_metadata: /workspace/0904_v...
+ * /second_floor_exploration_manager/output_dir: /workspace/0904_v...
+ * /second_floor_exploration_manager/parent_output_dir: /workspace/0904_v...
+ * /second_floor_exploration_manager/plane_policy: /workspace/0904_v...
+ * /second_floor_exploration_manager/plane_policy_reload_timeout_sec: 30.0
+ * /second_floor_exploration_manager/room_target_count: 4
+ * /second_floor_exploration_manager/second_floor_truth_corridor_align_offset_m: 0.5
+ * /second_floor_exploration_manager/second_floor_truth_corridor_guide_speed_mps: 1.35
+ * /second_floor_exploration_manager/second_floor_truth_corridor_guide_timeout_sec: 45.0
+ * /second_floor_exploration_manager/stair_handoff_on_corridor_exit: True
+ * /second_floor_exploration_manager/statistics_file: /workspace/0904_v...
+ * /second_floor_exploration_manager/stop_after_all_room_exits: False
+ * /second_floor_exploration_manager/tour_mode: False
+ * /second_floor_exploration_manager/tour_waypoint_frame: world
+ * /second_floor_exploration_manager/tour_waypoints: [{"x":0.0,"y":8.8...
+ * /second_floor_truth_motion_guard/absolute_height_recovery_threshold_m: 0.75
+ * /second_floor_truth_motion_guard/enabled: True
+ * /second_floor_truth_motion_guard/maximum_age_seconds: 0.5
+ * /second_to_third_floor_stair_manager/ascent_maximum_speed_mps: 0.7
+ * /second_to_third_floor_stair_manager/ascent_speed_mps: 0.7
+ * /second_to_third_floor_stair_manager/ascent_timeout_sec: 90.0
+ * /second_to_third_floor_stair_manager/auto_start: False
+ * /second_to_third_floor_stair_manager/command_topic: /cmd_vel
+ * /second_to_third_floor_stair_manager/depth_points_topic: /real_sense/depth...
+ * /second_to_third_floor_stair_manager/enable_truth_return_gate: False
+ * /second_to_third_floor_stair_manager/enable_visual_stair_alignment: True
+ * /second_to_third_floor_stair_manager/entry_alignment_yaw_rate_rps: 0.6
+ * /second_to_third_floor_stair_manager/flight_a_height_gain_m: 1.05
+ * /second_to_third_floor_stair_manager/flight_b_timeout_sec: 22.0
+ * /second_to_third_floor_stair_manager/height_plot_basename: 21_truth_stair_he...
+ * /second_to_third_floor_stair_manager/hold_rl_during_ascent: True
+ * /second_to_third_floor_stair_manager/landing_cross_distance_m: 0.95
+ * /second_to_third_floor_stair_manager/landing_cross_speed_mps: 0.55
+ * /second_to_third_floor_stair_manager/landing_heading_tolerance_rad: 0.05
+ * /second_to_third_floor_stair_manager/landing_timeout_sec: 30.0
+ * /second_to_third_floor_stair_manager/landing_turn_angle_rad: -2.4
+ * /second_to_third_floor_stair_manager/landing_turn_speed_rps: 0.6
+ * /second_to_third_floor_stair_manager/lock_ascent_heading: False
+ * /second_to_third_floor_stair_manager/mission_failure_token: SECOND_FLOOR_EXPL...
+ * /second_to_third_floor_stair_manager/mission_trigger_token: SECOND_FLOOR_EXPL...
+ * /second_to_third_floor_stair_manager/mission_trigger_topic: /simenv/second_fl...
+ * /second_to_third_floor_stair_manager/odom_topic: /simenv/fastlio_s...
+ * /second_to_third_floor_stair_manager/offline_stair_model_sdf: /workspace/0904_v...
+ * /second_to_third_floor_stair_manager/offline_truth_layout_metadata: /workspace/0904_v...
+ * /second_to_third_floor_stair_manager/output_dir: /workspace/0904_v...
+ * /second_to_third_floor_stair_manager/pre_ascent_align_timeout_sec: 20.0
+ * /second_to_third_floor_stair_manager/pre_ascent_align_watchdog_progress_rad: 0.08
+ * /second_to_third_floor_stair_manager/pre_ascent_stand_seconds: 0.0
+ * /second_to_third_floor_stair_manager/second_floor_handoff_timeout_sec: 45.0
+ * /second_to_third_floor_stair_manager/second_floor_stable_seconds: 1.0
+ * /second_to_third_floor_stair_manager/source_floor_index: 1
+ * /second_to_third_floor_stair_manager/stair_policy: /workspace/0904_v...
+ * /second_to_third_floor_stair_manager/state_topic: /simenv/second_to...
+ * /second_to_third_floor_stair_manager/target_floor_number: 3
+ * /second_to_third_floor_stair_manager/total_height_gain_m: 2.2
+ * /second_to_third_floor_stair_manager/trajectory_plot_basename: 21_f2_to_third_fl...
+ * /second_to_third_floor_stair_manager/transition_log_basename: second_to_third_f...
+ * /second_to_third_floor_stair_manager/transition_plot_basename: 21_second_to_thir...
+ * /second_to_third_floor_stair_manager/truth_entry_guide: True
+ * /second_to_third_floor_stair_manager/truth_entry_guide_min_speed_mps: 0.25
+ * /second_to_third_floor_stair_manager/truth_entry_guide_speed_mps: 0.9
+ * /second_to_third_floor_stair_manager/truth_entry_timeout_sec: 60.0
+ * /second_to_third_floor_stair_manager/truth_fixed_two_flight_profile: True
+ * /second_to_third_floor_stair_manager/truth_flight_a_recovery_center_error_m: 0.14
+ * /second_to_third_floor_stair_manager/truth_flight_a_recovery_center_speed_mps: 0.18
+ * /second_to_third_floor_stair_manager/truth_flight_a_recovery_forward_speed_mps: 0.12
+ * /second_to_third_floor_stair_manager/truth_flight_a_recovery_heading_error_rad: 0.2
+ * /second_to_third_floor_stair_manager/truth_flight_a_recovery_yaw_rate_rps: 0.16
+ * /second_to_third_floor_stair_manager/truth_flight_b_center_deadband_m: 0.04
+ * /second_to_third_floor_stair_manager/truth_flight_b_center_gain: 0.55
+ * /second_to_third_floor_stair_manager/truth_flight_b_center_speed_mps: 0.12
+ * /second_to_third_floor_stair_manager/truth_flight_b_drop_detect_m: 0.1
+ * /second_to_third_floor_stair_manager/truth_flight_b_fall_drop_m: 0.55
+ * /second_to_third_floor_stair_manager/truth_flight_b_heading_gain: 0.35
+ * /second_to_third_floor_stair_manager/truth_flight_b_max_yaw_rate_rps: 0.18
+ * /second_to_third_floor_stair_manager/truth_flight_b_recovery_backoff_distance_m: 0.35
+ * /second_to_third_floor_stair_manager/truth_flight_b_recovery_backoff_speed_mps: 0.3
+ * /second_to_third_floor_stair_manager/truth_flight_b_recovery_hold_seconds: 6.0
+ * /second_to_third_floor_stair_manager/truth_flight_b_recovery_ramp_seconds: 1.0
+ * /second_to_third_floor_stair_manager/truth_flight_b_recovery_ramp_speed_mps: 0.4
+ * /second_to_third_floor_stair_manager/truth_flight_b_slip_detect_seconds: 0.0
+ * /second_to_third_floor_stair_manager/truth_flight_b_slip_hold_seconds: 1.5
+ * /second_to_third_floor_stair_manager/truth_flight_b_slip_min_gain_m: 0.3
+ * /second_to_third_floor_stair_manager/truth_flight_b_slip_yaw_rate_rps: 0.6
+ * /second_to_third_floor_stair_manager/truth_flight_b_stall_seconds: 4.0
+ * /second_to_third_floor_stair_manager/truth_landing_minimum_recenter_speed_mps: 0.3
+ * /second_to_third_floor_stair_manager/truth_landing_minimum_yaw_rate_rps: 0.24
+ * /second_to_third_floor_stair_manager/truth_landing_position_deadband_m: 0.05
+ * /second_to_third_floor_stair_manager/truth_landing_position_gain: 0.9
+ * /second_to_third_floor_stair_manager/truth_landing_position_tolerance_m: 0.06
+ * /second_to_third_floor_stair_manager/truth_landing_recenter_speed_mps: 0.4
+ * /second_to_third_floor_stair_manager/truth_landing_turn_start_y: 4.75
+ * /second_to_third_floor_stair_manager/truth_second_floor_clearance_m: 0.3
+ * /second_to_third_floor_stair_manager/truth_side_entry_offset_m: 1.65
+ * /second_to_third_floor_stair_manager/truth_two_stage_guide: True
+ * /second_to_third_floor_stair_manager/truth_upper_floor_exit_clearance_m: 0.8
+ * /second_to_third_floor_stair_manager/two_flight_stair: True
+ * /second_to_third_floor_stair_manager/upper_floor_handoff_complete_phase: THIRD_FLOOR_HANDO...
+ * /second_to_third_floor_stair_manager/upper_floor_handoff_timeout_phase: THIRD_FLOOR_HANDO...
+ * /second_to_third_floor_stair_manager/upper_floor_reached_phase: THIRD_FLOOR_REACHED
+ * /second_to_third_floor_stair_manager/upper_floor_ready_token: THIRD_FLOOR_EXPLO...
+ * /second_to_third_floor_stair_manager/upper_floor_settle_phase: THIRD_FLOOR_SETTLE
+ * /second_to_third_floor_stair_manager/upper_floor_state_topic: /simenv/third_flo...
+ * /second_to_third_floor_stair_manager/upper_landing_clearance_grace_sec: 15.0
+ * /second_to_third_floor_stair_manager/wait_for_second_floor_handoff: True
+ * /second_to_third_floor_stair_manager/world_frame_ascent: True
+ * /stair_descent_manager/command_topic: /cmd_vel
+ * /stair_descent_manager/descent_entry_alignment_yaw_rate_rps: 0.4
+ * /stair_descent_manager/descent_maximum_speed_mps: 0.8
+ * /stair_descent_manager/descent_segment_timeout_sec: 600.0
+ * /stair_descent_manager/descent_speed_mps: 0.8
+ * /stair_descent_manager/end_floor_number: 1
+ * /stair_descent_manager/hold_rl_during_ascent: True
+ * /stair_descent_manager/mission_trigger_token: THIRD_FLOOR_EXPLO...
+ * /stair_descent_manager/mission_trigger_topic: /simenv/third_flo...
+ * /stair_descent_manager/odom_topic: /simenv/fastlio_s...
+ * /stair_descent_manager/offline_stair_model_sdf: /workspace/0904_v...
+ * /stair_descent_manager/offline_truth_layout_metadata: /workspace/0904_v...
+ * /stair_descent_manager/output_dir: /workspace/0904_v...
+ * /stair_descent_manager/policy_warmup_seconds: 0.75
+ * /stair_descent_manager/pre_descent_stand_seconds: 0.25
+ * /stair_descent_manager/segment_one_log_basename: third_to_second_f...
+ * /stair_descent_manager/segment_two_log_basename: second_to_first_f...
+ * /stair_descent_manager/stair_policy: /workspace/0904_v...
+ * /stair_descent_manager/start_floor_number: 3
+ * /stair_descent_manager/state_topic: /simenv/third_to_...
+ * /stair_descent_manager/transition_log_basename: stair_descent.json
+ * /stair_descent_manager/truth_descent_backoff_distance_m: 0.35
+ * /stair_descent_manager/truth_descent_backoff_escalation_m: 0.15
+ * /stair_descent_manager/truth_descent_backoff_max_distance_m: 0.75
+ * /stair_descent_manager/truth_descent_backoff_speed_mps: 0.3
+ * /stair_descent_manager/truth_descent_backoff_yaw_rate_rps: 0.2
+ * /stair_descent_manager/truth_descent_backward_mode: False
+ * /stair_descent_manager/truth_descent_entry_guide_speed_mps: 1.15
+ * /stair_descent_manager/truth_descent_fall_drop_m: 0.4
+ * /stair_descent_manager/truth_descent_fall_window_sec: 0.8
+ * /stair_descent_manager/truth_descent_flight_a_drop_gate_m: 2.45
+ * /stair_descent_manager/truth_descent_flight_a_end_y: 2.25
+ * /stair_descent_manager/truth_descent_flight_b_drop_gate_m: 1.05
+ * /stair_descent_manager/truth_descent_flight_center_correction_error_m: 0.22
+ * /stair_descent_manager/truth_descent_flight_center_correction_speed_mps: 0.5
+ * /stair_descent_manager/truth_descent_flight_center_correction_yaw_rate_rps: 0.2
+ * /stair_descent_manager/truth_descent_flight_center_deadband_m: 0.04
+ * /stair_descent_manager/truth_descent_flight_center_gain: 0.55
+ * /stair_descent_manager/truth_descent_flight_center_speed_mps: 0.12
+ * /stair_descent_manager/truth_descent_flight_center_steer_gain: 1.0
+ * /stair_descent_manager/truth_descent_flight_center_steer_max_rad: 0.24
+ * /stair_descent_manager/truth_descent_flight_end_slowdown_drop_m: 0.95
+ * /stair_descent_manager/truth_descent_flight_end_speed_mps: 0.6
+ * /stair_descent_manager/truth_descent_flight_heading_correction_error_rad: 0.22
+ * /stair_descent_manager/truth_descent_flight_heading_correction_speed_mps: 0.4
+ * /stair_descent_manager/truth_descent_flight_heading_correction_yaw_rate_rps: 0.3
+ * /stair_descent_manager/truth_descent_flight_heading_gain: 0.55
+ * /stair_descent_manager/truth_descent_flight_initial_hold_drop_m: 0.18
+ * /stair_descent_manager/truth_descent_flight_initial_ramp_end_drop_m: 0.45
+ * /stair_descent_manager/truth_descent_flight_initial_speed_mps: 0.55
+ * /stair_descent_manager/truth_descent_flight_max_yaw_rate_rps: 0.14
+ * /stair_descent_manager/truth_descent_flight_severe_tilt_hold_sec: 0.8
+ * /stair_descent_manager/truth_descent_flight_severe_tilt_rad: 0.6
+ * /stair_descent_manager/truth_descent_flight_severe_tilt_speed_mps: 0.3
+ * /stair_descent_manager/truth_descent_flight_tilt_hold_sec: 0.6
+ * /stair_descent_manager/truth_descent_flight_tilt_slowdown_rad: 0.48
+ * /stair_descent_manager/truth_descent_flight_tilt_speed_mps: 0.55
+ * /stair_descent_manager/truth_descent_gain_up_drop_m: 0.35
+ * /stair_descent_manager/truth_descent_heading_bias_rad: 0.15
+ * /stair_descent_manager/truth_descent_landing_heading_tolerance_rad: 0.18
+ * /stair_descent_manager/truth_descent_landing_minimum_x_speed_mps: 0.1
+ * /stair_descent_manager/truth_descent_landing_minimum_yaw_rate_rps: 0.24
+ * /stair_descent_manager/truth_descent_landing_position_deadband_m: 0.05
+ * /stair_descent_manager/truth_descent_landing_position_gain: 0.9
+ * /stair_descent_manager/truth_descent_landing_position_tolerance_m: 0.2
+ * /stair_descent_manager/truth_descent_landing_recenter_speed_mps: 0.4
+ * /stair_descent_manager/truth_descent_landing_recovery_max_attempts: 2
+ * /stair_descent_manager/truth_descent_landing_recovery_max_heading_error_rad: 0.65
+ * /stair_descent_manager/truth_descent_landing_recovery_max_position_error_m: 0.4
+ * /stair_descent_manager/truth_descent_landing_recovery_minimum_yaw_rate_rps: 0.34
+ * /stair_descent_manager/truth_descent_landing_recovery_timeout_sec: 12.0
+ * /stair_descent_manager/truth_descent_landing_settle_seconds: 1.5
+ * /stair_descent_manager/truth_descent_landing_slip_backoff_distance_m: 0.55
+ * /stair_descent_manager/truth_descent_landing_slip_backoff_speed_mps: 0.3
+ * /stair_descent_manager/truth_descent_landing_slip_drop_m: 0.12
+ * /stair_descent_manager/truth_descent_landing_slip_max_attempts: 6
+ * /stair_descent_manager/truth_descent_landing_slip_pause_sec: 1.5
+ * /stair_descent_manager/truth_descent_landing_timeout_sec: 30.0
+ * /stair_descent_manager/truth_descent_landing_turn_speed_rps: 1.0
+ * /stair_descent_manager/truth_descent_max_center_error_m: 0.45
+ * /stair_descent_manager/truth_descent_max_heading_error_rad: 0.45
+ * /stair_descent_manager/truth_descent_recovery_ramp_seconds: 1.0
+ * /stair_descent_manager/truth_descent_recovery_ramp_speed_mps: 0.2
+ * /stair_descent_manager/truth_descent_segment_turn_drift_limit_m: 0.4
+ * /stair_descent_manager/truth_descent_segment_turn_heading_tolerance_rad: 0.12
+ * /stair_descent_manager/truth_descent_segment_turn_lateral_speed_mps: 0.4
+ * /stair_descent_manager/truth_descent_segment_turn_position_gain: 0.6
+ * /stair_descent_manager/truth_descent_segment_turn_position_tolerance_m: 0.2
+ * /stair_descent_manager/truth_descent_segment_turn_side_speed_mps: 0.4
+ * /stair_descent_manager/truth_descent_segment_turn_timeout_sec: 60.0
+ * /stair_descent_manager/truth_descent_segment_turn_x_keep_m: -3.7
+ * /stair_descent_manager/truth_descent_segment_turn_y_keep_m: 2.05
+ * /stair_descent_manager/truth_descent_segment_turn_yaw_rate_rps: 1.0
+ * /stair_descent_manager/truth_descent_side_slip_guard_window_sec: 6.0
+ * /stair_descent_manager/truth_descent_side_slip_max_attempts: 4
+ * /stair_descent_manager/truth_descent_side_slip_min_drop_m: 0.5
+ * /stair_descent_manager/truth_descent_side_slip_pause_sec: 0.5
+ * /stair_descent_manager/truth_descent_stall_arm_drop_m: 0.05
+ * /stair_descent_manager/truth_descent_stall_min_elapsed_sec: 2.0
+ * /stair_descent_manager/truth_descent_stall_pause_seconds: 1.0
+ * /stair_descent_manager/truth_descent_stall_seconds: 3.0
+ * /stair_descent_manager/truth_descent_stall_z_progress_m: 0.02
+ * /stair_descent_manager/truth_descent_step_pause_interval_m: 0.18
+ * /stair_descent_manager/truth_descent_step_pause_seconds: 0.0
+ * /stair_descent_manager/truth_descent_trigger_timeout_sec: 2400.0
+ * /stair_descent_manager/truth_descent_turn_forward_speed_mps: 0.03
+ * /stair_descent_manager/truth_descent_turn_forward_y_limit_m: 4.82
+ * /stair_descent_manager/truth_descent_turn_start_y: 5.05
+ * /stair_transition_manager/approach_only: False
+ * /stair_transition_manager/ascent_boost_seconds: 0.0
+ * /stair_transition_manager/ascent_boost_speed_mps: 0.0
+ * /stair_transition_manager/ascent_maximum_speed_mps: 0.8
+ * /stair_transition_manager/ascent_settle_seconds: 0.0
+ * /stair_transition_manager/ascent_speed_mps: 0.8
+ * /stair_transition_manager/ascent_timeout_sec: 45.0
+ * /stair_transition_manager/auto_start: False
+ * /stair_transition_manager/command_topic: /cmd_vel
+ * /stair_transition_manager/depth_points_topic: /real_sense/depth...
+ * /stair_transition_manager/enable_truth_return_gate: True
+ * /stair_transition_manager/enable_visual_stair_alignment: True
+ * /stair_transition_manager/entry_alignment_yaw_rate_rps: 0.6
+ * /stair_transition_manager/flight_a_height_gain_m: 1.05
+ * /stair_transition_manager/flight_b_timeout_sec: 22.0
+ * /stair_transition_manager/hold_rl_during_ascent: True
+ * /stair_transition_manager/landing_cross_distance_m: 0.95
+ * /stair_transition_manager/landing_cross_speed_mps: 0.55
+ * /stair_transition_manager/landing_heading_tolerance_rad: 0.05
+ * /stair_transition_manager/landing_timeout_sec: 30.0
+ * /stair_transition_manager/landing_turn_angle_rad: -2.4
+ * /stair_transition_manager/landing_turn_speed_rps: 0.6
+ * /stair_transition_manager/lock_ascent_heading: False
+ * /stair_transition_manager/odom_topic: /simenv/fastlio_s...
+ * /stair_transition_manager/offline_truth_layout_metadata: /workspace/0904_v...
+ * /stair_transition_manager/output_dir: /workspace/0904_v...
+ * /stair_transition_manager/policy_preloaded: False
+ * /stair_transition_manager/pre_ascent_align_timeout_sec: 20.0
+ * /stair_transition_manager/pre_ascent_align_watchdog_progress_rad: 0.08
+ * /stair_transition_manager/second_floor_handoff_timeout_sec: 45.0
+ * /stair_transition_manager/second_floor_stable_seconds: 1.0
+ * /stair_transition_manager/skip_approach: False
+ * /stair_transition_manager/stair_policy: /workspace/0904_v...
+ * /stair_transition_manager/total_height_gain_m: 2.2
+ * /stair_transition_manager/truth_corridor_lateral_offset_m: 1.8
+ * /stair_transition_manager/truth_corridor_longitudinal_offset_m: 3.8
+ * /stair_transition_manager/truth_entry_guide: True
+ * /stair_transition_manager/truth_entry_guide_min_speed_mps: 0.25
+ * /stair_transition_manager/truth_entry_guide_speed_mps: 0.9
+ * /stair_transition_manager/truth_entry_timeout_sec: 60.0
+ * /stair_transition_manager/truth_flight_a_recovery_center_error_m: 0.14
+ * /stair_transition_manager/truth_flight_a_recovery_center_speed_mps: 0.18
+ * /stair_transition_manager/truth_flight_a_recovery_forward_speed_mps: 0.12
+ * /stair_transition_manager/truth_flight_a_recovery_heading_error_rad: 0.2
+ * /stair_transition_manager/truth_flight_a_recovery_yaw_rate_rps: 0.16
+ * /stair_transition_manager/truth_flight_b_center_deadband_m: 0.04
+ * /stair_transition_manager/truth_flight_b_center_gain: 0.55
+ * /stair_transition_manager/truth_flight_b_center_speed_mps: 0.12
+ * /stair_transition_manager/truth_flight_b_drop_detect_m: 0.1
+ * /stair_transition_manager/truth_flight_b_entry_x: -2.485
+ * /stair_transition_manager/truth_flight_b_fall_drop_m: 0.55
+ * /stair_transition_manager/truth_flight_b_heading_gain: 0.35
+ * /stair_transition_manager/truth_flight_b_max_yaw_rate_rps: 0.18
+ * /stair_transition_manager/truth_flight_b_recovery_backoff_distance_m: 0.35
+ * /stair_transition_manager/truth_flight_b_recovery_backoff_speed_mps: 0.3
+ * /stair_transition_manager/truth_flight_b_recovery_hold_seconds: 6.0
+ * /stair_transition_manager/truth_flight_b_recovery_ramp_seconds: 1.0
+ * /stair_transition_manager/truth_flight_b_recovery_ramp_speed_mps: 0.4
+ * /stair_transition_manager/truth_flight_b_stall_seconds: 4.0
+ * /stair_transition_manager/truth_landing_minimum_recenter_speed_mps: 0.3
+ * /stair_transition_manager/truth_landing_minimum_yaw_rate_rps: 0.24
+ * /stair_transition_manager/truth_landing_position_deadband_m: 0.05
+ * /stair_transition_manager/truth_landing_position_gain: 0.9
+ * /stair_transition_manager/truth_landing_position_tolerance_m: 0.06
+ * /stair_transition_manager/truth_landing_recenter_speed_mps: 0.4
+ * /stair_transition_manager/truth_landing_turn_start_y: 4.75
+ * /stair_transition_manager/truth_return_gate_radius_m: 35.0
+ * /stair_transition_manager/truth_second_floor_clearance_m: 0.3
+ * /stair_transition_manager/truth_side_entry_offset_m: 1.65
+ * /stair_transition_manager/truth_two_stage_guide: True
+ * /stair_transition_manager/two_flight_stair: True
+ * /stair_transition_manager/upper_landing_clearance_grace_sec: 15.0
+ * /stair_transition_manager/visual_stair_alignment_blend: 0.25
+ * /stair_transition_manager/visual_stair_max_age_sec: 0.6
+ * /stair_transition_manager/visual_stair_min_points: 40
+ * /stair_transition_manager/wait_for_second_floor_handoff: True
+ * /stair_transition_manager/world_frame_ascent: True
+ * /task_mode: baseline_fastlio_...
+ * /third_floor_exploration_manager/auto_generate_combined_visualization: False
+ * /third_floor_exploration_manager/corridor_acquisition_heading_range_m: 12.0
+ * /third_floor_exploration_manager/corridor_acquisition_heading_samples: 16
+ * /third_floor_exploration_manager/corridor_acquisition_heading_search: False
+ * /third_floor_exploration_manager/corridor_acquisition_parallel_wall_semantic: False
+ * /third_floor_exploration_manager/corridor_acquisition_preferred_heading: 1.5707963267948966
+ * /third_floor_exploration_manager/corridor_acquisition_semantic_minimum_length_m: 4.0
+ * /third_floor_exploration_manager/corridor_acquisition_semantic_search_radius_m: 12.0
+ * /third_floor_exploration_manager/enable_second_floor_lobby_rescan: False
+ * /third_floor_exploration_manager/enable_second_floor_truth_corridor_guide: True
+ * /third_floor_exploration_manager/floor_number: 3
+ * /third_floor_exploration_manager/handoff_wait_timeout_sec: 1200.0
+ * /third_floor_exploration_manager/locomotion_recovery_reset: False
+ * /third_floor_exploration_manager/map_file: /workspace/0904_v...
+ * /third_floor_exploration_manager/maximum_duration: 400.0
+ * /third_floor_exploration_manager/maximum_goals: 40
+ * /third_floor_exploration_manager/monitor_source_finalize: False
+ * /third_floor_exploration_manager/offline_stair_model_sdf: /workspace/0904_v...
+ * /third_floor_exploration_manager/offline_truth_layout_metadata: /workspace/0904_v...
+ * /third_floor_exploration_manager/output_dir: /workspace/0904_v...
+ * /third_floor_exploration_manager/parent_output_dir: /workspace/0904_v...
+ * /third_floor_exploration_manager/plane_policy: /workspace/0904_v...
+ * /third_floor_exploration_manager/plane_policy_reload_timeout_sec: 30.0
+ * /third_floor_exploration_manager/room_target_count: 4
+ * /third_floor_exploration_manager/second_floor_truth_corridor_align_offset_m: 0.5
+ * /third_floor_exploration_manager/second_floor_truth_corridor_guide_speed_mps: 1.35
+ * /third_floor_exploration_manager/second_floor_truth_corridor_guide_timeout_sec: 45.0
+ * /third_floor_exploration_manager/source_floor_failure_token: SECOND_FLOOR_EXPL...
+ * /third_floor_exploration_manager/source_floor_state_topic: /simenv/second_fl...
+ * /third_floor_exploration_manager/stair_handoff_on_corridor_exit: True
+ * /third_floor_exploration_manager/stair_reached_token: THIRD_FLOOR_REACHED
+ * /third_floor_exploration_manager/stair_state_topic: /simenv/second_to...
+ * /third_floor_exploration_manager/state_topic: /simenv/third_flo...
+ * /third_floor_exploration_manager/statistics_file: /workspace/0904_v...
+ * /third_floor_exploration_manager/stop_after_all_room_exits: False
+ * /third_floor_exploration_manager/tour_mode: False
+ * /third_floor_exploration_manager/tour_waypoint_frame: world
+ * /third_floor_exploration_manager/tour_waypoints: [{"x":0.0,"y":8.8...
+ * /truth_lidar_coverage_logger/floor_heights: [0.0, 2.6, 5.2]
+ * /truth_lidar_coverage_logger/maximum_range: 30.0
+ * /truth_lidar_coverage_logger/maximum_sync_error: 0.05
+ * /truth_lidar_coverage_logger/minimum_scan_interval: 0.2
+ * /truth_lidar_coverage_logger/model_name: a1_gazebo
+ * /truth_lidar_coverage_logger/output_dir: /workspace/0904_v...
+ * /truth_lidar_coverage_logger/ray_stride: 4
+ * /truth_lidar_coverage_logger/resolution: 0.15
+ * /truth_lidar_coverage_logger/sensor_pitch: 0.785
+ * /truth_lidar_coverage_logger/sensor_translation: [0.2, 0.0, 0.08]
+ * /unpause_after_controllers/controller_namespace: /a1_gazebo
+ * /unpause_after_controllers/load_window_seconds: 2.0
+ * /unpause_after_controllers/timeout: 120
+ * /use_sim_time: True
+ * /world_file: /workspace/0904_v...
+ * /xvfb_display_guard/display: :99
+
+NODES
+  /
+    baseline_exploration_manager (simenv_exploration/baseline_exploration_manager.py)
+    baseline_telemetry (simenv_exploration/baseline_telemetry.py)
+    baseline_voxel_mapper (simenv_exploration/fastlio_voxel_mapper)
+    fast_lio_mapping (fast_lio/fastlio_mapping)
+    fastlio_pointcloud_adapter (simenv_exploration/fastlio_pointcloud_adapter.py)
+    gazebo (gazebo_ros/gzserver)
+    goal_executor (simenv_exploration/goal_executor.py)
+    goal_executor_rl_bootstrap (simenv_exploration/controller_mode_bootstrap.py)
+    junior_ctrl (simenv_exploration/classic_trotting_controller.py)
+    local_doorway_detector (simenv_exploration/local_doorway_detector.py)
+    map_to_fastlio_origin (tf2_ros/static_transform_publisher)
+    motion_consistency_guard (simenv_exploration/motion_consistency_guard.py)
+    robot_state_publisher (robot_state_publisher/robot_state_publisher)
+    second_floor_exploration_manager (simenv_exploration/second_floor_exploration_manager.py)
+    second_to_third_floor_stair_manager (simenv_exploration/stair_transition_manager.py)
+    stair_descent_manager (simenv_exploration/stair_descent_manager.py)
+    stair_transition_manager (simenv_exploration/stair_transition_manager.py)
+    third_floor_exploration_manager (simenv_exploration/second_floor_exploration_manager.py)
+    truth_lidar_coverage_logger (simenv_exploration/truth_lidar_coverage_logger.py)
+    unpause_after_controllers (simenv_exploration/unpause_after_controllers.py)
+    urdf_spawner (gazebo_ros/spawn_model)
+    xvfb_display_guard (simenv_exploration/xvfb_display_guard.py)
+  /a1_gazebo/
+    controller_spawner (controller_manager/spawner)
+Using junior_ctrl: /workspace/0904_v2/SimEnv-master/.portable/devel/lib/unitree_guide/junior_ctrl
+Multi thread started 
+p_pre->lidar_type 4
+~~~~/workspace/0904_v2/mission/work/mounts/ExplorationWS/src/FAST_LIO/ file opened
+[0m[INFO] Finished loading Gazebo ROS API Plugin.[0m
+[0m[INFO] waitForService: Service [/gazebo/set_physics_properties] has not been advertised, waiting...[0m
+[0m[INFO] waitForService: Service [/gazebo/set_physics_properties] is now available.[0m
+[0m[INFO] Physics dynamic reconfigure ready.[0m
+[0m[INFO] <initialOrientationAsReference> is unset, using default value of false to comply with REP 145 (world as orientation reference)[0m
+[0m[INFO] <robotNamespace> set to: //[0m
+[0m[INFO] <topicName> set to: trunk_imu[0m
+[0m[INFO] <frameName> set to: imu_link[0m
+[0m[INFO] <updateRateHZ> set to: 1000[0m
+[0m[INFO] <gaussianNoise> set to: 0[0m
+[0m[INFO] <xyzOffset> set to: 0 0 0[0m
+[0m[INFO] <rpyOffset> set to: 0 -0 0[0m
+[0m[INFO] load csv file name:/workspace/0904_v2/runtime_assets/SimEnv/src/unitree_guide/unitree_ros/robots/a1_description/scan_mode/mid360_stable.csv[0m
+data size:2500
+[livox] csv rows=2500
+[0m[INFO] ros topic name:/scan[0m
+[0m[INFO] scan info size:2500[0m
+[livox] before RayPlugin::Load
+[livox] after RayPlugin::Load
+[livox] before CreateCollision
+[livox] after CreateCollision
+[0m[INFO] sample:800[0m
+[0m[INFO] downsample:1[0m
+[livox] before rayShape Load/Init samples=800
+[livox] after rayShape Init
+[INFO] Loading model XML from ros parameter robot_description
+[INFO] Waiting for service /gazebo/spawn_urdf_model
+[INFO] Calling service /gazebo/spawn_urdf_model
+[INFO] Spawn status: SpawnModel: Successfully spawned entity
+[INFO] Waiting for service /gazebo/set_model_configuration
+[INFO] temporary hack to **fix** the -J joint position option (issue #93), sleeping for 1 second to avoid race condition.
+[INFO] Calling service /gazebo/set_model_configuration
+[INFO] Set model configuration status: SetModelConfiguration: success
+[INFO] Gazebo unpaused after 2.0 s paused controller-load window
+[INFO] All 13 A1 controllers reached running state
+[WARNING] Could not enable SCHED_FIFO scheduler: Operation not permitted. Controller will continue with the normal scheduler.
+The control interface for ROS Gazebo simulation
+robot_name: a1
+controller dt: 0.004 s, frequency: 250.000 Hz
+classic gait profile=trot period=0.550s stance_ratio=0.650
+/workspace/0904_v2/runtime_assets/SimEnv/src/unitree_guide/unitree_guide/unitree_guide/../../logs/policy_act_inference_plane.pt
+cuda::is_available():1
+RL inference device: cuda (requested=cuda, policy=plane)
+[INFO] RL policy resident in preload cache: /workspace/0904_v2/runtime_assets/SimEnv/src/unitree_guide/unitree_guide/unitree_guide/../../logs/policy_act_inference_plane.pt
+cuda::is_available():1
+RL inference device: cuda (requested=cuda, policy=plane)
+load model is successed!
+load model to device!
+[INFO] RL observation source: trunk IMU and joint states (no ground truth).
+[INFO] Autonomous startup: entering fixed stand (hold until /joy RL).
+Switched from passive to fixed stand
+[INFO] Hold-stand released; RL requested.
+Switched from fixed stand to RL
+[INFO] Entered RL /cmd_vel mode.
+[33m[WARN] No point, skip this scan!
+[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.003 m planar drift (count=1, max=0.003 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.002 m planar drift (count=22, max=0.004 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.003 m planar drift (count=42, max=0.006 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.002 m planar drift (count=62, max=0.006 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.002 m planar drift (count=82, max=0.006 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.002 m planar drift (count=103, max=0.006 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.001 m planar drift (count=123, max=0.006 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.002 m planar drift (count=144, max=0.006 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.006 m planar drift (count=165, max=0.008 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.003 m planar drift (count=186, max=0.008 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.002 m planar drift (count=207, max=0.008 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.003 m planar drift (count=227, max=0.008 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.002 m planar drift (count=247, max=0.008 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.070 m planar drift (count=250, max=0.070 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.007 m planar drift (count=261, max=0.070 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.004 m planar drift (count=281, max=0.070 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.002 m planar drift (count=302, max=0.070 m)[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.322 ready=0 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=-0.02,0.00,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.197 ready=0 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=-0.01,0.07,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.171 ready=0 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=-0.01,0.01,-0.98[0m
+[0m[INFO] RL locomotion_ready latched after 5.50 s takeover and 5.34 s stable hold[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.145 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.00,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.140 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.00,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.163 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=-0.00,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.148 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=-0.00,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.144 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=-0.00,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.140 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.01,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.141 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.00,0.00,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.148 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=-0.01,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.140 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.00,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.143 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.00,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.143 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.01,0.00,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.140 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.00,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.144 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.01,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.148 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.00,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.153 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.00,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.154 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=-0.00,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=1.549 vy=-0.067 wz=-0.030 action_rms=0.307 ready=1 userCmd=0 kbd=0 raw=1.549,-0.067,-0.030 grav=-0.03,-0.03,-0.98[0m
+[0m[INFO] RL policy input vx=1.108 vy=0.008 wz=0.006 action_rms=0.378 ready=1 userCmd=0 kbd=0 raw=1.108,0.008,0.006 grav=0.02,-0.05,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.144 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.00,-0.01,-0.98[0m
+[0m[INFO] RL policy input vx=1.549 vy=-0.041 wz=-0.019 action_rms=0.248 ready=1 userCmd=0 kbd=0 raw=1.549,-0.041,-0.019 grav=-0.01,-0.04,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.141 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.02,-0.04,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.141 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.01,-0.03,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.141 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.01,-0.03,-0.98[0m
+[0m[INFO] RL policy input vx=-0.412 vy=-0.181 wz=-0.550 action_rms=0.244 ready=1 userCmd=0 kbd=0 raw=-0.412,-0.181,-0.550 grav=0.01,-0.01,-0.98[0m
+[0m[INFO] RL policy input vx=-0.079 vy=-0.420 wz=-0.550 action_rms=0.206 ready=1 userCmd=0 kbd=0 raw=-0.079,-0.420,-0.550 grav=-0.01,0.01,-0.[33m[WARN] FAST-LIO stationary motion guard removed 0.010 m planar drift (count=304, max=0.070 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.068 m planar drift (count=311, max=0.070 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.057 m planar drift (count=319, max=0.070 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.088 m planar drift (count=327, max=0.088 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.011 m planar drift (count=334, max=0.088 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.016 m planar drift (count=351, max=0.088 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.067 m planar drift (count=364, max=0.088 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.011 m planar drift (count=385, max=0.088 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.020 m planar drift (count=386, max=0.088 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.075 m planar drift (count=393, max=0.088 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.074 m planar drift (count=411, max=0.088 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.011 m planar drift (count=432, max=0.088 m)[0m
+98[0m
+[0m[INFO] RL policy input vx=0.639 vy=0.433 wz=0.285 action_rms=0.185 ready=1 userCmd=0 kbd=0 raw=0.639,0.433,0.285 grav=-0.01,-0.00,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.139 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.03,-0.02,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.164 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.02,-0.02,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.153 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=-0.00,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.261 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.01,-0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.147 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=-0.00,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=1.549 vy=0.065 wz=0.029 action_rms=0.326 ready=1 userCmd=0 kbd=0 raw=1.549,0.065,0.029 grav=0.00,-0.00,-0.98[0m
+[0m[INFO] RL policy input vx=1.217 vy=0.000 wz=0.000 action_rms=0.400 ready=1 userCmd=0 kbd=0 raw=1.217,0.000,0.000 grav=-0.01,-0.04,-0.98[0m
+[0m[INFO] RL policy input vx=0.007 vy=0.000 wz=0.000 action_rms=0.227 ready=1 userCmd=0 kbd=0 raw=0.007,0.000,0.000 grav=0.03,-0.03,-0.98[0m
+[0m[INFO] RL policy input vx=0.070 vy=-0.420 wz=-0.537 action_rms=0.159 ready=1 userCmd=0 kbd=0 raw=0.070,-0.420,-0.537 grav=0.00,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.399 vy=-0.207 wz=-0.335 action_rms=0.156 ready=1 userCmd=0 kbd=0 raw=0.399,-0.207,-0.335 grav=0.00,-0.03,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.145 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.05,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.142 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.00,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=1.080 vy=-0.207 wz=-0.133 action_rms=0.397 ready=1 userCmd=0 kbd=0 raw=1.080,-0.207,-0.133 grav=-0.00,-0.04,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=1.000 action_rms=0.177 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,1.000 grav=0.02,-0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=1.000 action_rms=0.252 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,1.000 grav=0.02,-0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=1.000 action_rms=0.162 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,1.000 grav=0.01,-0.01,-0.98[0m
+[0m[INFO] RL policy input vx=-0.425 vy=-0.147 wz=-0.550 action_rms=0.186 ready=1 userCmd=0 kbd=0 raw=-0.425,-0.147,-0.550 grav=0.01,0.03,-0.98[0m
+[0m[INFO] RL policy input vx=0.592 vy=-0.098 wz=-0.115 action_rms=0.326 ready=1 userCmd=0 kbd=0 raw=0.592,-0.098,-0.115 grav=-0.00,-0.04,-0.98[0m
+[0m[INFO] RL policy input vx=0.595 vy=-0.075 wz=-0.087 action_rms=0.161 ready=1 userCmd=0 kbd=0 raw=0.595,-0.075,-0.087 grav=0.00,-0.02,-0.98[0m
+[0m[INFO] RL policy input vx=0.600 vy=0.020 wz=0.023 action_rms=0.311 ready=1 userCmd=0 kbd=0 raw=0.600,0.020,0.023 grav=-0.01,-0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.600 vy=-0.017 wz=-0.019 action_rms=0.202 ready=1 userCmd=0 kbd=0 raw=0.600,-0.017,-0.019 grav=0.00,-0.02,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.143 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.01,-0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.080 vy=-0.420 wz=-0.550 action_rms=0.165 ready=1 userCmd=0 kbd=0 raw=0.080,-0.420,-0.550 grav=0.01,-0.02,-0.98[0m
+[0m[INFO] RL policy input vx=1.061 vy=0.166 wz=0.109 action_rms=0.202 ready=1 userCmd=0 kbd=0 raw=1.061,0.166,0.109 grav=-0.01,-0.02,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.139 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.02,-0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.540 vy=0.075 wz=0.048 action_rms=0.182 ready=1 userCmd=0 kbd=0 raw=0.540,0.075,0.048 grav=-0.02,0.00,-0.98[0m
+[0m[INFO] RL policy input vx=1.099 vy=0.041 wz=0.026 action_rms=0.144 ready=1 userCmd=0 kbd=0 raw=1.099,0.041,0.026 grav=-0.00,-0.03,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=[33m[WARN] FAST-LIO stationary motion guard removed 0.018 m planar drift (count=435, max=0.088 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.005 m planar drift (count=455, max=0.088 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.066 m planar drift (count=459, max=0.088 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.031 m planar drift (count=468, max=0.088 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.019 m planar drift (count=475, max=0.088 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.019 m planar drift (count=482, max=0.088 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.071 m planar drift (count=489, max=0.088 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.245 m planar drift (count=504, max=0.245 m)[0m
+[33m[WARN] FAST-LIO stationary motion guard removed 0.066 m planar drift (count=517, max=0.245 m)[0m
+-1.000 action_rms=0.174 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,-1.000 grav=0.02,-0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=-1.000 action_rms=0.250 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,-1.000 grav=0.00,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.147 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.01,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.152 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.00,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.611 vy=0.223 wz=0.245 action_rms=0.165 ready=1 userCmd=0 kbd=0 raw=0.611,0.223,0.245 grav=0.00,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.117 vy=0.086 wz=0.093 action_rms=0.166 ready=1 userCmd=0 kbd=0 raw=0.117,0.086,0.093 grav=0.02,-0.06,-0.98[0m
+[0m[INFO] RL policy input vx=0.650 vy=0.017 wz=0.018 action_rms=0.256 ready=1 userCmd=0 kbd=0 raw=0.650,0.017,0.018 grav=0.01,-0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.597 vy=-0.060 wz=-0.070 action_rms=0.166 ready=1 userCmd=0 kbd=0 raw=0.597,-0.060,-0.070 grav=0.01,-0.03,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=1.000 action_rms=0.132 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,1.000 grav=0.01,0.04,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=1.000 action_rms=0.254 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,1.000 grav=0.01,-0.01,-0.98[0m
+[0m[INFO] RL policy input vx=-0.254 vy=-0.371 wz=-0.550 action_rms=0.224 ready=1 userCmd=0 kbd=0 raw=-0.254,-0.371,-0.550 grav=0.02,0.03,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=1.000 action_rms=0.294 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,1.000 grav=0.00,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=1.000 action_rms=0.225 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,1.000 grav=0.01,-0.01,-0.98[0m
+[0m[INFO] RL policy input vx=-0.446 vy=-0.058 wz=-0.550 action_rms=0.219 ready=1 userCmd=0 kbd=0 raw=-0.446,-0.058,-0.550 grav=0.02,0.01,-0.98[0m
+[0m[INFO] RL policy input vx=-0.198 vy=-0.404 wz=-0.550 action_rms=0.209 ready=1 userCmd=0 kbd=0 raw=-0.198,-0.404,-0.550 grav=-0.01,0.03,-0.98[0m
+[0m[INFO] RL policy input vx=0.233 vy=-0.385 wz=-0.550 action_rms=0.163 ready=1 userCmd=0 kbd=0 raw=0.233,-0.385,-0.550 grav=-0.01,-0.02,-0.98[0m
+[0m[INFO] RL policy input vx=0.722 vy=-0.138 wz=-0.138 action_rms=0.138 ready=1 userCmd=0 kbd=0 raw=0.722,-0.138,-0.138 grav=-0.01,-0.05,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.144 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.01,0.00,-0.98[0m
+[0m[INFO] RL policy input vx=1.531 vy=-0.244 wz=-0.110 action_rms=0.363 ready=1 userCmd=0 kbd=0 raw=1.531,-0.244,-0.110 grav=-0.01,-0.05,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.169 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.03,0.00,-0.98[0m
+[0m[INFO] RL policy input vx=0.675 vy=-0.057 wz=-0.062 action_rms=0.373 ready=1 userCmd=0 kbd=0 raw=0.675,-0.057,-0.062 grav=-0.00,-0.02,-0.98[0m
+[0m[INFO] RL policy input vx=0.599 vy=0.040 wz=0.046 action_rms=0.296 ready=1 userCmd=0 kbd=0 raw=0.599,0.040,0.046 grav=0.01,-0.02,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.000 action_rms=0.151 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.000 grav=0.03,-0.05,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.250 action_rms=0.141 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.250 grav=0.00,-0.04,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.250 action_rms=0.145 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.250 grav=-0.01,-0.03,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.250 action_rms=0.141 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.250 grav=0.00,-0.03,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.250 action_rms=0.142 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.250 grav=0.00,-0.02,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.250 action_rms=0.142 ready=1 userCmd=0 kbd=0 raw=0.000,0.000,0.250 grav=-0.00,-0.01,-0.98[0m
+[0m[INFO] RL policy input vx=0.000 vy=0.000 wz=0.250 action_rms=0.141 ready=1 userCmd=0 kbd=0 raw=0.0[33m[WARN] FAST-LIO stationary motion guard removed 0.052 m planar drift (count=526, max=0.245 m)[0m

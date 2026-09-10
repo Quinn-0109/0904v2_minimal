@@ -1,0 +1,493 @@
+#!/usr/bin/env bash
+# Run the deterministic three-floor mission inside simenv-exploration:threefloor.
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PACKAGE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+SIMENV_ROOT="${SIMENV_ROOT:-$(cd "$PACKAGE_DIR/../.." && pwd)}"
+export SIMENV_ROOT
+SIMENV_ASSET_ROOT="${SIMENV_ASSET_ROOT:-$SIMENV_ROOT}"
+SCAN_WORKSPACE="${SCAN_WORKSPACE:-/workspace/SCAN-Planner}"
+SCAN_BUILD_SPACE="${SCAN_BUILD_SPACE:-$SCAN_WORKSPACE/build}"
+SCAN_DEVEL_SPACE="${SCAN_DEVEL_SPACE:-$SCAN_WORKSPACE/devel}"
+RESULTS_ROOT="${RESULTS_ROOT:-$SIMENV_ROOT/results}"
+MISSION_CONFIG="${MISSION_CONFIG:-$PACKAGE_DIR/config/three_floor_rl_mission.json}"
+CHECKER="$SCRIPT_DIR/check_three_floor_rl_mission.py"
+SCENE_PREPARER="$SCRIPT_DIR/prepare_three_floor_scene.py"
+SCENE_RANDOMIZER="$SCRIPT_DIR/randomize_three_floor_scene.py"
+CONTROLLER_OVERLAY="$PACKAGE_DIR/vendor/unitree_guide_controller"
+CONTROLLER_PACKAGE="$SIMENV_ROOT/src/unitree_guide/unitree_guide/unitree_guide"
+RUN_NAME="${1:-scanplanner_three_floor_rl_$(date +%Y%m%d_%H%M%S)}"
+MAX_WALL_SEC="${MAX_WALL_SEC:-3000}"
+PREFLIGHT_ONLY="${PREFLIGHT_ONLY:-0}"
+DESCENT_SMOKE_ONLY="${DESCENT_SMOKE_ONLY:-0}"
+THREE_FLOOR_SEED_OFFSET="${THREE_FLOOR_SEED_OFFSET:-0}"
+
+case "$RUN_NAME" in
+  .|..) echo "ERROR: unsafe run name: $RUN_NAME" >&2; exit 2 ;;
+esac
+if [[ ! "$RUN_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+  echo "ERROR: run name must match [A-Za-z0-9][A-Za-z0-9._-]*" >&2
+  exit 2
+fi
+if ! [[ "$MAX_WALL_SEC" =~ ^[0-9]+([.][0-9]+)?$ ]] || \
+   ! awk -v value="$MAX_WALL_SEC" 'BEGIN { exit !(value > 0) }'; then
+  echo "ERROR: MAX_WALL_SEC must be positive" >&2
+  exit 2
+fi
+if [ "$PREFLIGHT_ONLY" != "0" ] && [ "$PREFLIGHT_ONLY" != "1" ]; then
+  echo "ERROR: PREFLIGHT_ONLY must be 0 or 1" >&2
+  exit 2
+fi
+if [ "$DESCENT_SMOKE_ONLY" != "0" ] && [ "$DESCENT_SMOKE_ONLY" != "1" ]; then
+  echo "ERROR: DESCENT_SMOKE_ONLY must be 0 or 1" >&2
+  exit 2
+fi
+if [ "$PREFLIGHT_ONLY" = "1" ] && [ "$DESCENT_SMOKE_ONLY" = "1" ]; then
+  echo "ERROR: PREFLIGHT_ONLY and DESCENT_SMOKE_ONLY are mutually exclusive" >&2
+  exit 2
+fi
+if ! [[ "$THREE_FLOOR_SEED_OFFSET" =~ ^-?[0-9]+$ ]]; then
+  echo "ERROR: THREE_FLOOR_SEED_OFFSET must be an integer" >&2
+  exit 2
+fi
+
+set +u
+source /opt/ros/noetic/setup.bash
+# Native runs use the newer SimEnv tree for the world, sensors and Python
+# helpers.  Source its generated devel space so catkin can resolve installed
+# node executables (for example controller_mode_bootstrap.py) while the
+# mission-specific Unitree controller continues to come from SIMENV_ROOT.
+if [ "$SIMENV_ASSET_ROOT" != "$SIMENV_ROOT" ] && \
+   [ -f "$SIMENV_ASSET_ROOT/devel/setup.bash" ]; then
+  source "$SIMENV_ASSET_ROOT/devel/setup.bash" --extend
+fi
+if [ -f "$SIMENV_ROOT/devel/setup.bash" ]; then
+  source "$SIMENV_ROOT/devel/setup.bash" --extend
+fi
+if [ -f "$SIMENV_ROOT/devel_0803b/setup.bash" ]; then
+  source "$SIMENV_ROOT/devel_0803b/setup.bash" --extend
+fi
+set -u
+
+# Register the mounted source-only package before selecting the run mode.
+export ROS_PACKAGE_PATH="$PACKAGE_DIR${SIMENV_EXTRA_ROS_PACKAGE_PATH:+:$SIMENV_EXTRA_ROS_PACKAGE_PATH}${ROS_PACKAGE_PATH:+:$ROS_PACKAGE_PATH}"
+
+# The image contains a controller binary from 2026-08-17 and a Python wrapper
+# that hard-codes a missing devel_0803b path.  Apply this project's vendored
+# current controller patch inside the owned container and incrementally rebuild
+# the image's unitree_guide package.  The image CMakeLists (which contains its
+# LibTorch/ROS prefix workaround) is deliberately retained.
+CONTROLLER_FILES=(
+  include/FSM/FSM.h
+  include/FSM/State_FixedStand.h
+  include/FSM/State_RL_test.h
+  include/common/angle_wrap.h
+  include/common/fixed_stand_defaults.h
+  include/common/policy_request.h
+  include/control/CtrlComponents.h
+  src/FSM/FSM.cpp
+  src/FSM/State_FixedStand.cpp
+  src/FSM/State_Passive.cpp
+  src/FSM/State_RL_test.cpp
+  src/main.cpp
+)
+for relative in "${CONTROLLER_FILES[@]}"; do
+  source_file="$CONTROLLER_OVERLAY/$relative"
+  destination="$CONTROLLER_PACKAGE/$relative"
+  test -f "$source_file" || {
+    echo "ERROR: controller overlay file is missing: $source_file" >&2
+    exit 2
+  }
+  mkdir -p "$(dirname "$destination")"
+  if ! cmp -s "$source_file" "$destination"; then
+    cp "$source_file" "$destination"
+  fi
+  cmp -s "$source_file" "$destination" || {
+    echo "ERROR: controller overlay copy verification failed: $relative" >&2
+    exit 2
+  }
+done
+if [ -f "$SIMENV_ROOT/build/.built_by" ] &&
+   grep -qx 'catkin_make' "$SIMENV_ROOT/build/.built_by"; then
+  NATIVE_BUILD_SPACE="${SIMENV_NATIVE_BUILD_SPACE:-$SIMENV_ROOT/build_native_oblique}"
+  NATIVE_DEVEL_SPACE="${SIMENV_NATIVE_DEVEL_SPACE:-$SIMENV_ROOT/devel_native_oblique}"
+  CONTROLLER_BUILD_COMMAND=(
+    catkin_make -C "$SIMENV_ROOT" --build "$NATIVE_BUILD_SPACE"
+    --pkg unitree_guide -j2
+    -DCATKIN_DEVEL_PREFIX="$NATIVE_DEVEL_SPACE"
+    -DPYTHON_EXECUTABLE=/usr/bin/python3
+    -DTorch_DIR="${SIMENV_TORCH_ROOT:-/root/autodl-tmp/deps/libtorch}/share/cmake/Torch")
+  SIMENV_DEVEL_SPACE="${SIMENV_DEVEL_SPACE:-$NATIVE_DEVEL_SPACE}"
+else
+  CONTROLLER_BUILD_COMMAND=(
+    catkin build unitree_guide --no-deps --workspace "$SIMENV_ROOT" --jobs 2)
+fi
+"${CONTROLLER_BUILD_COMMAND[@]}" \
+  >/tmp/scanplanner_unitree_controller_build.log 2>&1 || {
+    echo "ERROR: current Unitree RL controller build failed" >&2
+    tail -n 160 /tmp/scanplanner_unitree_controller_build.log >&2
+    exit 2
+  }
+SIMENV_DEVEL_SPACE="${SIMENV_DEVEL_SPACE:-devel}"
+export SIMENV_DEVEL_SPACE
+case "$SIMENV_DEVEL_SPACE" in
+  /*) SIMENV_DEVEL_DIR="$SIMENV_DEVEL_SPACE" ;;
+  *) SIMENV_DEVEL_DIR="$SIMENV_ROOT/$SIMENV_DEVEL_SPACE" ;;
+esac
+if [ -n "${SIMENV_VALIDATED_CONTROLLER:-}" ]; then
+  test -x "$SIMENV_VALIDATED_CONTROLLER" || {
+    echo "ERROR: validated controller is missing: $SIMENV_VALIDATED_CONTROLLER" >&2
+    exit 2
+  }
+  mkdir -p "$SIMENV_DEVEL_DIR/lib/unitree_guide"
+  cp "$SIMENV_VALIDATED_CONTROLLER" \
+    "$SIMENV_DEVEL_DIR/lib/unitree_guide/junior_ctrl"
+  chmod 755 "$SIMENV_DEVEL_DIR/lib/unitree_guide/junior_ctrl"
+fi
+UNITREE_CONTROLLER="$SIMENV_DEVEL_DIR/.private/unitree_guide/lib/unitree_guide/junior_ctrl"
+if [ ! -x "$UNITREE_CONTROLLER" ]; then
+  UNITREE_CONTROLLER="$SIMENV_DEVEL_DIR/lib/unitree_guide/junior_ctrl"
+fi
+test -x "$UNITREE_CONTROLLER" || {
+  echo "ERROR: rebuilt junior_ctrl is missing: $UNITREE_CONTROLLER" >&2
+  exit 2
+}
+grep -aFq 'selected CUDA for this policy but CUDA is unavailable' \
+  "$UNITREE_CONTROLLER" || {
+  echo "ERROR: rebuilt junior_ctrl lacks hybrid policy-device support" >&2
+  exit 2
+}
+if [ -f "$SIMENV_DEVEL_DIR/setup.bash" ]; then
+  set +u
+  source "$SIMENV_DEVEL_DIR/setup.bash" --extend
+  set -u
+fi
+# The controller-only catkin_make space contains an empty generated Python
+# shell for building_generator_interfaces.  Prefer the complete generated
+# services from the asset workspace so door/elevator control imports resolve.
+if [ "$SIMENV_ASSET_ROOT" != "$SIMENV_ROOT" ] && \
+   [ -d "$SIMENV_ASSET_ROOT/devel/lib/python3/dist-packages" ]; then
+  export PYTHONPATH="$SIMENV_ASSET_ROOT/devel/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}"
+fi
+echo "[controller] current Unitree RL controller built with hybrid policy support"
+
+# The archived image has a full-footprint roof collision at the F3 slab
+# elevation, sealing the stairwell.  Build validated run-local scene copies so
+# neither the image source nor another session is mutated.
+test -f "$SCENE_PREPARER" || {
+  echo "ERROR: scene preparer is missing: $SCENE_PREPARER" >&2
+  exit 2
+}
+test -f "$SCENE_RANDOMIZER" || {
+  echo "ERROR: scene randomizer is missing: $SCENE_RANDOMIZER" >&2
+  exit 2
+}
+SOURCE_MISSION_CONFIG="$MISSION_CONFIG"
+resolve_runtime_asset() {
+  local configured="$1"
+  # Always translate the historical container prefix before testing whether it
+  # exists.  On the development host /workspace/SimEnv may be a live symlink to
+  # the old external checkout; accepting it would silently break portability.
+  case "$configured" in
+    /workspace/SimEnv/*)
+      local relative="${configured#/workspace/SimEnv/}"
+      if [ -f "$SIMENV_ASSET_ROOT/$relative" ]; then
+        printf '%s\n' "$SIMENV_ASSET_ROOT/$relative"
+        return
+      fi
+      ;;
+  esac
+  if [ -f "$configured" ]; then
+    printf '%s\n' "$configured"
+    return
+  fi
+  echo "ERROR: runtime asset is missing: $configured" >&2
+  echo "Set SIMENV_ASSET_ROOT to a SimEnv tree containing generated_building." >&2
+  return 2
+}
+SOURCE_WORLD_FILE="$(resolve_runtime_asset "$(python3 "$CHECKER" --config "$SOURCE_MISSION_CONFIG" --emit-runtime world_file)")"
+SOURCE_LAYOUT_METADATA="$(resolve_runtime_asset "$(python3 "$CHECKER" --config "$SOURCE_MISSION_CONFIG" --emit-runtime layout_metadata)")"
+SOURCE_STAIR_MODEL_SDF="$(resolve_runtime_asset "$(python3 "$CHECKER" --config "$SOURCE_MISSION_CONFIG" --emit-runtime stair_model_sdf)")"
+THREE_FLOOR_SCENE_DIR="/tmp/simenv_bridge_three_floor_scene/$RUN_NAME"
+python3 "$SCENE_PREPARER" \
+  --world "$SOURCE_WORLD_FILE" \
+  --model "$SOURCE_STAIR_MODEL_SDF" \
+  --layout "$SOURCE_LAYOUT_METADATA" \
+  --output-dir "$THREE_FLOOR_SCENE_DIR" >/tmp/scanplanner_scene_preparation.json
+python3 "$SCENE_RANDOMIZER" \
+  --world "$THREE_FLOOR_SCENE_DIR/competition_scene_with_dangers.world" \
+  --model "$THREE_FLOOR_SCENE_DIR/model.sdf" \
+  --layout "$SOURCE_LAYOUT_METADATA" \
+  --mission-config "$SOURCE_MISSION_CONFIG" \
+  --output-dir "$THREE_FLOOR_SCENE_DIR" \
+  --seed-offset "$THREE_FLOOR_SEED_OFFSET" \
+  >/tmp/scanplanner_scene_randomization.json
+# The randomizer intentionally preserves policy fields from the source mission
+# configuration.  Normalize those two fields here so the supervisor's evidence
+# records the bundled models rather than the historical /workspace mount names.
+python3 - "$THREE_FLOOR_SCENE_DIR/mission_config.json" \
+  "$SIMENV_ASSET_ROOT/src/unitree_guide/logs/policy_act_inference_plane.pt" \
+  "$SIMENV_ASSET_ROOT/src/unitree_guide/logs/policy_act_inference_stair.pt" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8"))
+data["runtime"]["plane_policy"] = str(pathlib.Path(sys.argv[2]).resolve())
+data["runtime"]["stair_policy"] = str(pathlib.Path(sys.argv[3]).resolve())
+path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+export THREE_FLOOR_WORLD_FILE="$THREE_FLOOR_SCENE_DIR/competition_scene_with_dangers.world"
+export THREE_FLOOR_LAYOUT_METADATA="$THREE_FLOOR_SCENE_DIR/layout_metadata.json"
+export THREE_FLOOR_STAIR_MODEL_SDF="$THREE_FLOOR_SCENE_DIR/model.sdf"
+export THREE_FLOOR_SCENE_MANIFEST="$THREE_FLOOR_SCENE_DIR/scene_preparation.json"
+export THREE_FLOOR_RANDOMIZATION_MANIFEST="$THREE_FLOOR_SCENE_DIR/scene_randomization.json"
+MISSION_CONFIG="$THREE_FLOOR_SCENE_DIR/mission_config.json"
+export MISSION_CONFIG
+echo "[scene] run-local randomized assets (seed offset $THREE_FLOOR_SEED_OFFSET): $THREE_FLOOR_SCENE_DIR"
+
+if [ "$DESCENT_SMOKE_ONLY" = "1" ]; then
+  exec "$SCRIPT_DIR/run_stair_descent_smoke.sh" "$RUN_NAME"
+fi
+
+test -f "$SCAN_WORKSPACE/src/planner/plan_manage/package.xml" || {
+  echo "ERROR: SCAN-Planner source overlay is missing: $SCAN_WORKSPACE/src" >&2
+  exit 2
+}
+# The Docker image contains SimEnv but not this project's SCAN workspace.
+# Build only the mounted planner overlay; all generated files stay inside the
+# mission-owned container and the host source remains read-only.
+mkdir -p "$SCAN_BUILD_SPACE" "$SCAN_DEVEL_SPACE"
+catkin_make -C "$SCAN_WORKSPACE" --build "$SCAN_BUILD_SPACE" \
+  --only-pkg-with-deps scan_planner \
+  -j2 -DCMAKE_BUILD_TYPE=Release scan_planner_node closed_loop_controller \
+  -DPYTHON_EXECUTABLE=/usr/bin/python3 \
+  -DCATKIN_DEVEL_PREFIX="$SCAN_DEVEL_SPACE" \
+  >/tmp/scanplanner_three_floor_build.log 2>&1 || {
+    echo "ERROR: SCAN-Planner build failed" >&2
+    tail -n 120 /tmp/scanplanner_three_floor_build.log >&2
+    exit 2
+  }
+set +u
+source "$SCAN_DEVEL_SPACE/setup.bash" --extend
+set -u
+# simenv_bridge is a source-only Python overlay and is intentionally not part
+# of the prebuilt image's catkin package list.  Register the mounted package
+# explicitly after sourcing SCAN's generated environment.
+export ROS_PACKAGE_PATH="$PACKAGE_DIR${SIMENV_EXTRA_ROS_PACKAGE_PATH:+:$SIMENV_EXTRA_ROS_PACKAGE_PATH}${ROS_PACKAGE_PATH:+:$ROS_PACKAGE_PATH}"
+
+test -x "$CHECKER" || { echo "ERROR: checker is not executable: $CHECKER" >&2; exit 2; }
+python3 "$CHECKER" --config "$MISSION_CONFIG" --validate-config \
+  --require-runtime-files
+rospack profile >/dev/null
+rospack find simenv_competitor >/dev/null
+rospack find unitree_guide >/dev/null
+rospack find simenv_bridge >/dev/null
+rospack find scan_planner >/dev/null
+echo "[ros-package] simenv_competitor=$(rospack find simenv_competitor)"
+echo "[ros-package] unitree_guide=$(rospack find unitree_guide)"
+python3 -c 'import roslib.packages; paths=roslib.packages.find_node("simenv_bridge", "stair_transition_manager.py"); assert paths, "stair_transition_manager.py is not discoverable"'
+python3 -c 'import roslib.packages; paths=roslib.packages.find_node("simenv_bridge", "stair_descent_manager.py"); assert paths, "stair_descent_manager.py is not discoverable"'
+python3 -c 'import roslaunch,roslaunch.rlutil,roslib.packages; path=roslaunch.rlutil.resolve_launch_arguments(["simenv_bridge","scanplanner_three_floor_rl.launch"])[0]; config=roslaunch.config.load_config_default([path],None); missing=[node.package+"/"+node.type for node in config.nodes if not roslib.packages.find_node(node.package,node.type)]; assert not missing, "missing ROS node executables: "+", ".join(missing); print("validated {} launch node executables".format(len(config.nodes)))'
+python3 -c 'import roslaunch,roslaunch.rlutil,roslib.packages; path=roslaunch.rlutil.resolve_launch_arguments(["simenv_bridge","stair_descent_physical_smoke.launch"])[0]; config=roslaunch.config.load_config_default([path],None); missing=[node.package+"/"+node.type for node in config.nodes if not roslib.packages.find_node(node.package,node.type)]; assert not missing, "missing descent-smoke ROS node executables: "+", ".join(missing); print("validated {} descent-smoke node executables".format(len(config.nodes)))'
+
+# This runner owns one clean container/session.  Refuse to interfere with any
+# ROS/Gazebo process that was already present in it.
+# A retained debug container uses ``tail`` as PID 1 and cannot reap a child
+# left in Z state after roslaunch shutdown.  Zombies own no sockets/resources
+# and are not live sessions, so exclude them while preserving the isolation
+# guard for every runnable/sleeping ROS or Gazebo process.
+if ps -eo stat=,args= | awk \
+    '$1 !~ /^Z/ && $0 ~ /[r]osmaster|[g]zserver|[r]oslaunch/ { found=1 }
+     END { exit !found }'; then
+  echo "ERROR: live ROS/Gazebo session already exists; refusing broad cleanup" >&2
+  exit 2
+fi
+if [ "$PREFLIGHT_ONLY" = "1" ]; then
+  rostest simenv_bridge mock_three_floor_ros_integration.test
+  echo "[three-floor] PASS: configuration, SCAN build, launch graph, node executables and ROS topic contract validated"
+  exit 0
+fi
+
+RESULTS_DIR="$RESULTS_ROOT/$RUN_NAME"
+if [ -d "$RESULTS_DIR" ] && find "$RESULTS_DIR" -mindepth 1 -print -quit | grep -q .; then
+  echo "ERROR: result directory is not empty: $RESULTS_DIR" >&2
+  exit 2
+fi
+mkdir -p "$RESULTS_DIR"
+RUN_LOG="$RESULTS_DIR/roslaunch.log"
+
+WORLD_FILE="${THREE_FLOOR_WORLD_FILE:-$(python3 "$CHECKER" --config "$MISSION_CONFIG" --emit-runtime world_file)}"
+LAYOUT_METADATA="${THREE_FLOOR_LAYOUT_METADATA:-$(python3 "$CHECKER" --config "$MISSION_CONFIG" --emit-runtime layout_metadata)}"
+STAIR_MODEL_SDF="${THREE_FLOOR_STAIR_MODEL_SDF:-$(python3 "$CHECKER" --config "$MISSION_CONFIG" --emit-runtime stair_model_sdf)}"
+PLANE_POLICY="$(resolve_runtime_asset "$(python3 "$CHECKER" --config "$MISSION_CONFIG" --emit-runtime plane_policy)")"
+STAIR_POLICY="$(resolve_runtime_asset "$(python3 "$CHECKER" --config "$MISSION_CONFIG" --emit-runtime stair_policy)")"
+
+LAUNCH_PID=""
+XVFB_PID=""
+stop_launch() {
+  local pid="${LAUNCH_PID:-}"
+  [ -n "$pid" ] || return 0
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -INT -- "-$pid" 2>/dev/null || true
+    for _ in $(seq 1 20); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 1
+    done
+  fi
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -TERM -- "-$pid" 2>/dev/null || true
+    for _ in $(seq 1 5); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 1
+    done
+  fi
+  wait "$pid" 2>/dev/null || true
+  LAUNCH_PID=""
+}
+stop_xvfb() {
+  local pid="${XVFB_PID:-}"
+  [ -n "$pid" ] || return 0
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -TERM -- "-$pid" 2>/dev/null || true
+    for _ in $(seq 1 20); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.1
+    done
+  fi
+  wait "$pid" 2>/dev/null || true
+  XVFB_PID=""
+}
+stop_runtime() {
+  stop_launch
+  stop_xvfb
+}
+trap stop_runtime EXIT INT TERM
+
+# Gazebo Classic camera sensors require a working X/GL context even when the
+# GUI is disabled.  The base container exports DISPLAY=:99 but does not start
+# that display, leaving native camera topics present at 0 Hz.  Own an isolated
+# Xvfb for exactly this run so RGB warm-up remains preparation, not task time.
+XVFB_DISPLAY="${SCANPLANNER_XVFB_DISPLAY:-:99}"
+if DISPLAY="$XVFB_DISPLAY" xdpyinfo >/dev/null 2>&1; then
+  echo "ERROR: X display $XVFB_DISPLAY is already active; refusing to share it" >&2
+  exit 2
+fi
+setsid Xvfb "$XVFB_DISPLAY" -screen 0 1280x720x24 -nolisten tcp \
+  >"$RESULTS_DIR/xvfb.log" 2>&1 &
+XVFB_PID=$!
+export DISPLAY="$XVFB_DISPLAY"
+for _ in $(seq 1 50); do
+  DISPLAY="$XVFB_DISPLAY" xdpyinfo >/dev/null 2>&1 && break
+  kill -0 "$XVFB_PID" 2>/dev/null || break
+  sleep 0.1
+done
+if ! kill -0 "$XVFB_PID" 2>/dev/null || \
+   ! DISPLAY="$XVFB_DISPLAY" xdpyinfo >/dev/null 2>&1; then
+  echo "ERROR: task-owned Xvfb failed to become ready on $XVFB_DISPLAY" >&2
+  exit 2
+fi
+echo "[three-floor] task-owned Xvfb ready on $XVFB_DISPLAY"
+
+echo "[three-floor] results: $RESULTS_DIR"
+echo "[three-floor] flat gait: $PLANE_POLICY"
+echo "[three-floor] stair gait: $STAIR_POLICY"
+echo "[three-floor] flat-floor planner: $(rospack find scan_planner)"
+if [ -n "${THREE_FLOOR_SCENE_MANIFEST:-}" ]; then
+  cp "$THREE_FLOOR_SCENE_MANIFEST" "$RESULTS_DIR/scene_preparation.json"
+fi
+if [ -n "${THREE_FLOOR_RANDOMIZATION_MANIFEST:-}" ]; then
+  cp "$THREE_FLOOR_RANDOMIZATION_MANIFEST" "$RESULTS_DIR/scene_randomization.json"
+fi
+cp "$MISSION_CONFIG" "$RESULTS_DIR/mission_config.json"
+cp "$LAYOUT_METADATA" "$RESULTS_DIR/layout_metadata.json"
+
+setsid roslaunch simenv_bridge scanplanner_three_floor_rl.launch \
+  output_dir:="$RESULTS_DIR" \
+  mission_config:="$MISSION_CONFIG" \
+  world_file:="$WORLD_FILE" \
+  layout_metadata:="$LAYOUT_METADATA" \
+  stair_model_sdf:="$STAIR_MODEL_SDF" \
+  plane_policy:="$PLANE_POLICY" \
+  stair_policy:="$STAIR_POLICY" \
+  >"$RUN_LOG" 2>&1 &
+LAUNCH_PID=$!
+
+SUMMARY="$RESULTS_DIR/three_floor_rl_mission_summary.json"
+STARTED_AT="$(date +%s)"
+STATUS="running"
+while kill -0 "$LAUNCH_PID" 2>/dev/null; do
+  if [ -s "$SUMMARY" ]; then
+    STATUS="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status","unknown"))' "$SUMMARY" 2>/dev/null || echo partial)"
+    case "$STATUS" in
+      completed|failed|interrupted) break ;;
+    esac
+  fi
+  NOW="$(date +%s)"
+  if awk -v now="$NOW" -v start="$STARTED_AT" -v limit="$MAX_WALL_SEC" \
+      'BEGIN { exit !((now-start) >= limit) }'; then
+    STATUS="runner_timeout"
+    echo "[three-floor] ERROR: wall timeout after ${MAX_WALL_SEC}s" >&2
+    break
+  fi
+  sleep 2
+done
+
+# The mission supervisor and RGB detector receive the same terminal event on
+# independent rospy callback threads.  Keep the owned ROS session alive for a
+# short bounded interval so the detector can atomically publish its completed
+# evidence before roslaunch is stopped and acceptance reads the files.  This
+# wait happens after the mission clock is closed and is not part of the 600 s
+# exploration budget.
+RED_RECORD="$RESULTS_DIR/red_ball_detections.json"
+RED_STATUS="missing"
+if [ "$STATUS" = "completed" ]; then
+  for _ in $(seq 1 100); do
+    if [ -s "$RED_RECORD" ]; then
+      RED_STATUS="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status","unknown"))' "$RED_RECORD" 2>/dev/null || echo partial)"
+      [ "$RED_STATUS" = "completed" ] && break
+    fi
+    kill -0 "$LAUNCH_PID" 2>/dev/null || break
+    sleep 0.1
+  done
+  if [ "$RED_STATUS" != "completed" ]; then
+    echo "[three-floor] WARNING: red-ball terminal record was not ready before shutdown (status=$RED_STATUS)" >&2
+  fi
+fi
+
+stop_launch
+stop_xvfb
+trap - EXIT INT TERM
+sleep 3
+
+set +e
+python3 "$CHECKER" --config "$MISSION_CONFIG" --results "$RESULTS_DIR" \
+  --output "$RESULTS_DIR/three_floor_rl_acceptance.json"
+CHECK_RC=$?
+set -e
+
+if [ "$STATUS" != "completed" ]; then
+  echo "[three-floor] mission status: $STATUS" >&2
+fi
+PLOT_RC=0
+python3 "$SCRIPT_DIR/plot_three_floor_topdown.py" \
+  --results "$RESULTS_DIR" --output-dir "$RESULTS_DIR/visualization" || PLOT_RC=$?
+python3 "$SCRIPT_DIR/plot_red_ball_truth_evaluation.py" \
+  --results "$RESULTS_DIR" --output-dir "$RESULTS_DIR/visualization" || PLOT_RC=$?
+if [ -n "${OVERALL_RESULTS_ROOT:-}" ]; then
+  mkdir -p "$OVERALL_RESULTS_ROOT"
+  ln -sfn "$RESULTS_DIR" "$OVERALL_RESULTS_ROOT/$RUN_NAME"
+  echo "[three-floor] published result link: $OVERALL_RESULTS_ROOT/$RUN_NAME"
+fi
+echo "[three-floor] visualization: $RESULTS_DIR/visualization"
+if [ "$CHECK_RC" -ne 0 ]; then
+  echo "[three-floor] acceptance failed; inspect $RUN_LOG" >&2
+  exit "$CHECK_RC"
+fi
+if [ "$PLOT_RC" -ne 0 ]; then
+  echo "[three-floor] acceptance passed but visualization generation failed" >&2
+  exit "$PLOT_RC"
+fi
+echo "[three-floor] PASS: explored three floors and returned to the F1 lobby"

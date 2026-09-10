@@ -1,0 +1,118 @@
+<launch>
+  <!-- Independent corridor-door-room exploration chain. Online decisions use
+       only FAST-LIO, Livox and RealSense; no layout/Gazebo truth is consumed. -->
+  <arg name="output_dir"/>
+  <arg name="maximum_duration" default="1800.0"/>
+  <arg name="rl_policy"
+       default="$(find unitree_guide)/../../logs/policy_act_inference_stair.pt"/>
+  <!-- Algorithm-development spawn: start inside the floor-0 lobby.  Keep
+       these explicit so mapping_test's outside-entrance defaults cannot
+       silently consume the exploration budget before room search begins. -->
+  <arg name="robot_spawn_x" default="0.0"/>
+  <arg name="robot_spawn_y" default="0.8"/>
+  <arg name="robot_spawn_z" default="0.6"/>
+  <arg name="robot_spawn_yaw" default="1.5708"/>
+  <arg name="enable_room_information_gain" default="true"/>
+  <arg name="room_unknown_decay_lambda" default="0.35"/>
+  <arg name="door_detection_evaluation_only" default="false"/>
+
+  <include file="$(find simenv_competitor)/launch/mapping_test.launch">
+    <arg name="gui" value="false"/>
+    <arg name="rviz" value="false"/>
+    <arg name="teleop" value="false"/>
+    <arg name="start_controller" value="true"/>
+    <arg name="enable_realsense" value="true"/>
+    <arg name="enable_referee_odom" value="false"/>
+    <arg name="enable_ground_truth" value="false"/>
+    <arg name="realsense_width" value="320"/>
+    <arg name="realsense_height" value="240"/>
+    <arg name="realsense_update_rate" value="5.0"/>
+    <arg name="sensor_warmup_seconds" value="25.0"/>
+    <arg name="slam_startup_delay_seconds" value="8.0"/>
+    <arg name="controller_dt" value="0.004"/>
+    <arg name="controller_cpu_affinity" value=""/>
+    <arg name="controller_startup_timeout" value="300"/>
+    <arg name="controller_spawner_timeout" value="300"/>
+    <arg name="rl_policy" value="$(arg rl_policy)"/>
+    <arg name="rl_device" value="cuda"/>
+    <arg name="robot_x" value="$(arg robot_spawn_x)"/>
+    <arg name="robot_y" value="$(arg robot_spawn_y)"/>
+    <arg name="robot_z" value="$(arg robot_spawn_z)"/>
+    <arg name="robot_yaw" value="$(arg robot_spawn_yaw)"/>
+  </include>
+
+  <node pkg="simenv_competitor" type="open_mapping_entrance.py"
+        name="open_first_floor_elevator_structured" output="screen">
+    <param name="door_id" value="elevator_floor_0"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="fastlio_voxel_mapper"
+        name="structured_voxel_mapper" output="screen" required="true">
+    <param name="cloud_topic" value="/cloud_registered"/>
+    <param name="odom_topic" value="/Odometry"/>
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="resolution" value="0.15"/>
+    <param name="minimum_range" value="0.30"/>
+    <param name="maximum_range" value="30.0"/>
+    <param name="maximum_scan_points" value="12000"/>
+    <param name="save_every_updates" value="20"/>
+    <param name="projection_topic" value="/simenv/voxel_floor_projection"/>
+    <param name="projection_every_updates" value="5"/>
+    <param name="projection_min_height" value="-0.05"/>
+    <param name="projection_max_height" value="1.20"/>
+  </node>
+
+  <include file="$(find simenv_competitor)/launch/goal_executor.launch">
+    <arg name="output_dir" value="$(arg output_dir)/executor"/>
+    <arg name="start_rl_mode" value="true"/>
+    <arg name="shutdown_on_result" value="false"/>
+    <arg name="command_topic" value="/simenv/desired_cmd_vel"/>
+    <arg name="cancel_topic" value="/simenv/cancel_exploration_goal"/>
+    <arg name="arm_rl_guard" value="true"/>
+    <arg name="enable_rl_guard" value="true"/>
+    <arg name="guard_pose_topic" value="/Odometry"/>
+    <arg name="goal_tolerance" value="0.30"/>
+  </include>
+
+  <node pkg="simenv_competitor" type="structured_exploration_manager.py"
+        name="structured_exploration_manager" output="screen" required="true">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="map_file" value="$(arg output_dir)/voxel_map.bt"/>
+    <param name="statistics_file" value="$(arg output_dir)/map_statistics.json"/>
+    <param name="odom_topic" value="/Odometry"/>
+    <param name="grid_topic" value="/simenv/voxel_floor_projection"/>
+    <param name="depth_topic" value="/real_sense/depth/image_raw"/>
+    <param name="maximum_duration" value="$(arg maximum_duration)"/>
+    <param name="require_goal_result_identity" value="true"/>
+    <param name="cancel_goal_topic" value="/simenv/cancel_exploration_goal"/>
+    <param name="cancel_ack_timeout" value="1.0"/>
+    <param name="use_depth_door_confirmation" value="true"/>
+    <param name="use_rgb_semantic_confirmation" value="false"/>
+    <param name="corridor_width_min" value="1.0"/>
+    <param name="corridor_width_max" value="4.0"/>
+    <param name="corridor_forward_depth_min" value="4.0"/>
+    <param name="parallel_wall_angle_tolerance_deg" value="15.0"/>
+    <param name="temporal_confirmation_frames" value="3"/>
+    <param name="door_width_min" value="0.8"/>
+    <param name="door_width_max" value="2.0"/>
+    <param name="door_confirmation_frames" value="3"/>
+    <param name="door_position_tolerance" value="0.35"/>
+    <param name="door_angle_tolerance_deg" value="15.0"/>
+    <param name="door_outside_distance" value="0.85"/>
+    <param name="door_inside_distance" value="1.50"/>
+    <param name="door_inside_confirmation_samples" value="8"/>
+    <param name="door_entry_max_attempts" value="3"/>
+    <param name="inside_depth_min" value="1.0"/>
+    <param name="room_goal_baseline_min" value="0.8"/>
+    <param name="path_sample_spacing" value="0.075"/>
+    <param name="corridor_network_clearance" value="0.40"/>
+    <param name="initial_unknown_footprint_grace" value="0.45"/>
+    <param name="enable_room_information_gain"
+           value="$(arg enable_room_information_gain)"/>
+    <param name="room_unknown_decay_lambda"
+           value="$(arg room_unknown_decay_lambda)"/>
+    <param name="door_detection_evaluation_only"
+           value="$(arg door_detection_evaluation_only)"/>
+  </node>
+
+</launch>

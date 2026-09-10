@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+PACKAGE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ASSET_ROOT="$(cd "$PACKAGE_ROOT/../.." && pwd)"
+exec "$ASSET_ROOT/runtime_bin/fastlio_mapping" "$@"

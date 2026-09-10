@@ -1,0 +1,172 @@
+<launch>
+  <!--
+    Manual SLAM debugging only:
+      Gazebo + A1 controller + FAST-LIO2 + RViz.
+    This launch deliberately contains no mission manager, move_base, DWA,
+    frontier/TARE explorer, room detector, or danger detector.
+  -->
+  <!-- Preserve a real forwarded display when present; AutoDL otherwise uses
+       the workspace Xvfb display prepared by scripts/env.sh. -->
+  <env name="DISPLAY" value="$(optenv DISPLAY :99)"/>
+  <env name="LIBGL_ALWAYS_SOFTWARE" value="$(optenv LIBGL_ALWAYS_SOFTWARE 1)"/>
+  <arg name="world_file"
+       default="$(find simenv_competitor)/../../generated_building/competition_scene.world"/>
+  <arg name="door_config"
+       default="$(find simenv_competitor)/../../generated_building/door_config.yaml"/>
+  <arg name="elevator_config"
+       default="$(find simenv_competitor)/../../generated_building/elevator_config.yaml"/>
+  <arg name="gui" default="true"/>
+  <arg name="rviz" default="true"/>
+  <arg name="teleop" default="true"/>
+  <arg name="start_controller" default="true"/>
+  <arg name="sensor_warmup_seconds" default="5.0"/>
+  <arg name="slam_startup_delay_seconds" default="0.0"/>
+  <arg name="gait_profile" default="trot"/>
+  <arg name="gait_period" default="0.55"/>
+  <arg name="gait_stance_ratio" default="0.65"/>
+  <arg name="gait_height" default="0.08"/>
+  <arg name="controller_dt" default="0.002"/>
+  <arg name="controller_cpu_affinity" default="0,1,2,3"/>
+  <arg name="controller_startup_timeout" default="150"/>
+  <arg name="controller_clock_stall_timeout" default="12.0"/>
+  <arg name="controller_spawner_timeout" default="120"/>
+  <arg name="controller_safe_paused_start" default="true"/>
+  <arg name="rl_policy"
+       default="$(find unitree_guide)/../../logs/policy_act_inference_plane.pt"/>
+  <arg name="rl_device" default="auto"/>
+  <arg name="rl_plane_action_scale" default="0.25"/>
+  <arg name="enable_realsense" default="true"/>
+  <arg name="enable_referee_odom" default="true"/>
+  <arg name="enable_ground_truth" default="true"/>
+  <arg name="enable_building_control" default="true"/>
+  <arg name="open_mapping_entrance" default="true"/>
+  <arg name="enable_mapping_visualizer" default="true"/>
+  <arg name="enable_fastlio" default="true"/>
+  <arg name="enable_livox" default="true"/>
+  <arg name="realsense_width" default="640"/>
+  <arg name="realsense_height" default="480"/>
+  <arg name="realsense_update_rate" default="10.0"/>
+  <arg name="enable_front_camera" default="false"/>
+  <arg name="front_camera_width" default="640"/>
+  <arg name="front_camera_height" default="480"/>
+  <arg name="front_camera_update_rate" default="5.0"/>
+  <arg name="robot_x" default="0.0"/>
+  <arg name="robot_y" default="-3.2"/>
+  <arg name="robot_z" default="0.6"/>
+  <arg name="robot_yaw" default="1.5708"/>
+
+  <param name="use_sim_time" value="true"/>
+
+  <include file="$(optenv SIMENV_ASSET_ROOT)/src/unitree_guide/unitree_guide/unitree_guide/launch/multi_floor_gazeboSim.launch">
+    <arg name="world_file" value="$(arg world_file)"/>
+    <arg name="gui" value="$(arg gui)"/>
+    <arg name="paused" value="$(arg controller_safe_paused_start)"/>
+    <arg name="rname" value="a1"/>
+    <arg name="robot_x" value="$(arg robot_x)"/>
+    <arg name="robot_y" value="$(arg robot_y)"/>
+    <arg name="robot_z" value="$(arg robot_z)"/>
+    <arg name="robot_yaw" value="$(arg robot_yaw)"/>
+    <arg name="enable_sensor_data" value="true"/>
+    <arg name="enable_livox" value="$(arg enable_livox)"/>
+    <arg name="enable_livox_imu" value="$(arg enable_livox)"/>
+    <arg name="enable_realsense" value="$(arg enable_realsense)"/>
+    <arg name="realsense_width" value="$(arg realsense_width)"/>
+    <arg name="realsense_height" value="$(arg realsense_height)"/>
+    <arg name="realsense_update_rate" value="$(arg realsense_update_rate)"/>
+    <arg name="enable_front_camera" value="$(arg enable_front_camera)"/>
+    <arg name="front_camera_width" value="$(arg front_camera_width)"/>
+    <arg name="front_camera_height" value="$(arg front_camera_height)"/>
+    <arg name="front_camera_update_rate"
+         value="$(arg front_camera_update_rate)"/>
+    <!-- Controller feedback only; no SLAM node subscribes to these topics. -->
+    <arg name="enable_referee_odom" value="$(arg enable_referee_odom)"/>
+    <arg name="enable_ground_truth" value="$(arg enable_ground_truth)"/>
+    <arg name="enable_joy_node" value="false"/>
+    <arg name="enable_pointcloud_converter" value="false"/>
+    <arg name="pointcloud_use_ground_truth_odom" value="false"/>
+    <arg name="controller_spawner_timeout" value="$(arg controller_spawner_timeout)"/>
+    <arg name="controller_model_sim_settle" value="0.0"/>
+  </include>
+
+  <node if="$(arg controller_safe_paused_start)"
+        pkg="simenv_competitor" type="unpause_after_controllers.py"
+        name="unpause_after_controllers" output="screen">
+    <param name="controller_namespace" value="/a1_gazebo"/>
+    <param name="timeout" value="$(arg controller_spawner_timeout)"/>
+    <param name="load_window_seconds" value="2.0"/>
+  </node>
+
+  <!-- The generated world stores movable door panels at their closed poses;
+       the control server applies initial/open poses through Gazebo services.
+       Opening the public entrance is environment setup, not exploration. -->
+  <node if="$(arg enable_building_control)" pkg="building_generator_classic"
+        type="building_generator_classic_control"
+        name="building_control" output="screen"
+        args="--door-config $(arg door_config) --elevator-config $(arg elevator_config)"/>
+  <node if="$(arg open_mapping_entrance)" pkg="simenv_competitor" type="open_mapping_entrance.py"
+        name="open_mapping_entrance" output="screen"/>
+
+  <node if="$(arg start_controller)" pkg="simenv_competitor"
+        type="classic_trotting_controller.py"
+        name="junior_ctrl" output="screen" required="true">
+    <!-- Hold classical fixed-stand until the teleop requests Trotting. -->
+    <env name="UNITREE_AUTO_START_RL" value="false"/>
+    <env name="UNITREE_AUTO_HOLD_STAND" value="true"/>
+    <env name="UNITREE_CPU_AFFINITY" value="$(arg controller_cpu_affinity)"/>
+    <env name="UNITREE_CTRL_DT" value="$(arg controller_dt)"/>
+    <env name="UNITREE_STARTUP_TIMEOUT" value="$(arg controller_startup_timeout)"/>
+    <env name="UNITREE_CLOCK_STALL_TIMEOUT" value="$(arg controller_clock_stall_timeout)"/>
+    <env name="UNITREE_RL_POLICY" value="$(arg rl_policy)"/>
+    <env name="UNITREE_RL_DEVICE" value="$(arg rl_device)"/>
+    <env name="UNITREE_RL_PLANE_ACTION_SCALE"
+         value="$(arg rl_plane_action_scale)"/>
+    <env name="UNITREE_DISABLE_AMP_LOG" value="1"/>
+    <!-- Room0 diagnostics can select the simulator's safer crawl profile;
+         manual mapping keeps the classic trot defaults above. -->
+    <env name="UNITREE_GAIT_PROFILE" value="$(arg gait_profile)"/>
+    <env name="UNITREE_GAIT_PERIOD" value="$(arg gait_period)"/>
+    <env name="UNITREE_GAIT_STANCE_RATIO" value="$(arg gait_stance_ratio)"/>
+    <env name="UNITREE_GAIT_HEIGHT" value="$(arg gait_height)"/>
+    <env name="COMPETITION_RESET_Z_OFFSET" value="0.05"/>
+    <env name="LD_LIBRARY_PATH"
+         value="/root/autodl-tmp/deps/libtorch/lib:/opt/ros/noetic/lib:$(optenv LD_LIBRARY_PATH)"/>
+  </node>
+
+  <node if="$(arg teleop)" pkg="simenv_competitor"
+        type="manual_slam_teleop.py" name="manual_slam_teleop"
+        output="screen">
+    <param name="linear_scale" value="0.35"/>
+    <param name="angular_scale" value="0.45"/>
+    <param name="repeat_rate" value="20.0"/>
+    <param name="stand_seconds" value="5.0"/>
+    <param name="input_device" value="/dev/tty"/>
+  </node>
+
+  <include if="$(arg enable_fastlio)"
+           file="$(find fast_lio)/launch/simenv_mid360.launch">
+    <arg name="publish_path" value="true"/>
+    <!-- Gazebo publishes all rays at one instant; use FAST-LIO's simulation
+         handler instead of inferring a spinning Velodyne acquisition. -->
+    <arg name="lidar_type" value="4"/>
+    <arg name="sensor_warmup_seconds" value="$(arg sensor_warmup_seconds)"/>
+    <arg name="startup_delay_seconds" value="$(arg slam_startup_delay_seconds)"/>
+  </include>
+
+  <!-- FAST-LIO calls its world frame camera_init; map is an exact identity
+       alias so RViz has the requested conventional Fixed Frame. -->
+  <node if="$(arg enable_fastlio)"
+        pkg="tf2_ros" type="static_transform_publisher"
+        name="map_to_fastlio_origin"
+        args="0 0 0 0 0 0 map camera_init"/>
+
+  <node if="$(arg enable_mapping_visualizer)" pkg="simenv_competitor" type="fastlio_mapping_visualizer.py"
+        name="fastlio_mapping_visualizer" output="screen" required="true">
+    <param name="voxel_size" value="0.10"/>
+    <param name="maximum_voxels" value="350000"/>
+    <param name="publish_rate" value="1.0"/>
+  </node>
+
+  <node if="$(arg rviz)" pkg="rviz" type="rviz" name="fastlio_mapping_rviz"
+        args="-d $(find simenv_competitor)/config/rviz/fastlio_mapping.rviz"
+        output="screen"/>
+</launch>

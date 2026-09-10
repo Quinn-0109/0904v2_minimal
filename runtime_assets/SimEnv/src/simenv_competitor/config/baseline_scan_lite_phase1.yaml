@@ -1,0 +1,234 @@
+task_mode: baseline_fastlio_exploration
+
+enable_structured_exploration: false
+enable_room_detection: false
+enable_room_state_machine: false
+enable_door_detection: false
+enable_door_attention: false
+enable_door_commit: false
+enable_door_alignment: false
+enable_cross_door: false
+enable_room_information_gain: false
+enable_room_recovery: false
+enable_scan_lite_refiner: true
+
+baseline_voxel_mapper:
+  cloud_topic: /cloud_registered
+  odom_topic: /Odometry
+  resolution: 0.15
+  minimum_range: 0.30
+  maximum_range: 30.0
+  maximum_scan_points: 12000
+  save_every_updates: 0
+  initial_save_updates: 20
+  projection_topic: /simenv/voxel_floor_projection
+  projection_every_updates: 5
+  projection_min_height: -0.05
+  projection_max_height: 1.20
+  # Exact voxel totals require a leaf traversal; use 0.5 Hz to bound overhead.
+  telemetry_map_rate_hz: 0.0
+  map_statistics_warn_ms: 50.0
+
+baseline_exploration_manager:
+  odom_topic: /Odometry
+  cloud_topic: /cloud_registered
+  goal_topic: /exploration_goal
+  startup_timeout: 120.0
+  planner_timeout: 35.0
+  goal_timeout: 180.0
+  maximum_duration: 400.0
+  maximum_goals: 40
+  maximum_consecutive_failures: 3
+  minimum_map_updates: 1
+  minimum_free_voxels: 5000
+  astar_clearance: 0.30
+  reached_tolerance: 0.15
+  waypoint_spacing: 0.30
+  auto_generate_visualization: true
+  # Room-truth-free depth/breadth scheduling.  A spatial region gets one
+  # primary/depth goal and at most two breadth goals before FUEL must select a
+  # frontier outside the exclusion circle (or return to the saved entry).
+  enable_depth_breadth_scheduler: true
+  depth_breadth_region_radius: 5.0
+  # A completed 5 m patch in a 14 m-wide room needs a larger exclusion to
+  # force the next frontier into another room rather than 4.01 m away.
+  depth_breadth_exclusion_radius: 5.5
+  depth_breadth_maximum_goals: 3
+  depth_breadth_maximum_path_length: 10.0
+  depth_breadth_maximum_seconds: 90.0
+  # Door-free local-region completion. Unknown connected through an opening
+  # remains debt; observed walls stop the coverage flood.
+  enable_region_coverage_completion: true
+  region_coverage_minimum_ratio: 0.88
+  region_coverage_maximum_unknown_m2: 1.50
+  region_coverage_minimum_known_m2: 6.0
+  region_coverage_stable_cycles: 2
+  # A room may look largely free from the corridor through an open doorway.
+  # Such remote rays count as valid observations, but cannot complete a
+  # region until the robot has physically crossed into the wider area,
+  # penetrated beyond the entry and completed a sensing goal there.
+  region_coverage_minimum_entry_depth: 1.25
+  region_coverage_minimum_post_entry_goals: 1
+  # Layout-free proactive side-door recognition. ENTRY commits through the
+  # door; G1 observes near the safe room centre and G3/G4 sample both sides.
+  # The visit reserves exit time inside a strict 75 s budget.
+  # Simulator truth and layout metadata remain offline-only.
+  enable_lightweight_room_scheduler: false
+  # 房门仅由走廊侧扫描接管；禁止把普通 FUEL 路径中的家具缝隙当作门。
+  # Backstop the proactive side scan: a generic FUEL path crossing a verified
+  # aperture is converted to ENTRY before locomotion can enter the room.
+  enable_planned_room_path_intercept: false
+  room_trajectory_spacing: 0.20
+  room_doorway_width_min: 0.75
+  room_doorway_width_max: 2.30
+  room_aperture_probe_range: 4.0
+  # Keep doorway geometry local, but let room views span the approximately
+  # 8 m depth and 14 m width visible in the seed-77 first-floor rooms.
+  room_depth_probe_range: 8.0
+  room_side_probe_range: 7.5
+  room_expansion_margin: 0.80
+  room_confirmation_depth: 1.10
+  # Seed-77 can expose a second false portal at the other edge of the same
+  # corridor opening (~1.97 m away); physical room doors are much farther.
+  room_duplicate_door_radius: 2.50
+  # Reject a revisited physical portal when FAST-LIO has translated it into a
+  # new map location.  The check compares only robot-frame LiDAR silhouettes;
+  # it never uses Gazebo truth or layout metadata.
+  room_revisit_scan_enabled: true
+  room_revisit_scan_bins: 48
+  room_revisit_scan_min_bins: 16
+  room_revisit_scan_max_median_error_m: 0.32
+  room_revisit_scan_max_width_delta_m: 0.35
+  room_goal_clearance: 0.38
+  room_entry_depth: 1.50
+  room_side_goal_depth: 3.00
+  room_near_wall_margin: 0.65
+  room_minimum_goal_separation: 0.90
+  room_exit_offset: 0.90
+  room_exit_retry_limit: 2
+  room_entry_retry_limit: 2
+  room_door_confirmation_count: 3
+  room_door_takeover_distance: 5.0
+  # 门框常在经过后才被 OctoMap 补全；允许回看最近 6 m 的走廊。
+  room_door_lookbehind_distance: 6.0
+  room_door_approach_offset: 0.60
+  room_visit_budget_seconds: 75.0
+  # 0.35 m/s 下深度/侧向目标需约 15--20 s；只在 8 s 无进展时提前失败。
+  room_goal_timeout_seconds: 28.0
+  room_portal_timeout_seconds: 20.0
+  # ENTRY may contain door-outside, centre and inside mandatory waypoints.
+  # Progress is monitored every 8 s; 30 s is only the total safety cap.
+  room_entry_timeout_seconds: 45.0
+  room_door_cooldown_seconds: 90.0
+  room_door_evidence_retry_seconds: 3.0
+  # ENTRY/observations/RETURN/EXIT share this reserve.  After one valid room
+  # observation, far/left/right wall evidence and occlusion-aware map coverage
+  # may terminate the visit without walking to both side targets.
+  room_exit_reserve_seconds: 20.0
+  room_exit_progress_timeout_seconds: 8.0
+  # 观测点不要求达到导航的 0.15 m 精度；仍校验房内深度和左右侧别。
+  # Goal Executor can stop a few centimetres inside its accepted planar
+  # arrival envelope.  Keep room semantics just above that envelope so an
+  # otherwise valid physical view is not lost to millimetre rounding; the
+  # independent two-view separation/geometry contract remains unchanged.
+  room_semantic_completion_tolerance: 0.85
+  room_side_goal_retry_limit: 2
+  room_coverage_minimum_ratio: 0.90
+  room_coverage_maximum_unknown_m2: 2.00
+  room_coverage_maximum_shadow_m2: 1.25
+  room_coverage_minimum_observations: 1
+  # Must match FAST-LIO det_range and baseline_voxel_mapper.maximum_range.
+  room_lidar_effective_range: 30.0
+  # These are sensing viewpoints, not a requirement to traverse room extents.
+  room_maximum_center_depth: 3.80
+  room_maximum_side_lateral: 3.00
+  corridor_minimum_advance: 2.5
+  corridor_recent_exclusion: 1.5
+  # Replan at least once per 2.5 m so a newly observed side door cannot be
+  # crossed inside one long high-level goal without doorway takeover.
+  corridor_forward_distance: 2.5
+  corridor_reversal_limit: 1
+  # At the physical end of an incompletely searched corridor, reverse once
+  # for an online doorway re-observation instead of consuming the entire
+  # remaining budget in stationary forward rescans.
+  enable_terminal_missing_room_retrace: true
+  terminal_missing_room_rescan_limit: 2
+  # FUEL otherwise strongly prefers the large frontier at the far end of a
+  # long corridor. A lateral frontier beyond a corridor wall is unobserved
+  # coverage debt: enter an A*-verified free point on that side before
+  # continuing toward the corridor end. This is not door detection.
+  enable_corridor_side_coverage_priority: true
+  corridor_side_entry_depth: 2.10
+  corridor_side_frontier_minimum_lateral: 1.20
+  # Symmetric along the unoriented corridor axis: a PCA axis may be +axis or
+  # -axis, so both signs within this local station window are equivalent.
+  corridor_side_frontier_maximum_longitudinal: 3.00
+  # Ignore the broad initial lobby; establish and advance along the building
+  # axis before prioritizing side regions.
+  corridor_side_minimum_mission_progress: 7.50
+  # Door openings temporarily make the measured cross-width large. Remaining
+  # near the established centreline is still corridor transit; physical entry
+  # requires an actual lateral crossing.
+  corridor_centerline_membership_tolerance: 0.75
+  # Persist door-free lateral branches by their corridor station and side.
+  # After returning from one side, an unentered opposite branch at the same
+  # station outranks the far corridor frontier.
+  enable_corridor_branch_scheduler: true
+  # FAST-LIO and frontier centroids can move the estimated station by roughly
+  # 2--2.5 m during a room visit. Merge those observations dynamically; an
+  # independently close entry target is also sufficient evidence.
+  corridor_branch_station_tolerance: 3.00
+  corridor_branch_entry_target_tolerance: 0.90
+  # Map-based long-term visit memory. Remove the central corridor strip, then
+  # compare side-area free-space connected components in FAST-LIO coordinates.
+  # This catches the same room even when its frontier station/entry target
+  # drifts enough to receive a different branch ID.
+  visited_region_component_minimum_lateral: 0.75
+  visited_region_sample_spacing: 0.75
+  visited_region_maximum_station_separation: 6.0
+  # First-floor discovery takes priority over improving a partially covered
+  # room. This prevents a 45 s cooldown from causing lower-room re-entry before
+  # the robot has progressed along the corridor to unseen rooms.
+  corridor_branch_retry_cooldown_seconds: 900.0
+  # The stored corridor entry may become occupied after later LiDAR updates.
+  # Relocate normal returns locally; if all frontiers disappear while still
+  # inside a side region, widen the safe reachable exit search before stopping.
+  region_return_relocation_radius: 1.50
+  region_exit_recovery_radius: 3.00
+  region_exit_recovery_limit: 2
+  # If commanded motion makes no progress inside a room, first retreat over
+  # poses the robot physically occupied before retrying the long door route.
+  region_stall_backtrack_distance: 1.20
+  region_stall_backtrack_spacing: 0.30
+  region_stall_backtrack_limit: 3
+  # Regional completion counts only rays whose sensor origin is physically
+  # inside the side region. Remote rays from the corridor remain useful for
+  # mapping but cannot mark that region covered.
+  post_entry_lidar_maximum_rays: 1600
+  room_target_count: 4
+  mission_home_tolerance: 0.50
+  trajectory_history_spacing: 0.75
+  fuel_execution_duplicate_radius: 0.90
+  preserve_planner_diagnostics: true
+  enable_scan_lite_refiner: true
+  body_front_offset: 0.06675
+  body_rear_offset: -0.06675
+  body_collision_radius: 0.11772
+  body_min_height: -0.057
+  body_max_height: 0.057
+  body_safety_margin: 0.05
+  scan_lite_unknown_policy: penalize
+  refinement_search_radius: 0.60
+  refinement_search_step: 0.15
+  enable_waypoint_simplification: true
+  waypoint_collinearity_tolerance: 0.08
+  waypoint_max_direct_connect_distance: 2.50
+  waypoint_max_yaw_change: 0.45
+  scan_lite_failure_policy: request_astar_replan
+
+baseline_telemetry:
+  odom_topic: /Odometry
+  command_topic: /cmd_vel
+  telemetry_trajectory_rate_hz: 5.0
+  telemetry_flush_every: 10
+  truth_motion_relay_rate_hz: 50.0

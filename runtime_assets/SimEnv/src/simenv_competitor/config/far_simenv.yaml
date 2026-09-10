@@ -1,0 +1,51 @@
+# Official FAR Planner parameters adapted to the A1/FAST-LIO frame.
+# Parameter names are those consumed by far_planner/FARMaster.
+main_run_freq                           : 2.5
+voxel_dim                               : 0.15
+robot_dim                               : 0.42
+vehicle_height                          : 0.45
+sensor_range                            : 12.0
+terrain_range                           : 15.0
+local_planner_range                     : 5.0
+visualize_ratio                         : 0.75
+is_viewpoint_extend                     : true
+is_multi_layer                          : false
+is_opencv_visual                        : false
+is_static_env                           : true
+is_pub_boundary                         : false
+is_debug_output                         : false
+is_attempt_autoswitch                   : true
+world_frame                             : map
+
+GraphMsger/robot_id                     : 1
+
+MapHandler/floor_height                 : 2.0
+MapHandler/cell_length                  : 5.0
+MapHandler/map_grid_max_length          : 1000.0
+MapHandler/map_grad_max_height          : 100.0
+
+Util/angle_noise                        : 15.0
+Util/accept_max_align_angle             : 4.0
+Util/obs_inflate_size                   : 2
+Util/new_intensity_thred                : 2.0
+Util/terrain_free_Z                     : 0.2
+Util/dyosb_update_thred                 : 4
+Util/new_point_counter                  : 5
+Util/dynamic_obs_dacay_time             : 10.0
+Util/new_points_decay_time              : 1.0
+
+Graph/connect_votes_size                : 10
+Graph/clear_dumper_thred                : 4
+Graph/node_finalize_thred               : 6
+Graph/filter_pool_size                  : 12
+
+CDetector/resize_ratio                  : 3.0
+CDetector/filter_count_value            : 3
+CDetector/is_save_img                   : false
+CDetector/img_folder_path               : /tmp/far_planner
+
+GPlanner/converge_distance              : 0.35
+GPlanner/goal_adjust_radius             : 2.0
+GPlanner/free_counter_thred             : 7
+GPlanner/reach_goal_vote_size           : 3
+GPlanner/path_momentum_thred            : 3

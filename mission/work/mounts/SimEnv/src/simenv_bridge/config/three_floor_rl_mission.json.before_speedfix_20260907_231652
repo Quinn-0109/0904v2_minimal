@@ -1,0 +1,623 @@
+{
+  "schema": "scanplanner_three_floor_rl_mission_v1",
+  "description": "Door-aligned, precomputed three-floor room tour with RL gait switching and a final return to the first-floor lobby.",
+  "room_scan_minimum_furniture_clearance_m": 0.5,
+  "runtime": {
+    "world_file": "/workspace/SimEnv/generated_building/elevator_three_floor_debug/competition_scene_with_dangers.world",
+    "layout_metadata": "/workspace/SimEnv/generated_building/elevator_three_floor_debug/layout_metadata.json",
+    "stair_model_sdf": "/workspace/SimEnv/generated_building/elevator_three_floor_debug/model.sdf",
+    "plane_policy": "/workspace/SimEnv/src/unitree_guide/logs/policy_act_inference_plane.pt",
+    "stair_policy": "/workspace/SimEnv/src/unitree_guide/logs/policy_act_inference_stair.pt"
+  },
+  "spawn_pose": {
+    "frame": "world",
+    "x": 0.0,
+    "y": -3.2,
+    "z": 0.31,
+    "gazebo_insertion_z": 0.6,
+    "yaw": 1.5708,
+    "xy_tolerance_m": 0.35,
+    "z_tolerance_m": 0.25,
+    "description": "Below the main-entrance apron, facing into the lobby"
+  },
+  "task_timing": {
+    "maximum_exploration_duration_sec": 600.0,
+    "time_basis": "ros_simulation_time",
+    "preparation_excluded": true,
+    "start_phase": "EXPLORATION_STARTED",
+    "output_file": "mission_stage_timing.json",
+    "required_stages": [
+      "entrance_step_stair_rl",
+      "floor_1_exploration",
+      "stair_f1_to_f2",
+      "floor_2_exploration",
+      "stair_f2_to_f3",
+      "floor_3_exploration",
+      "stair_f3_to_f1_descent",
+      "return_to_first_floor_lobby"
+    ]
+  },
+  "red_ball_detection": {
+    "output_file": "red_ball_detections.json",
+    "minimum_confirmed_detections": 3,
+    "maximum_confirmed_detections": 6,
+    "online_truth_forbidden": true,
+    "confirmation_frames": 3,
+    "merge_radius_m": 1.1,
+    "maximum_range_m": 8.0,
+    "expected_scene_red_balls": null,
+    "expected_red_balls_per_floor": null,
+    "expected_total_range": [
+      3,
+      6
+    ],
+    "require_all_scene_red_balls": true,
+    "matching_tolerance_m": 1.5
+  },
+  "scene_randomization": {
+    "floor_seeds": [
+      1103,
+      2207,
+      3301
+    ],
+    "red_ball_total_minimum": 3,
+    "red_ball_total_maximum": 6,
+    "red_ball_radius_m": 0.15,
+    "red_ball_wall_margin_m": 0.65,
+    "red_ball_furniture_clearance_m": 0.45,
+    "red_ball_minimum_separation_m": 1.35,
+    "red_ball_line_of_sight_clearance_m": 0.35,
+    "red_ball_minimum_projected_gap_rad": 0.05235987755982989,
+    "red_ball_distractor_projected_gap_rad": 0.08726646259971647,
+    "recording_camera_vertical_pixels": 480,
+    "recording_camera_mount_forward_m": 0.3,
+    "recording_camera_mount_height_m": 0.08,
+    "robot_nominal_base_height_m": 0.31,
+    "red_ball_camera_pitch_uncertainty_deg": 3.0,
+    "red_ball_vertical_edge_margin_deg": 2.0,
+    "furniture_room_jitter_x_m": 0.45,
+    "furniture_room_jitter_y_m": 0.65,
+    "furniture_item_jitter_m": 0.12,
+    "furniture_yaw_jitter_rad": 0.18,
+    "furniture_wall_margin_m": 0.2,
+    "scan_point_minimum_furniture_clearance_m": 0.65,
+    "door_scan_furniture_reserve_m": 0.78,
+    "scan_path_minimum_furniture_clearance_m": 0.5,
+    "scan_path_planning_reserve_m": 0.1,
+    "scan_path_physical_wall_reserve_m": 0.2,
+    "physical_viewpoint_minimum_separation_m": 2.45,
+    "physical_viewpoint_fallback_minimum_separation_m": 2.3,
+    "physical_viewpoint_actual_minimum_separation_m": 2.2,
+    "physical_viewpoint_fallback_actual_minimum_separation_m": 2.1,
+    "minimum_dual_view_parallax_deg": 30.0,
+    "minimum_dual_view_robust_fraction": 0.005,
+    "dual_view_scoring_grid_stride": 4,
+    "open_small_occluder_side_margin_m": 0.35,
+    "physical_viewpoint_scan_turn_rad": 3.7551914292,
+    "physical_viewpoint_scan_settle_sec": 0.05,
+    "physical_viewpoint_navigation_speed": 0.9,
+    "physical_viewpoint_transit_speed": 0.9,
+    "physical_corridor_cruise_speed": 2.25,
+    "physical_corridor_maximum_lateral_speed_mps": 0.45,
+    "physical_plane_distance_gain": 1.45,
+    "physical_room_pass_through_distance_gain": 2.2,
+    "physical_stair_side_opening_speed_mps": 1.85,
+    "physical_stair_side_opening_maximum_lateral_speed_mps": 0.35,
+    "physical_stair_handoff_maximum_yaw_rate_rad_s": 1.0,
+    "physical_stair_side_opening_settle_sec": 0.2,
+    "physical_viewpoint_maximum_lateral_speed_mps": 0.55,
+    "physical_viewpoint_maximum_yaw_rate_rad_s": 1.5,
+    "open_near_view_depth_fraction_min": 0.35,
+    "open_near_view_depth_fraction_max": 0.5,
+    "open_near_view_min_depth_m": 2.5,
+    "open_near_view_max_depth_m": 4.0,
+    "open_deep_view_depth_fraction_min": 0.55,
+    "open_deep_view_depth_fraction_max": 0.7,
+    "open_deep_view_min_depth_m": 4.0,
+    "open_deep_view_max_depth_m": 5.5,
+    "open_view_central_width_fraction": 0.6,
+    "room_view_line_angle_min_deg": 20.0,
+    "room_view_line_angle_max_deg": 70.0,
+    "room_view_fallback_central_width_fraction": 0.7,
+    "room_view_fallback_line_angle_min_deg": 15.0,
+    "room_view_fallback_line_angle_max_deg": 75.0,
+    "room_view_minimum_depth_delta_m": 1.0,
+    "room_view_minimum_lateral_delta_m": 0.8,
+    "room_view_arrival_robustness_margin_m": 0.14,
+    "room_view_angle_robustness_margin_deg": 4.0,
+    "room_view_obstacle_clearance_m": 0.72,
+    "room_oblique_candidate_limit_per_side": 24,
+    "open_oblique_candidate_limit_per_side": 8,
+    "deep_obstacle_candidate_limit_per_side": 12,
+    "front_obstacle_candidate_limit_per_side": 96,
+    "room_oblique_path_resolution_m": 0.55,
+    "room_internal_path_bend_tolerance_m": 0.12,
+    "large_obstacle_min_area_m2": 1.2,
+    "large_obstacle_min_dimension_m": 1.8,
+    "large_obstacle_path_inflation_m": 0.6,
+    "large_obstacle_minimum_depth_m": 0.6,
+    "large_obstacle_maximum_depth_m": 5.2,
+    "classification_centreline_half_width_m": 0.85,
+    "classification_shallow_front_limit_m": 3.2,
+    "classification_shallow_side_influence_m": 2.45,
+    "room_door_crossing_speed": 0.9,
+    "room_door_outside_clearance_m": 0.65,
+    "room_door_maximum_yaw_rate": 0.45,
+    "red_ball_route_clearance_m": 0.55,
+    "red_ball_view_range_margin_m": 0.25,
+    "red_ball_reliable_maximum_range_m": 4.2,
+    "red_ball_robust_minimum_center_range_m": 1.15,
+    "red_ball_robust_maximum_center_range_m": 3.8,
+    "red_ball_arrival_position_uncertainty_m": 0.12,
+    "red_ball_arrival_yaw_uncertainty_deg": 8.0,
+    "red_ball_minimum_projected_radius_px": 10.0,
+    "recording_camera_horizontal_pixels": 640,
+    "scan_pair_maximum_local_route_m": 5.4,
+    "scan_pair_minimum_combined_turn_rad": 2.8,
+    "scan_pair_maximum_combined_turn_rad": 3.65,
+    "scan_point_minimum_turn_rad": 0.4,
+    "scan_point_maximum_turn_rad": 2.65,
+    "scan_candidate_depths_m": [
+      0.7,
+      0.85,
+      1.0,
+      1.15,
+      1.3,
+      1.45
+    ],
+    "scan_candidate_maximum_y_offset_m": 0.6,
+    "scan_candidate_y_offset_step_m": 0.2,
+    "scan_turn_rad": 1.9,
+    "scan_yaw_rate_rad_s": 2.4,
+    "scan_pause_interval_rad": 0.0,
+    "scan_pause_dwell_sec": 0.0,
+    "alternate_scan_turn_directions": true,
+    "scan_a_settle_sec": 0.25,
+    "scan_b_settle_sec": 0.2,
+    "last_room_scan_settle_sec": 0.3,
+    "scan_a_navigation_speed": 0.5,
+    "scan_b_navigation_speed": 0.35,
+    "red_ball_scan_minimum_range_m": 0.75,
+    "red_ball_scan_maximum_range_m": 7.0,
+    "red_ball_scan_heading_margin_rad": 0.22,
+    "camera_horizontal_fov_rad": 1.0466666666666666,
+    "scan_start_yaw_uncertainty_rad": 0.18,
+    "scan_coverage_grid_resolution_m": 0.4,
+    "scan_coverage_minimum_range_m": 0.75,
+    "scan_coverage_maximum_range_m": 6.5,
+    "minimum_room_scan_coverage_fraction": 0.33,
+    "minimum_open_diagonal_coverage_fraction": 0.5,
+    "minimum_robust_detection_fraction": 0.05,
+    "coverage_time_floor_speed_mps": 1.65,
+    "coverage_time_speed_scale": 2.6,
+    "maximum_runtime_floor_route_m": 420.0
+  },
+  "floors": [
+    {
+      "floor_number": 1,
+      "floor_index": 0,
+      "z": 0.0,
+      "expected_rooms": [
+        "floor_0_room_0",
+        "floor_0_room_1",
+        "floor_0_room_2",
+        "floor_0_room_3"
+      ],
+      "waypoints": [
+        {
+          "x": 0.0,
+          "y": -2.05,
+          "z": 0.0,
+          "yaw": 1.5708,
+          "speed": 0.24,
+          "note": "main_entrance_step_below"
+        },
+        {
+          "x": 0.0,
+          "y": -1.2,
+          "z": 0.0,
+          "yaw": 1.5708,
+          "speed": 0.36,
+          "note": "main_entrance_apron"
+        },
+        {
+          "x": 0.0,
+          "y": 0.8,
+          "z": 0.0,
+          "yaw": 1.5708,
+          "speed": 0.29,
+          "note": "main_entrance_threshold_clear"
+        },
+        {
+          "x": 0.0,
+          "y": 14.865,
+          "z": 0.0,
+          "yaw": 1.5708,
+          "speed": 0.7,
+          "note": "floor_0_room_0_corridor",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": -1.7,
+          "y": 14.865,
+          "z": 0.0,
+          "yaw": 3.14159,
+          "speed": 0.7,
+          "note": "floor_0_room_0_center",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": 1.7,
+          "y": 14.865,
+          "z": 0.0,
+          "yaw": 0.0,
+          "speed": 0.7,
+          "note": "floor_0_room_1_center",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": 0.0,
+          "y": 14.865,
+          "z": 0.0,
+          "yaw": 3.14159,
+          "speed": 0.7,
+          "note": "floor_0_room_1_corridor_return",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": 0.0,
+          "y": 28.895,
+          "z": 0.0,
+          "yaw": 1.5708,
+          "speed": 0.7,
+          "note": "floor_0_room_2_corridor",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": -1.7,
+          "y": 28.895,
+          "z": 0.0,
+          "yaw": 3.14159,
+          "speed": 0.7,
+          "note": "floor_0_room_2_center",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": 1.7,
+          "y": 28.895,
+          "z": 0.0,
+          "yaw": 0.0,
+          "speed": 0.7,
+          "note": "floor_0_room_3_center",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": 0.0,
+          "y": 28.895,
+          "z": 0.0,
+          "yaw": 3.14159,
+          "speed": 0.7,
+          "note": "floor_0_room_3_corridor_return",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": 0.0,
+          "y": 8.85,
+          "z": 0.0,
+          "yaw": -1.5708,
+          "speed": 0.63,
+          "note": "floor_0_stair_approach",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": -2.365,
+          "y": 1.75,
+          "z": 0.0,
+          "yaw": 3.14159,
+          "speed": 0.5,
+          "note": "floor_0_stair_side_opening",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": -4.015,
+          "y": 1.75,
+          "z": 0.0,
+          "yaw": 1.5708,
+          "speed": 0.55,
+          "tolerance": 0.1,
+          "align_yaw": true,
+          "heading_tolerance": 0.12,
+          "note": "floor_0_stair_handoff",
+          "controller": "direct_plane_rl"
+        }
+      ]
+    },
+    {
+      "floor_number": 2,
+      "floor_index": 1,
+      "z": 2.6,
+      "expected_rooms": [
+        "floor_1_room_0",
+        "floor_1_room_1",
+        "floor_1_room_2",
+        "floor_1_room_3"
+      ],
+      "waypoints": [
+        {
+          "x": -0.95,
+          "y": 1.55,
+          "z": 2.6,
+          "yaw": 0.0,
+          "speed": 0.4,
+          "note": "floor_1_stair_exit",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": 0.0,
+          "y": 14.865,
+          "z": 2.6,
+          "yaw": 1.5708,
+          "speed": 0.7,
+          "note": "floor_1_room_0_corridor",
+          "controller": "direct_plane_rl",
+          "plane_forward_only": true,
+          "speed_scale_exempt": true
+        },
+        {
+          "x": -1.7,
+          "y": 14.865,
+          "z": 2.6,
+          "yaw": 3.14159,
+          "speed": 0.7,
+          "note": "floor_1_room_0_center",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": 1.7,
+          "y": 14.865,
+          "z": 2.6,
+          "yaw": 0.0,
+          "speed": 0.7,
+          "note": "floor_1_room_1_center",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": 0.0,
+          "y": 14.865,
+          "z": 2.6,
+          "yaw": 3.14159,
+          "speed": 0.7,
+          "note": "floor_1_room_1_corridor_return",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": 0.0,
+          "y": 28.895,
+          "z": 2.6,
+          "yaw": 1.5708,
+          "speed": 0.7,
+          "note": "floor_1_room_2_corridor",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": -1.7,
+          "y": 28.895,
+          "z": 2.6,
+          "yaw": 3.14159,
+          "speed": 0.7,
+          "note": "floor_1_room_2_center",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": 1.7,
+          "y": 28.895,
+          "z": 2.6,
+          "yaw": 0.0,
+          "speed": 0.7,
+          "note": "floor_1_room_3_center",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": 0.0,
+          "y": 28.895,
+          "z": 2.6,
+          "yaw": 3.14159,
+          "speed": 0.7,
+          "note": "floor_1_room_3_corridor_return",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": 0.0,
+          "y": 8.85,
+          "z": 2.6,
+          "yaw": -1.5708,
+          "speed": 0.63,
+          "note": "floor_1_stair_approach",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": -0.95,
+          "y": 1.55,
+          "z": 2.6,
+          "yaw": 3.14159,
+          "speed": 0.5,
+          "note": "floor_1_stair_side_opening",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": -4.015,
+          "y": 1.75,
+          "z": 2.6,
+          "yaw": 1.5708,
+          "speed": 0.55,
+          "tolerance": 0.1,
+          "align_yaw": true,
+          "heading_tolerance": 0.12,
+          "note": "floor_1_stair_handoff",
+          "controller": "direct_plane_rl"
+        }
+      ]
+    },
+    {
+      "floor_number": 3,
+      "floor_index": 2,
+      "z": 5.2,
+      "expected_rooms": [
+        "floor_2_room_0",
+        "floor_2_room_1",
+        "floor_2_room_2",
+        "floor_2_room_3"
+      ],
+      "waypoints": [
+        {
+          "x": -0.95,
+          "y": 1.55,
+          "z": 5.2,
+          "yaw": 0.0,
+          "speed": 0.4,
+          "note": "floor_2_stair_exit",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": 0.0,
+          "y": 14.865,
+          "z": 5.2,
+          "yaw": 1.5708,
+          "speed": 0.7,
+          "note": "floor_2_room_0_corridor",
+          "controller": "direct_plane_rl",
+          "plane_forward_only": true,
+          "speed_scale_exempt": true
+        },
+        {
+          "x": -1.7,
+          "y": 14.865,
+          "z": 5.2,
+          "yaw": 3.14159,
+          "speed": 0.7,
+          "note": "floor_2_room_0_center",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": 1.7,
+          "y": 14.865,
+          "z": 5.2,
+          "yaw": 0.0,
+          "speed": 0.7,
+          "note": "floor_2_room_1_center",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": 0.0,
+          "y": 14.865,
+          "z": 5.2,
+          "yaw": 3.14159,
+          "speed": 0.7,
+          "note": "floor_2_room_1_corridor_return",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": 0.0,
+          "y": 28.895,
+          "z": 5.2,
+          "yaw": 1.5708,
+          "speed": 0.7,
+          "note": "floor_2_room_2_corridor",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": -1.7,
+          "y": 28.895,
+          "z": 5.2,
+          "yaw": 3.14159,
+          "speed": 0.7,
+          "note": "floor_2_room_2_center",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": 1.7,
+          "y": 28.895,
+          "z": 5.2,
+          "yaw": 0.0,
+          "speed": 0.7,
+          "note": "floor_2_room_3_center",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": 0.0,
+          "y": 28.895,
+          "z": 5.2,
+          "yaw": 3.14159,
+          "speed": 0.7,
+          "note": "floor_2_room_3_corridor_return",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": 0.0,
+          "y": 8.85,
+          "z": 5.2,
+          "yaw": -1.5708,
+          "speed": 0.63,
+          "note": "floor_2_descent_approach",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": -0.95,
+          "y": 1.55,
+          "z": 5.2,
+          "yaw": 3.14159,
+          "speed": 0.5,
+          "note": "floor_2_descent_side_opening",
+          "controller": "direct_plane_rl"
+        },
+        {
+          "x": -2.665,
+          "y": 1.625,
+          "z": 5.2,
+          "yaw": 1.5708,
+          "speed": 0.55,
+          "tolerance": 0.18,
+          "align_yaw": true,
+          "heading_tolerance": 0.2,
+          "note": "floor_2_descent_landing_handoff",
+          "controller": "direct_plane_rl"
+        }
+      ]
+    }
+  ],
+  "return_to_lobby": {
+    "trigger_topic": "/simenv/first_floor_state",
+    "trigger_token": "FIRST_FLOOR_RETURNED",
+    "goal_executor_pause_topic": "/simenv/goal_executor_pause",
+    "command_topic": "/cmd_vel",
+    "maximum_speed": 1.8,
+    "maximum_yaw_rate": 0.8,
+    "heading_stable_sec": 0.3,
+    "linear_acceleration_mps2": 1.0,
+    "initial_forward_speed_mps": 0.4,
+    "position_tolerance": 0.35,
+    "heading_release_tolerance": 0.25,
+    "waypoint_timeout_sec": 60.0,
+    "policy_timeout_sec": 30.0,
+    "lobby_bounds": {
+      "x_min": -10.0,
+      "x_max": 10.0,
+      "y_min": 0.0,
+      "y_max": 7.85
+    },
+    "waypoints": [
+      {
+        "x": -3.8,
+        "y": 1.73,
+        "yaw": 0.0,
+        "heading_tolerance": 0.18,
+        "note": "first_floor_stair_exit"
+      },
+      {
+        "x": 0.0,
+        "y": 4.0,
+        "note": "first_floor_lobby_center"
+      }
+    ]
+  }
+}

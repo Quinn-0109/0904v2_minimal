@@ -1,0 +1,8 @@
+prefix=/workspace/0904_v2/SimEnv-master/.portable/devel
+
+Name: unitree_legged_sdk
+Description: Description of unitree_legged_sdk
+Version: 0.0.0
+Cflags: -I/workspace/0904_v2/SimEnv-master/src/unitree_guide/unitree_ros_to_real/unitree_legged_sdk/include
+Libs: -L${prefix}/lib /workspace/0904_v2/SimEnv-master/src/unitree_guide/unitree_ros_to_real/unitree_legged_sdk/lib/cpp/amd64/libunitree_legged_sdk.a
+Requires: 

@@ -1,0 +1,43 @@
+<launch>
+  <!-- Step 2.2 offline test only. Loads the saved OctoMap and FAST-LIO pose;
+       no Gazebo, RViz, navigation, controller, frontier executor or GUI. -->
+  <arg name="map_file"/>
+  <arg name="output_dir"/>
+  <arg name="frame_id" default="camera_init"/>
+  <arg name="robot_x"/>
+  <arg name="robot_y"/>
+  <arg name="robot_z"/>
+  <arg name="history_file" default=""/>
+  <arg name="execution_duplicate_radius" default="0.35"/>
+  <arg name="allow_transit_revisit_fallback" default="true"/>
+  <arg name="minimum_selected_score" default="-1000000000.0"/>
+
+  <node pkg="simenv_competitor" type="fuel_lite_planner"
+        name="fuel_lite_planner" output="screen" required="true">
+    <param name="map_file" value="$(arg map_file)"/>
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="frame_id" value="$(arg frame_id)"/>
+    <param name="use_pose_parameters" value="true"/>
+    <param name="exit_after_plan" value="true"/>
+    <param name="robot_x" value="$(arg robot_x)"/>
+    <param name="robot_y" value="$(arg robot_y)"/>
+    <param name="robot_z" value="$(arg robot_z)"/>
+    <param name="history_file" value="$(arg history_file)"/>
+    <param name="execution_duplicate_radius"
+           value="$(arg execution_duplicate_radius)"/>
+    <param name="allow_transit_revisit_fallback"
+           value="$(arg allow_transit_revisit_fallback)"/>
+    <param name="minimum_selected_score" value="$(arg minimum_selected_score)"/>
+    <param name="frontier_slice_half_height" value="0.30"/>
+    <param name="minimum_cluster_size" value="8"/>
+    <param name="maximum_clusters" value="30"/>
+    <param name="candidates_per_cluster" value="6"/>
+    <param name="candidate_min_distance" value="0.5"/>
+    <param name="candidate_max_distance" value="2.0"/>
+    <param name="safety_clearance" value="0.45"/>
+    <param name="sensor_range" value="6.0"/>
+    <param name="alpha" value="1.0"/>
+    <param name="beta" value="0.2"/>
+    <param name="gamma" value="1.0"/>
+  </node>
+</launch>

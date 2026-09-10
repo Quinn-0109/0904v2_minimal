@@ -1,0 +1,8 @@
+prefix=/workspace/0904_v2/SimEnv-master/.portable/devel
+
+Name: waypoint_generator
+Description: Description of waypoint_generator
+Version: 0.0.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 

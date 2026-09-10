@@ -1,0 +1,76 @@
+task_mode: hierarchical_fastlio_exploration
+
+# Unchanged FAST-LIO/OctoMap projection layer.
+hierarchical_voxel_mapper:
+  cloud_topic: /cloud_registered
+  odom_topic: /Odometry
+  resolution: 0.15
+  minimum_range: 0.30
+  maximum_range: 30.0
+  maximum_scan_points: 12000
+  save_every_updates: 20
+  projection_topic: /simenv/voxel_floor_projection
+  projection_every_updates: 5
+  projection_min_height: -0.05
+  projection_max_height: 1.20
+  telemetry_map_rate_hz: 0.5
+  map_statistics_warn_ms: 50.0
+
+frontier_cluster_node:
+  map_topic: /simenv/voxel_floor_projection
+  odom_topic: /Odometry
+  minimum_cluster_cells: 8
+  merge_distance: 1.25
+  merge_connectivity_radius: 2.50
+  unknown_area_radius: 2.50
+  goal_search_radius: 1.50
+  goal_clearance: 0.35
+  maximum_history_updates: 10000
+
+exploration_graph_node:
+  map_topic: /simenv/voxel_floor_projection
+  odom_topic: /Odometry
+  # Wide free-space cores split at narrow passages. This is inferred from the
+  # occupancy map; it does not use doors, room truth, or a corridor centreline.
+  region_core_clearance: 0.75
+  minimum_region_core_cells: 20
+  region_association_radius: 3.00
+  region_match_distance: 5.00
+  graph_connection_distance: 15.00
+  coverage_threshold: 0.90
+
+hierarchical_explorer_node:
+  map_topic: /simenv/voxel_floor_projection
+  odom_topic: /Odometry
+  goal_topic: /exploration_goal
+  planner: astar
+  startup_timeout: 120.0
+  minimum_graph_updates: 2
+  goal_timeout: 180.0
+  maximum_duration: 700.0
+  maximum_goals: 100
+  auto_generate_visualization: true
+  astar_clearance: 0.30
+  reached_tolerance: 0.15
+  waypoint_spacing: 0.45
+
+  alpha: 1.0
+  beta: 0.5
+  gamma: 1.5
+  lambda: 1.0
+  coverage_threshold: 0.90
+  unknown_ratio_threshold: 0.05
+  local_coverage_radius: 6.0
+  region_enter_tolerance: 1.50
+  entry_return_tolerance: 0.50
+  minimum_information_gain: 0.20
+  minimum_new_region_seconds: 35.0
+  nominal_speed: 0.30
+  recent_goal_distance: 0.75
+  failure_cooldown_seconds: 30.0
+
+  scan_service: /hierarchical_voxel_mapper/check_twin_cylinder
+  scan_lite_unknown_policy: penalize
+  scan_lite_body_safety_margin: 0.05
+  scan_lite_search_radius: 0.60
+  scan_lite_search_step: 0.15

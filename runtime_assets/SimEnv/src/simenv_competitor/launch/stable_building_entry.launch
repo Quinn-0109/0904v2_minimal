@@ -1,0 +1,32 @@
+<launch>
+  <arg name="output_dir"/>
+  <arg name="rl_policy" default="$(find unitree_guide)/../../logs/policy_act_inference_stair.pt"/>
+
+  <include file="$(find simenv_competitor)/launch/mapping_test.launch">
+    <arg name="gui" value="false"/>
+    <arg name="rviz" value="false"/>
+    <arg name="teleop" value="false"/>
+    <arg name="start_controller" value="true"/>
+    <arg name="enable_realsense" value="false"/>
+    <arg name="enable_referee_odom" value="true"/>
+    <arg name="enable_ground_truth" value="true"/>
+    <arg name="sensor_warmup_seconds" value="10.0"/>
+    <arg name="slam_startup_delay_seconds" value="2.0"/>
+    <arg name="controller_dt" value="0.004"/>
+    <arg name="controller_cpu_affinity" value=""/>
+    <arg name="rl_policy" value="$(arg rl_policy)"/>
+    <arg name="rl_device" value="cuda"/>
+  </include>
+
+  <include file="$(find simenv_competitor)/launch/goal_executor.launch">
+    <arg name="output_dir" value="$(arg output_dir)/executor"/>
+    <arg name="takeover_output_dir" value="$(arg output_dir)/takeover"/>
+    <arg name="start_rl_mode" value="true"/>
+    <arg name="shutdown_on_result" value="false"/>
+    <arg name="command_topic" value="/simenv/desired_cmd_vel"/>
+    <arg name="arm_rl_guard" value="true"/>
+    <arg name="enable_rl_guard" value="true"/>
+    <arg name="guard_pose_topic" value="/Odometry"/>
+    <arg name="goal_tolerance" value="0.30"/>
+  </include>
+</launch>

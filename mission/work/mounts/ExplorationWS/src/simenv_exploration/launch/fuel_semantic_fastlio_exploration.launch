@@ -1,0 +1,574 @@
+<launch>
+  <!-- ROS normally prefixes every line with the global Gazebo simulation
+       clock.  That clock includes startup and must not be confused with the
+       mission budget, which is printed explicitly as [MISSION] t=... below. -->
+  <env name="ROSCONSOLE_FORMAT" value="[${severity}] ${message}"/>
+  <!-- Gazebo server must inherit this too: RGB-D rendering is server-side. -->
+  <env name="DISPLAY" value=":99"/>
+  <!-- Production FUEL semantic chain.  UFOMap/UFOExplorer and TARE are not
+       started.  Online semantics only rank/commit FUEL candidates; execution
+       remains A* + SCAN-lite + Goal Executor + RL locomotion. -->
+  <arg name="output_dir"
+       default="$(find simenv_exploration)/../../results/fuel_semantic_run1"/>
+  <arg name="maximum_duration" default="300.0"/>
+  <arg name="maximum_goals" default="40"/>
+  <arg name="enable_second_floor_exploration" default="true"/>
+  <arg name="second_floor_maximum_duration" default="400.0"/>
+  <arg name="second_floor_maximum_goals" default="40"/>
+  <arg name="enable_third_floor_exploration" default="true"/>
+  <arg name="third_floor_maximum_duration" default="400.0"/>
+  <arg name="third_floor_maximum_goals" default="40"/>
+  <!-- Stair descent back to the first floor (F3 -> F2 -> F1) after the F3
+       exploration completes; see baseline_fastlio_exploration.launch. -->
+  <arg name="enable_third_floor_descent" default="false"/>
+  <!-- 2026-09-01 迁移 scanplanner 高速下梯设计:0.80 m/s 巡航 + 按垂直
+       进度/倾角/误差分档整形(详见 speed shaping 参数块)。 -->
+  <arg name="descent_speed_mps" default="0.80"/>
+  <arg name="descent_maximum_speed_mps" default="0.80"/>
+  <!-- 2026-08-16 v2.2 实测:flight_b 202s + TURN 100s + flight_a 卡死 24s 下 0.5m → 400s 超时;放宽到 600s -->
+  <arg name="descent_segment_timeout_sec" default="600.0"/>
+  <!-- 2026-09-03 zip 迁移:下梯开局固定站立 2.0->0.25 s -->
+  <arg name="pre_descent_stand_seconds" default="0.25"/>
+  <arg name="truth_descent_stall_seconds" default="3.0"/>
+  <arg name="truth_descent_stall_pause_seconds" default="1.0"/>
+  <arg name="truth_descent_stall_z_progress_m" default="0.02"/>
+  <arg name="truth_descent_stall_arm_drop_m" default="0.05"/>
+  <arg name="truth_descent_stall_min_elapsed_sec" default="2.0"/>
+  <arg name="truth_descent_step_pause_seconds" default="0.0"/>
+  <arg name="truth_descent_step_pause_interval_m" default="0.18"/>
+  <arg name="truth_descent_backoff_distance_m" default="0.35"/>
+  <arg name="truth_descent_backoff_speed_mps" default="0.3"/>
+  <!-- 2026-08-15 v2:backoff 距离随 stall 次数升级(0.35→0.75m,卡同一 riser 时给更长助跑)+ 后退期间 wz 上限 0.20(边走边回正,替代原地转体) -->
+  <arg name="truth_descent_backoff_escalation_m" default="0.15"/>
+  <arg name="truth_descent_backoff_max_distance_m" default="0.75"/>
+  <arg name="truth_descent_backoff_yaw_rate_rps" default="0.20"/>
+  <arg name="truth_descent_recovery_ramp_seconds" default="1.0"/>
+  <arg name="truth_descent_recovery_ramp_speed_mps" default="0.20"/>
+  <arg name="truth_descent_fall_drop_m" default="0.40"/>
+  <arg name="truth_descent_fall_window_sec" default="0.8"/>
+  <arg name="truth_descent_gain_up_drop_m" default="0.35"/>
+  <!-- 2026-08-15 v2:守卫阈值 0.30→0.45(0.3m 稳态漂移在 1.43m 宽楼梯上安全);attempts 2→4 + 修正窗口 6s -->
+  <arg name="truth_descent_max_center_error_m" default="0.45"/>
+  <arg name="truth_descent_max_heading_error_rad" default="0.45"/>
+  <arg name="truth_descent_side_slip_min_drop_m" default="0.50"/>
+  <arg name="truth_descent_side_slip_pause_sec" default="0.5"/>
+  <arg name="truth_descent_side_slip_max_attempts" default="4"/>
+  <arg name="truth_descent_side_slip_guard_window_sec" default="6.0"/>
+  <arg name="truth_descent_flight_center_gain" default="0.55"/>
+  <arg name="truth_descent_flight_center_deadband_m" default="0.04"/>
+  <arg name="truth_descent_flight_center_speed_mps" default="0.12"/>
+  <!-- 2026-09-01 迁移 scanplanner 高速下梯设计:heading_gain 0.35→0.55、
+       max_yaw_rate 0.10→0.14、steer 0.75/0.20→1.00/0.24(其生产值)。
+       0.80 m/s 巡航下漂移修正需要更强舵机;配合速度整形与修正降速。 -->
+  <arg name="truth_descent_flight_heading_gain" default="0.55"/>
+  <arg name="truth_descent_flight_max_yaw_rate_rps" default="0.14"/>
+  <arg name="truth_descent_heading_bias_rad" default="0.15"/>
+  <arg name="truth_descent_flight_center_steer_gain" default="1.00"/>
+  <arg name="truth_descent_flight_center_steer_max_rad" default="0.24"/>
+  <!-- 2026-09-01 速度整形(scanplanner stair_descent_controller.launch):
+       0.55 起步 → 0.80 巡航(drop 0.45m) → 0.60 收尾(drop 0.95m);
+       倾角 0.48/0.60 rad 分别压 0.55/0.30 m/s;误差 ≥0.22 时压速修正 -->
+  <arg name="truth_descent_flight_initial_speed_mps" default="0.55"/>
+  <arg name="truth_descent_flight_initial_hold_drop_m" default="0.18"/>
+  <arg name="truth_descent_flight_initial_ramp_end_drop_m" default="0.45"/>
+  <arg name="truth_descent_flight_end_slowdown_drop_m" default="0.95"/>
+  <arg name="truth_descent_flight_end_speed_mps" default="0.60"/>
+  <arg name="truth_descent_flight_tilt_slowdown_rad" default="0.48"/>
+  <arg name="truth_descent_flight_tilt_speed_mps" default="0.55"/>
+  <arg name="truth_descent_flight_tilt_hold_sec" default="0.60"/>
+  <arg name="truth_descent_flight_severe_tilt_rad" default="0.60"/>
+  <arg name="truth_descent_flight_severe_tilt_speed_mps" default="0.30"/>
+  <arg name="truth_descent_flight_severe_tilt_hold_sec" default="0.80"/>
+  <arg name="truth_descent_flight_center_correction_error_m" default="0.22"/>
+  <arg name="truth_descent_flight_center_correction_speed_mps" default="0.50"/>
+  <arg name="truth_descent_flight_center_correction_yaw_rate_rps" default="0.20"/>
+  <arg name="truth_descent_flight_heading_correction_error_rad" default="0.22"/>
+  <arg name="truth_descent_flight_heading_correction_speed_mps" default="0.40"/>
+  <arg name="truth_descent_flight_heading_correction_yaw_rate_rps" default="0.30"/>
+  <!-- 2026-08-15 TURN 掉落修复:完成门 y 4.70→5.05,推进到中间平台中心再转体
+       (full8 2026-08-17 实证:4.80 转体点距 0.27m 平台台阶仅 3cm,转体打滑
+       滑下台阶 → y 安全带冻结 → TURN_TIMEOUT;5.05 给 28cm 滑落缓冲) -->
+  <arg name="truth_descent_turn_start_y" default="5.05"/>
+  <arg name="truth_descent_turn_forward_speed_mps" default="0.03"/>
+  <arg name="truth_descent_turn_forward_y_limit_m" default="4.82"/>
+  <arg name="truth_descent_landing_heading_tolerance_rad" default="0.18"/>
+  <arg name="truth_descent_landing_position_tolerance_m" default="0.20"/>
+  <arg name="truth_descent_landing_position_gain" default="0.90"/>
+  <arg name="truth_descent_landing_position_deadband_m" default="0.05"/>
+  <arg name="truth_descent_landing_recenter_speed_mps" default="0.40"/>
+  <arg name="truth_descent_landing_minimum_yaw_rate_rps" default="0.24"/>
+  <!-- 2026-08-16:位置死区修复 —— x_err≈0.063 时 vx≈0.057 策略忽略横移卡死(PRE_ALIGN 94s 实测),强制最小横向速度冲过死区 -->
+  <arg name="truth_descent_landing_minimum_x_speed_mps" default="0.10"/>
+  <!-- 2026-08-17 full8 实证:0.40 rps 转 180° 需 11s+,长时间暴露在平台台阶
+       边缘 → 滑落概率事件。对齐上行 TURN(同平台 1.20 rps 生产成功)提速。 -->
+  <arg name="truth_descent_landing_turn_speed_rps" default="1.00"/>
+  <arg name="truth_descent_landing_timeout_sec" default="30.0"/>
+  <arg name="truth_descent_landing_recovery_max_attempts" default="2"/>
+  <arg name="truth_descent_landing_recovery_timeout_sec" default="12.0"/>
+  <arg name="truth_descent_landing_recovery_minimum_yaw_rate_rps" default="0.34"/>
+  <arg name="truth_descent_landing_recovery_max_position_error_m" default="0.40"/>
+  <arg name="truth_descent_landing_recovery_max_heading_error_rad" default="0.65"/>
+  <arg name="truth_descent_segment_turn_yaw_rate_rps" default="1.00"/>
+  <arg name="truth_descent_segment_turn_lateral_speed_mps" default="0.40"/>
+  <!-- 2026-08-18 fixT:EAST_ALIGN south/east 与 SEGMENT_TURN y 护栏共用
+       side_speed;0.15 低于 stair 策略 body 侧移死区(≈0.24) → RUN1
+       EAST_ALIGN 30s 冻结(R37 弱侧移教训重演)。对齐 TURN 已验证量级 0.40。 -->
+  <arg name="truth_descent_segment_turn_side_speed_mps" default="0.40"/>
+  <arg name="truth_descent_segment_turn_position_gain" default="0.60"/>
+  <arg name="truth_descent_segment_turn_position_tolerance_m" default="0.20"/>
+  <arg name="truth_descent_segment_turn_heading_tolerance_rad" default="0.12"/>
+  <!-- R55:同步 baseline 的 60s(attempts 4→6 后 45s 不够) -->
+  <arg name="truth_descent_segment_turn_timeout_sec" default="60.0"/>
+  <arg name="truth_descent_flight_b_drop_gate_m" default="1.05"/>
+  <arg name="truth_descent_flight_a_drop_gate_m" default="2.45"/>
+  <!-- 2026-09-03 1.75 试验 3/3 SEGMENT_TURN 超时 → 回滚 2.25 -->
+  <arg name="truth_descent_flight_a_end_y" default="2.25"/>
+  <arg name="truth_descent_trigger_timeout_sec" default="2400.0"/>
+  <arg name="backward_mode" default="false"/>
+  <!-- When false, FAST-LIO is replaced by Gazebo truth coordinates
+       (ground_truth_odometry.py + truth_registered_cloud.py). -->
+  <arg name="enable_fastlio" default="true"/>
+
+  <arg name="enable_third_floor_truth_corridor_guide" default="true"/>
+  <arg name="third_floor_truth_corridor_guide_timeout_sec" default="45.0"/>
+  <arg name="enable_second_floor_truth_corridor_guide" default="true"/>
+  <arg name="second_floor_truth_corridor_guide_timeout_sec" default="45.0"/>
+  <!-- One-time FAST-LIO z snap at the F2 handoff when the odometry height
+       disagrees with Gazebo truth by more than this.  Must stay below the F2
+       manager's 0.5 m vertical-disagreement stabilization gate, otherwise a
+       post-climb z drift of 0.5-0.75 m (full48d: 0.738 m) falls in the dead
+       zone and kills the whole run via LOCALIZATION_UNSTABLE. -->
+  <arg name="second_floor_height_recovery_threshold_m" default="0.45"/>
+  <param name="/second_floor_truth_motion_guard/absolute_height_recovery_threshold_m"
+         value="$(arg second_floor_height_recovery_threshold_m)"/>
+  <!-- Speed cap for the truth corridor guide (stair exit -> corridor entry,
+       F2 and F3).  The approach profile below ~0.4 m to a waypoint is
+       governed by 0.75*distance regardless of this cap.
+       2026-09-01: 1.0 -> 1.15 对齐 scanplanner zip 下行入口生产值. -->
+  <!-- 2026-09-03 试验:走廊引导 1.15->1.35(走廊平直无台阶死锁史) -->
+  <arg name="second_floor_truth_corridor_guide_speed_mps" default="1.35"/>
+  <!-- Speed caps for the truth stair-entry guide (corridor/side -> final
+       legs, F1->F2 and F2->F3).  Below ~0.64 m the approach is governed by
+       0.70*distance.  2026-09-01 尝试 1.15(对齐 zip 下行生产值)后 5 轮
+       验证 3/5 引导段死锁(route_error 卡 0.45 停走阈值,批次23 同模式),
+       回滚 0.9. corridor guide 1.15 保留. -->
+  <arg name="stair_truth_entry_guide_speed_mps" default="0.9"/>
+  <arg name="stair_truth_entry_guide_min_speed_mps" default="0.25"/>
+  <!-- Post-climb platform hairpin.  U3 定案值 0.6/0.55(专项 5/5):
+       turn>=1.0 与平台原地打转强相关(U1 1.2→0/5, U4 1.0→2/5), 回退后恢复 -->
+  <arg name="landing_turn_speed_rps" default="0.6"/>
+  <arg name="landing_cross_speed_mps" default="0.55"/>
+  <!-- Pre-riser alignment yaw rate (stair-entry alignment).  Conservative
+       fast-route default: 0.6. -->
+  <arg name="entry_alignment_yaw_rate_rps" default="0.6"/>
+  <!-- Flight-B stall recovery (must mirror baseline_fastlio_exploration.launch
+       defaults; the include below only forwards whitelisted args, so these
+       were silently ignored before 2026-08-13 12:30 and the manager always
+       ran code defaults). -->
+  <arg name="truth_flight_b_stall_seconds" default="4.0"/>
+  <arg name="truth_flight_b_recovery_hold_seconds" default="4.0"/>
+  <arg name="truth_flight_b_max_yaw_rate_rps" default="0.10"/>
+  <arg name="truth_flight_b_recovery_ramp_seconds" default="1.0"/>
+  <arg name="truth_flight_b_recovery_ramp_speed_mps" default="0.4"/>
+  <arg name="truth_flight_b_recovery_backoff_distance_m" default="0.35"/>
+  <arg name="truth_flight_b_recovery_backoff_speed_mps" default="0.3"/>
+  <!-- Early slip intervention (F2->F3 instance only): catch a tread slip
+       ~1 s after z freezes, before the gait collapses into the dead squat
+       that made every post-collapse recovery futile (full40-44: 10/10
+       deadlocks).  Default 0.0 = disabled, so F1->F2 and unmodified runs
+       keep the historical behavior. -->
+  <arg name="truth_flight_b_slip_detect_seconds" default="0.0"/>
+  <arg name="truth_flight_b_slip_yaw_rate_rps" default="0.6"/>
+  <arg name="truth_flight_b_slip_min_gain_m" default="0.30"/>
+  <arg name="truth_flight_b_slip_hold_seconds" default="1.5"/>
+  <arg name="pre_ascent_stand_seconds" default="0.0"/>
+  <!-- Landing-turn hairpin lateral acceptance band (see baseline launch).
+       Full48g left the turn 0.149 m off the flight-B centreline under the
+       former 0.15 m gate and then slid off the platform edge. -->
+  <arg name="truth_landing_position_tolerance_m" default="0.06"/>
+  <!-- Landing-slide guard: force flight-B stall recovery as soon as the body
+       falls this far below the flight-B entry height (full48g: slid
+       4.210 -> 3.998 m off the platform edge and wedged). -->
+  <arg name="truth_flight_b_drop_detect_m" default="0.10"/>
+  <arg name="landing_heading_tolerance_rad" default="0.15"/>
+  <!-- Third GT waypoint: stand-off distance in front of the corridor mouth. -->
+  <arg name="second_floor_truth_corridor_align_offset_m" default="0.5"/>
+  <arg name="enable_realsense" default="true"/>
+  <!-- Starts a virtual-display Gazebo client so the RGB-D depth camera can
+       render. This is startup/simulator work, not mission planning time. -->
+  <arg name="gazebo_gui" default="false"/>
+  <!-- Exploration-only delivery: danger-source detection (YOLOv8/tracker/
+       watchdog), RGB video recording, and the optional visual corridor-exit /
+       visual stair-entry A/B modules were removed from this package. -->
+  <!-- Timed four-room profile.  Lateral motion remains separately bounded,
+       so the 1.45 m/s cruise cap is used only for aligned transit. -->
+  <arg name="goal_executor_minimum_speed" default="0.60"/>
+  <arg name="goal_executor_maximum_speed" default="1.55"/>
+  <!-- Keep the dynamic per-goal cap aligned with the requested executor cap.
+       Previously this remained at 1.20 even when callers supplied
+       goal_executor_maximum_speed:=1.35, silently clipping all manager
+       speed-profile improvements. -->
+  <arg name="goal_executor_dynamic_speed_cap"
+       default="$(arg goal_executor_maximum_speed)"/>
+  <!-- Reach the existing 1.20 m/s cap sooner on the short, verified portal
+       segments; the maximum command envelope is unchanged. -->
+  <!-- Reach the already validated 1.20 m/s cap earlier on the 2 to 5 m room
+       portal/exit segments; no velocity envelope is enlarged. -->
+  <arg name="goal_executor_distance_gain" default="1.30"/>
+  <!-- Keep the body heading aligned during fast corridor runs.  Pure lateral
+       motion was correlated with late FAST-LIO map drift in opt9. -->
+  <!-- Keep the calibrated turn envelope at doorway transitions. -->
+  <!-- Corridor-to-door turns previously held lateral motion for over five
+       seconds at 0.30 rad/s, producing long loops before the far rooms.
+       This changes turning response only; path and collision validation are
+       unchanged. -->
+  <arg name="goal_executor_heading_gain" default="0.70"/>
+  <arg name="goal_executor_maximum_yaw_rate" default="0.55"/>
+  <!-- Forward transit remains fast; sideways motion during a turn is capped
+       to keep FAST-LIO constrained at doors and corridor reversals. -->
+  <arg name="goal_executor_lateral_speed_limit" default="0.35"/>
+  <arg name="goal_executor_heading_slowdown_threshold" default="0.45"/>
+  <arg name="goal_executor_turning_speed_limit" default="0.45"/>
+  <arg name="goal_executor_localization_degraded_speed_cap" default="0.85"/>
+  <arg name="goal_executor_acceleration" default="1.35"/>
+  <!-- Short, footprint-validated room-exit segments otherwise spend too much
+       time slewing down before every bend.  This does not increase the
+       1.20 m/s translational cap. -->
+  <arg name="goal_executor_deceleration" default="1.10"/>
+  <!-- Doorway interception is an asynchronous semantic handoff.  Decelerate
+       the current fast gait before accepting the short room-entry goal. -->
+  <arg name="goal_executor_preemption_deceleration" default="0.55"/>
+  <arg name="goal_executor_preemption_timeout" default="4.0"/>
+  <!-- Full F1-to-F3 mission requires the preserved three-floor scene.  Its
+       lower two floors are copied from the already validated artifact, so
+       enabling floor 3 does not change F1/F2 walls, rooms or furniture.  The
+       former competition_scene.world contains only the stairwell shell and
+       no physical treads, so a stair policy cannot climb it. -->
+  <arg name="world_file"
+       default="$(find simenv_exploration)/../../generated_building/elevator_three_floor_debug/competition_scene_with_dangers.world"/>
+  <arg name="rl_policy"
+       default="$(find unitree_guide)/../../logs/policy_act_inference_plane.pt"/>
+  <arg name="two_flight_stair" default="true"/>
+  <arg name="stair_ascent_timeout_sec" default="45.0"/>
+  <!-- F2->F3 only: full3/full5 both stalled at flight-B step 6-7 (gain
+       ~1.95/2.2 m).  Slowing the third-floor ascent changes the gait phase
+       at the stall point; the timeout is lengthened as insurance.
+       Full49 reached gain 1.96 m and was still mid-recovery (yaw
+       re-alignment) when the 60 s total elapsed expired; the recovery
+       loop needs a longer window to finish a pause+backoff+ramp cycle. -->
+  <arg name="stair_ascent_speed_third_mps" default="0.5"/>
+  <arg name="stair_ascent_timeout_third_sec" default="90.0"/>
+  <arg name="upper_landing_clearance_grace_sec" default="15.0"/>
+  <arg name="stair_truth_entry_guide" default="true"/>
+  <arg name="stair_truth_entry_timeout_sec" default="60.0"/>
+  <arg name="stair_truth_side_entry_offset_m" default="1.65"/>
+  <!-- Two-stage stair entry guide (default): skip the corridor-lobby leg,
+       go handoff anchor -> side opening -> pre-riser directly. -->
+  <arg name="stair_truth_two_stage_guide" default="true"/>
+  <!-- Four first-floor ROOM_EXIT confirmations hand control directly to the
+       corridor-entry/stair stage.  The truth-entry flag below only chooses
+       how the stair controller reaches the physical first tread. -->
+  <arg name="stair_handoff_on_corridor_exit" default="true"/>
+  <!-- Fixed-waypoint tour mode: replaces the per-floor free-exploration
+       managers with serial fixed waypoints through the Goal Executor, and
+       keeps danger-source detection on the whole route (room-only gate
+       opened).  Off by default. -->
+  <arg name="waypoint_tour_mode" default="false"/>
+  <arg name="waypoint_tour_timeout_sec" default="60.0"/>
+
+  <include file="$(find simenv_exploration)/launch/baseline_fastlio_exploration.launch">
+    <arg name="enable_fastlio" value="$(arg enable_fastlio)"/>
+    <arg name="output_dir" value="$(arg output_dir)"/>
+    <arg name="maximum_duration" value="$(arg maximum_duration)"/>
+    <arg name="maximum_goals" value="$(arg maximum_goals)"/>
+    <arg name="waypoint_tour_mode" value="$(arg waypoint_tour_mode)"/>
+    <arg name="waypoint_tour_timeout_sec"
+         value="$(arg waypoint_tour_timeout_sec)"/>
+    <arg name="enable_second_floor_exploration"
+         value="$(arg enable_second_floor_exploration)"/>
+    <arg name="second_floor_maximum_duration"
+         value="$(arg second_floor_maximum_duration)"/>
+    <arg name="second_floor_maximum_goals"
+         value="$(arg second_floor_maximum_goals)"/>
+    <arg name="enable_third_floor_exploration"
+         value="$(arg enable_third_floor_exploration)"/>
+    <arg name="third_floor_maximum_duration"
+         value="$(arg third_floor_maximum_duration)"/>
+    <arg name="third_floor_maximum_goals"
+         value="$(arg third_floor_maximum_goals)"/>
+    <arg name="enable_third_floor_descent"
+         value="$(arg enable_third_floor_descent)"/>
+    <arg name="descent_speed_mps" value="$(arg descent_speed_mps)"/>
+    <arg name="descent_maximum_speed_mps"
+         value="$(arg descent_maximum_speed_mps)"/>
+    <arg name="backward_mode" value="$(arg backward_mode)"/>
+    <arg name="descent_segment_timeout_sec"
+         value="$(arg descent_segment_timeout_sec)"/>
+    <arg name="pre_descent_stand_seconds"
+         value="$(arg pre_descent_stand_seconds)"/>
+    <arg name="truth_descent_stall_seconds"
+         value="$(arg truth_descent_stall_seconds)"/>
+    <arg name="truth_descent_stall_pause_seconds"
+         value="$(arg truth_descent_stall_pause_seconds)"/>
+    <arg name="truth_descent_stall_arm_drop_m"
+         value="$(arg truth_descent_stall_arm_drop_m)"/>
+    <arg name="truth_descent_step_pause_seconds"
+         value="$(arg truth_descent_step_pause_seconds)"/>
+    <arg name="truth_descent_step_pause_interval_m"
+         value="$(arg truth_descent_step_pause_interval_m)"/>
+    <arg name="truth_descent_stall_z_progress_m"
+         value="$(arg truth_descent_stall_z_progress_m)"/>
+    <arg name="truth_descent_stall_min_elapsed_sec"
+         value="$(arg truth_descent_stall_min_elapsed_sec)"/>
+    <arg name="truth_descent_backoff_distance_m"
+         value="$(arg truth_descent_backoff_distance_m)"/>
+    <arg name="truth_descent_backoff_speed_mps"
+         value="$(arg truth_descent_backoff_speed_mps)"/>
+    <arg name="truth_descent_backoff_escalation_m"
+         value="$(arg truth_descent_backoff_escalation_m)"/>
+    <arg name="truth_descent_backoff_max_distance_m"
+         value="$(arg truth_descent_backoff_max_distance_m)"/>
+    <arg name="truth_descent_backoff_yaw_rate_rps"
+         value="$(arg truth_descent_backoff_yaw_rate_rps)"/>
+    <arg name="truth_descent_recovery_ramp_seconds"
+         value="$(arg truth_descent_recovery_ramp_seconds)"/>
+    <arg name="truth_descent_recovery_ramp_speed_mps"
+         value="$(arg truth_descent_recovery_ramp_speed_mps)"/>
+    <arg name="truth_descent_fall_drop_m"
+         value="$(arg truth_descent_fall_drop_m)"/>
+    <arg name="truth_descent_fall_window_sec"
+         value="$(arg truth_descent_fall_window_sec)"/>
+    <arg name="truth_descent_gain_up_drop_m"
+         value="$(arg truth_descent_gain_up_drop_m)"/>
+    <arg name="truth_descent_max_center_error_m"
+         value="$(arg truth_descent_max_center_error_m)"/>
+    <arg name="truth_descent_max_heading_error_rad"
+         value="$(arg truth_descent_max_heading_error_rad)"/>
+    <arg name="truth_descent_side_slip_min_drop_m"
+         value="$(arg truth_descent_side_slip_min_drop_m)"/>
+    <arg name="truth_descent_side_slip_pause_sec"
+         value="$(arg truth_descent_side_slip_pause_sec)"/>
+    <arg name="truth_descent_side_slip_max_attempts"
+         value="$(arg truth_descent_side_slip_max_attempts)"/>
+    <arg name="truth_descent_side_slip_guard_window_sec"
+         value="$(arg truth_descent_side_slip_guard_window_sec)"/>
+    <arg name="truth_descent_flight_center_gain"
+         value="$(arg truth_descent_flight_center_gain)"/>
+    <arg name="truth_descent_flight_center_deadband_m"
+         value="$(arg truth_descent_flight_center_deadband_m)"/>
+    <arg name="truth_descent_flight_center_speed_mps"
+         value="$(arg truth_descent_flight_center_speed_mps)"/>
+    <arg name="truth_descent_flight_heading_gain"
+         value="$(arg truth_descent_flight_heading_gain)"/>
+    <arg name="truth_descent_flight_max_yaw_rate_rps"
+         value="$(arg truth_descent_flight_max_yaw_rate_rps)"/>
+    <arg name="truth_descent_heading_bias_rad"
+         value="$(arg truth_descent_heading_bias_rad)"/>
+    <arg name="truth_descent_flight_center_steer_gain"
+         value="$(arg truth_descent_flight_center_steer_gain)"/>
+    <arg name="truth_descent_flight_center_steer_max_rad"
+         value="$(arg truth_descent_flight_center_steer_max_rad)"/>
+    <arg name="truth_descent_flight_initial_speed_mps"
+         value="$(arg truth_descent_flight_initial_speed_mps)"/>
+    <arg name="truth_descent_flight_initial_hold_drop_m"
+         value="$(arg truth_descent_flight_initial_hold_drop_m)"/>
+    <arg name="truth_descent_flight_initial_ramp_end_drop_m"
+         value="$(arg truth_descent_flight_initial_ramp_end_drop_m)"/>
+    <arg name="truth_descent_flight_end_slowdown_drop_m"
+         value="$(arg truth_descent_flight_end_slowdown_drop_m)"/>
+    <arg name="truth_descent_flight_end_speed_mps"
+         value="$(arg truth_descent_flight_end_speed_mps)"/>
+    <arg name="truth_descent_flight_tilt_slowdown_rad"
+         value="$(arg truth_descent_flight_tilt_slowdown_rad)"/>
+    <arg name="truth_descent_flight_tilt_speed_mps"
+         value="$(arg truth_descent_flight_tilt_speed_mps)"/>
+    <arg name="truth_descent_flight_tilt_hold_sec"
+         value="$(arg truth_descent_flight_tilt_hold_sec)"/>
+    <arg name="truth_descent_flight_severe_tilt_rad"
+         value="$(arg truth_descent_flight_severe_tilt_rad)"/>
+    <arg name="truth_descent_flight_severe_tilt_speed_mps"
+         value="$(arg truth_descent_flight_severe_tilt_speed_mps)"/>
+    <arg name="truth_descent_flight_severe_tilt_hold_sec"
+         value="$(arg truth_descent_flight_severe_tilt_hold_sec)"/>
+    <arg name="truth_descent_flight_center_correction_error_m"
+         value="$(arg truth_descent_flight_center_correction_error_m)"/>
+    <arg name="truth_descent_flight_center_correction_speed_mps"
+         value="$(arg truth_descent_flight_center_correction_speed_mps)"/>
+    <arg name="truth_descent_flight_center_correction_yaw_rate_rps"
+         value="$(arg truth_descent_flight_center_correction_yaw_rate_rps)"/>
+    <arg name="truth_descent_flight_heading_correction_error_rad"
+         value="$(arg truth_descent_flight_heading_correction_error_rad)"/>
+    <arg name="truth_descent_flight_heading_correction_speed_mps"
+         value="$(arg truth_descent_flight_heading_correction_speed_mps)"/>
+    <arg name="truth_descent_flight_heading_correction_yaw_rate_rps"
+         value="$(arg truth_descent_flight_heading_correction_yaw_rate_rps)"/>
+    <arg name="truth_descent_turn_start_y"
+         value="$(arg truth_descent_turn_start_y)"/>
+    <arg name="truth_descent_turn_forward_speed_mps"
+         value="$(arg truth_descent_turn_forward_speed_mps)"/>
+    <arg name="truth_descent_turn_forward_y_limit_m"
+         value="$(arg truth_descent_turn_forward_y_limit_m)"/>
+    <arg name="truth_descent_landing_heading_tolerance_rad"
+         value="$(arg truth_descent_landing_heading_tolerance_rad)"/>
+    <arg name="truth_descent_landing_position_tolerance_m"
+         value="$(arg truth_descent_landing_position_tolerance_m)"/>
+    <arg name="truth_descent_landing_position_gain"
+         value="$(arg truth_descent_landing_position_gain)"/>
+    <arg name="truth_descent_landing_position_deadband_m"
+         value="$(arg truth_descent_landing_position_deadband_m)"/>
+    <arg name="truth_descent_landing_recenter_speed_mps"
+         value="$(arg truth_descent_landing_recenter_speed_mps)"/>
+    <arg name="truth_descent_landing_minimum_yaw_rate_rps"
+         value="$(arg truth_descent_landing_minimum_yaw_rate_rps)"/>
+    <arg name="truth_descent_landing_minimum_x_speed_mps"
+         value="$(arg truth_descent_landing_minimum_x_speed_mps)"/>
+    <arg name="truth_descent_landing_turn_speed_rps"
+         value="$(arg truth_descent_landing_turn_speed_rps)"/>
+    <arg name="truth_descent_landing_timeout_sec"
+         value="$(arg truth_descent_landing_timeout_sec)"/>
+    <arg name="truth_descent_landing_recovery_max_attempts"
+         value="$(arg truth_descent_landing_recovery_max_attempts)"/>
+    <arg name="truth_descent_landing_recovery_timeout_sec"
+         value="$(arg truth_descent_landing_recovery_timeout_sec)"/>
+    <arg name="truth_descent_landing_recovery_minimum_yaw_rate_rps"
+         value="$(arg truth_descent_landing_recovery_minimum_yaw_rate_rps)"/>
+    <arg name="truth_descent_landing_recovery_max_position_error_m"
+         value="$(arg truth_descent_landing_recovery_max_position_error_m)"/>
+    <arg name="truth_descent_landing_recovery_max_heading_error_rad"
+         value="$(arg truth_descent_landing_recovery_max_heading_error_rad)"/>
+    <arg name="truth_descent_segment_turn_yaw_rate_rps"
+         value="$(arg truth_descent_segment_turn_yaw_rate_rps)"/>
+    <arg name="truth_descent_segment_turn_lateral_speed_mps"
+         value="$(arg truth_descent_segment_turn_lateral_speed_mps)"/>
+    <arg name="truth_descent_segment_turn_side_speed_mps"
+         value="$(arg truth_descent_segment_turn_side_speed_mps)"/>
+    <arg name="truth_descent_segment_turn_position_gain"
+         value="$(arg truth_descent_segment_turn_position_gain)"/>
+    <arg name="truth_descent_segment_turn_position_tolerance_m"
+         value="$(arg truth_descent_segment_turn_position_tolerance_m)"/>
+    <arg name="truth_descent_segment_turn_heading_tolerance_rad"
+         value="$(arg truth_descent_segment_turn_heading_tolerance_rad)"/>
+    <arg name="truth_descent_segment_turn_timeout_sec"
+         value="$(arg truth_descent_segment_turn_timeout_sec)"/>
+    <arg name="truth_descent_flight_b_drop_gate_m"
+         value="$(arg truth_descent_flight_b_drop_gate_m)"/>
+    <arg name="truth_descent_flight_a_drop_gate_m"
+         value="$(arg truth_descent_flight_a_drop_gate_m)"/>
+    <arg name="truth_descent_flight_a_end_y"
+         value="$(arg truth_descent_flight_a_end_y)"/>
+    <arg name="truth_descent_trigger_timeout_sec"
+         value="$(arg truth_descent_trigger_timeout_sec)"/>
+    <!-- The visual corridor-exit guide owns the post-climb window: enabling
+         it automatically disables the truth corridor guides on both floors. -->
+    <arg name="enable_third_floor_truth_corridor_guide"
+         value="$(arg enable_third_floor_truth_corridor_guide)"/>
+    <arg name="third_floor_truth_corridor_guide_timeout_sec"
+         value="$(arg third_floor_truth_corridor_guide_timeout_sec)"/>
+    <arg name="enable_second_floor_truth_corridor_guide"
+         value="$(arg enable_second_floor_truth_corridor_guide)"/>
+    <arg name="second_floor_truth_corridor_guide_timeout_sec"
+         value="$(arg second_floor_truth_corridor_guide_timeout_sec)"/>
+    <arg name="second_floor_truth_corridor_guide_speed_mps"
+         value="$(arg second_floor_truth_corridor_guide_speed_mps)"/>
+    <arg name="second_floor_truth_corridor_align_offset_m"
+         value="$(arg second_floor_truth_corridor_align_offset_m)"/>
+    <arg name="stair_truth_two_stage_guide"
+         value="$(arg stair_truth_two_stage_guide)"/>
+    <arg name="stair_truth_entry_guide_speed_mps"
+         value="$(arg stair_truth_entry_guide_speed_mps)"/>
+    <arg name="stair_truth_entry_guide_min_speed_mps"
+         value="$(arg stair_truth_entry_guide_min_speed_mps)"/>
+    <arg name="landing_turn_speed_rps" value="$(arg landing_turn_speed_rps)"/>
+    <arg name="landing_cross_speed_mps" value="$(arg landing_cross_speed_mps)"/>
+    <arg name="entry_alignment_yaw_rate_rps"
+         value="$(arg entry_alignment_yaw_rate_rps)"/>
+    <arg name="truth_flight_b_stall_seconds"
+         value="$(arg truth_flight_b_stall_seconds)"/>
+    <arg name="truth_flight_b_recovery_hold_seconds"
+         value="$(arg truth_flight_b_recovery_hold_seconds)"/>
+    <arg name="truth_flight_b_max_yaw_rate_rps"
+         value="$(arg truth_flight_b_max_yaw_rate_rps)"/>
+    <arg name="truth_flight_b_recovery_ramp_seconds"
+         value="$(arg truth_flight_b_recovery_ramp_seconds)"/>
+    <arg name="truth_flight_b_recovery_ramp_speed_mps"
+         value="$(arg truth_flight_b_recovery_ramp_speed_mps)"/>
+    <arg name="truth_flight_b_recovery_backoff_distance_m"
+         value="$(arg truth_flight_b_recovery_backoff_distance_m)"/>
+    <arg name="truth_flight_b_recovery_backoff_speed_mps"
+         value="$(arg truth_flight_b_recovery_backoff_speed_mps)"/>
+    <arg name="truth_flight_b_slip_detect_seconds"
+         value="$(arg truth_flight_b_slip_detect_seconds)"/>
+    <arg name="truth_flight_b_slip_yaw_rate_rps"
+         value="$(arg truth_flight_b_slip_yaw_rate_rps)"/>
+    <arg name="truth_landing_position_tolerance_m"
+         value="$(arg truth_landing_position_tolerance_m)"/>
+    <arg name="truth_flight_b_drop_detect_m"
+         value="$(arg truth_flight_b_drop_detect_m)"/>
+    <arg name="truth_flight_b_slip_min_gain_m"
+         value="$(arg truth_flight_b_slip_min_gain_m)"/>
+    <arg name="truth_flight_b_slip_hold_seconds"
+         value="$(arg truth_flight_b_slip_hold_seconds)"/>
+    <arg name="pre_ascent_stand_seconds"
+         value="$(arg pre_ascent_stand_seconds)"/>
+    <arg name="landing_heading_tolerance_rad"
+         value="$(arg landing_heading_tolerance_rad)"/>
+    <arg name="enable_realsense" value="$(arg enable_realsense)"/>
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)"/>
+    <arg name="goal_executor_minimum_speed"
+         value="$(arg goal_executor_minimum_speed)"/>
+    <arg name="goal_executor_maximum_speed"
+         value="$(arg goal_executor_maximum_speed)"/>
+    <arg name="goal_executor_dynamic_speed_cap"
+         value="$(arg goal_executor_dynamic_speed_cap)"/>
+    <arg name="goal_executor_distance_gain"
+         value="$(arg goal_executor_distance_gain)"/>
+    <arg name="goal_executor_heading_gain"
+         value="$(arg goal_executor_heading_gain)"/>
+    <arg name="goal_executor_maximum_yaw_rate"
+         value="$(arg goal_executor_maximum_yaw_rate)"/>
+    <arg name="goal_executor_lateral_speed_limit"
+         value="$(arg goal_executor_lateral_speed_limit)"/>
+    <arg name="goal_executor_heading_slowdown_threshold"
+         value="$(arg goal_executor_heading_slowdown_threshold)"/>
+    <arg name="goal_executor_turning_speed_limit"
+         value="$(arg goal_executor_turning_speed_limit)"/>
+    <arg name="goal_executor_localization_degraded_speed_cap"
+         value="$(arg goal_executor_localization_degraded_speed_cap)"/>
+    <arg name="goal_executor_acceleration"
+         value="$(arg goal_executor_acceleration)"/>
+    <arg name="goal_executor_deceleration"
+         value="$(arg goal_executor_deceleration)"/>
+    <arg name="goal_executor_preemption_deceleration"
+         value="$(arg goal_executor_preemption_deceleration)"/>
+    <arg name="goal_executor_preemption_timeout"
+         value="$(arg goal_executor_preemption_timeout)"/>
+    <arg name="world_file" value="$(arg world_file)"/>
+    <arg name="rl_policy" value="$(arg rl_policy)"/>
+    <arg name="two_flight_stair" value="$(arg two_flight_stair)"/>
+    <arg name="stair_ascent_timeout_sec" value="$(arg stair_ascent_timeout_sec)"/>
+    <arg name="upper_landing_clearance_grace_sec"
+         value="$(arg upper_landing_clearance_grace_sec)"/>
+    <arg name="stair_truth_entry_guide" value="$(arg stair_truth_entry_guide)"/>
+    <arg name="stair_truth_entry_timeout_sec"
+         value="$(arg stair_truth_entry_timeout_sec)"/>
+    <arg name="stair_truth_side_entry_offset_m"
+         value="$(arg stair_truth_side_entry_offset_m)"/>
+    <arg name="stair_handoff_on_corridor_exit"
+         value="$(arg stair_handoff_on_corridor_exit)"/>
+    <arg name="offline_truth_layout_metadata"
+         value="$(find simenv_exploration)/../../generated_building/elevator_three_floor_debug/layout_metadata.json"/>
+    <arg name="offline_stair_model_sdf"
+         value="$(find simenv_exploration)/../../generated_building/elevator_three_floor_debug/model.sdf"/>
+    <arg name="stair_ascent_speed_mps" value="0.8"/>
+    <arg name="stair_ascent_maximum_speed_mps" value="0.8"/>
+    <arg name="stair_ascent_speed_third_mps"
+         value="$(arg stair_ascent_speed_third_mps)"/>
+    <arg name="stair_ascent_timeout_third_sec"
+         value="$(arg stair_ascent_timeout_third_sec)"/>
+    <arg name="config_file"
+         value="$(find simenv_exploration)/config/fuel_semantic_fastlio_exploration.yaml"/>
+    <arg name="navigation_odom_topic"
+         value="/simenv/fastlio_stabilized_odometry"/>
+  </include>
+
+</launch>

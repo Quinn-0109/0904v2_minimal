@@ -1,0 +1,12 @@
+<launch>
+  <!-- One-room SLAM gate: no autonomous exploration, DWA, RViz or GUI. -->
+  <arg name="output_dir"/>
+  <include file="$(find simenv_competitor)/launch/room0_mapping_check.launch">
+    <arg name="output_dir" value="$(arg output_dir)"/>
+    <arg name="mission_timeout" value="240.0"/>
+    <arg name="corridor_joy_limit" value="0.52"/>
+    <arg name="door_joy_limit" value="0.40"/>
+    <arg name="room_joy_limit" value="0.55"/>
+    <arg name="scan_pause_seconds" value="0.5"/>
+  </include>
+</launch>

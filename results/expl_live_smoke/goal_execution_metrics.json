@@ -1,0 +1,743 @@
+[
+  {
+    "actual_trajectory_length": 2.606308606904788,
+    "actual_trajectory_length_source": "trajectory_timeseries.jsonl",
+    "astar_path_length": 4.174385972903235,
+    "completed_waypoint_count": 1,
+    "duration": 4.327923975070007,
+    "end_time": 5.427880587056279,
+    "executor_reason": "goal_reached",
+    "executor_reported_success": true,
+    "failure_reason": null,
+    "final_pose": [
+      3.804852820962167,
+      0.06628847022849793,
+      -0.0023793001423541016,
+      0.05555828172909303
+    ],
+    "final_position_error": 0.19279125159214117,
+    "final_yaw_error": null,
+    "goal_id": 1,
+    "goal_pose": [
+      3.9967008962610975,
+      0.08533532546919809,
+      -0.0023793001423541
+    ],
+    "online_odometry_distance_diagnostic": 3.8195637232901847,
+    "refined_path_length": 4.0,
+    "replan_count": 0,
+    "start_pose": [
+      -0.002215123686144684,
+      -0.00778108237232851,
+      -0.0023793001423541,
+      0.028126093666018568
+    ],
+    "start_time": 1.099956611986272,
+    "straight_line_distance": 4.0,
+    "success": true,
+    "waypoint_count": 1,
+    "zero_command_stall_recovery_count": 0
+  },
+  {
+    "actual_trajectory_length": 3.1992650718601947,
+    "actual_trajectory_length_source": "trajectory_timeseries.jsonl",
+    "astar_path_length": 3.518078975136552,
+    "completed_waypoint_count": 1,
+    "duration": 4.128152074990794,
+    "end_time": 11.0224821009906,
+    "executor_reason": "goal_reached",
+    "executor_reported_success": true,
+    "failure_reason": null,
+    "final_pose": [
+      7.151624774122666,
+      0.12236333335935425,
+      -0.0023793001423541016,
+      0.046528904571760794
+    ],
+    "final_position_error": 0.20991457904277316,
+    "final_yaw_error": null,
+    "goal_id": 2,
+    "goal_pose": [
+      7.361194837057363,
+      0.13438494790366096,
+      -0.002379300142354098
+    ],
+    "online_odometry_distance_diagnostic": 3.3045094635716543,
+    "refined_path_length": 3.5,
+    "replan_count": 0,
+    "start_pose": [
+      3.8618312477397523,
+      0.067643133737694,
+      -0.002379300142354098,
+      0.0747465514133841
+    ],
+    "start_time": 6.894330025999807,
+    "straight_line_distance": 3.5,
+    "success": true,
+    "waypoint_count": 1,
+    "zero_command_stall_recovery_count": 0
+  },
+  {
+    "actual_trajectory_length": 0.7019158430510299,
+    "actual_trajectory_length_source": "trajectory_timeseries.jsonl",
+    "astar_path_length": 1.1770170170434138,
+    "completed_waypoint_count": 3,
+    "duration": 4.629537730012089,
+    "end_time": 20.638200841029175,
+    "executor_reason": "goal_reached",
+    "executor_reported_success": true,
+    "failure_reason": null,
+    "final_pose": [
+      6.219416898695081,
+      0.12226150873444287,
+      -0.0023793001423541016,
+      -1.450729734353981
+    ],
+    "final_position_error": 0.20115227219401072,
+    "final_yaw_error": null,
+    "goal_id": 3,
+    "goal_pose": [
+      6.022920677237705,
+      0.07923277924137827,
+      -0.0023793001423541016
+    ],
+    "online_odometry_distance_diagnostic": 1.011312891662898,
+    "refined_path_length": null,
+    "replan_count": 1,
+    "start_pose": [
+      7.197299164192611,
+      0.1167093274939688,
+      -0.0023793001423541016,
+      0.025062378404217975
+    ],
+    "start_time": 16.008663111017086,
+    "straight_line_distance": 1.1749763071191786,
+    "success": true,
+    "waypoint_count": 3,
+    "zero_command_stall_recovery_count": 0
+  },
+  {
+    "actual_trajectory_length": null,
+    "actual_trajectory_length_source": "trajectory_timeseries.jsonl",
+    "astar_path_length": 1.4936990756229342,
+    "completed_waypoint_count": 1,
+    "duration": 2.122232069959864,
+    "end_time": 23.8069094120292,
+    "executor_reason": "goal_reached",
+    "executor_reported_success": true,
+    "failure_reason": null,
+    "final_pose": [
+      6.6721405157450535,
+      -0.6186592135330665,
+      -0.0023793001423541016,
+      -1.192632141138597
+    ],
+    "final_position_error": 0.17054114638171078,
+    "final_yaw_error": null,
+    "goal_id": 4,
+    "goal_pose": [
+      6.754344419325863,
+      -0.7680807676852877,
+      -0.0023793001423541016
+    ],
+    "online_odometry_distance_diagnostic": 0.9011361516827653,
+    "refined_path_length": 1.0504819688979437,
+    "replan_count": 0,
+    "start_pose": [
+      6.189921422649212,
+      0.11788709166529254,
+      -0.0023793001423541016,
+      -1.4977412045420593
+    ],
+    "start_time": 21.684677342069335,
+    "straight_line_distance": 1.0504819688979437,
+    "success": true,
+    "waypoint_count": 1,
+    "zero_command_stall_recovery_count": 0
+  },
+  {
+    "actual_trajectory_length": 0.27914799858829914,
+    "actual_trajectory_length_source": "trajectory_timeseries.jsonl",
+    "astar_path_length": 0.7180208679074878,
+    "completed_waypoint_count": 1,
+    "duration": 1.5221886150538921,
+    "end_time": 26.43222706008237,
+    "executor_reason": "goal_reached",
+    "executor_reported_success": true,
+    "failure_reason": null,
+    "final_pose": [
+      7.067492244845614,
+      -0.7096706000529432,
+      -0.0023793001423540946,
+      -0.7130705195358059
+    ],
+    "final_position_error": 0.19234531558622275,
+    "final_yaw_error": null,
+    "goal_id": 5,
+    "goal_pose": [
+      7.2531358099049505,
+      -0.7600013777145629,
+      -0.0023793001423541016
+    ],
+    "online_odometry_distance_diagnostic": 0.4045280780516941,
+    "refined_path_length": 0.5605057597842119,
+    "replan_count": 0,
+    "start_pose": [
+      6.701458597949126,
+      -0.6609107093349158,
+      -0.0023793001423541016,
+      -1.1698649294294283
+    ],
+    "start_time": 24.910038445028476,
+    "straight_line_distance": 0.5605057597842119,
+    "success": true,
+    "waypoint_count": 1,
+    "zero_command_stall_recovery_count": 0
+  },
+  {
+    "actual_trajectory_length": 0.09094948988943136,
+    "actual_trajectory_length_source": "trajectory_timeseries.jsonl",
+    "astar_path_length": 0.7319389902835497,
+    "completed_waypoint_count": 1,
+    "duration": 1.379789836006239,
+    "end_time": 28.990988536039367,
+    "executor_reason": "goal_reached",
+    "executor_reported_success": true,
+    "failure_reason": null,
+    "final_pose": [
+      7.488830167026651,
+      -0.7300565489787286,
+      -0.0023793001423541016,
+      -0.40476700243368524
+    ],
+    "final_position_error": 0.1704892413734688,
+    "final_yaw_error": null,
+    "goal_id": 6,
+    "goal_pose": [
+      7.657707086730206,
+      -0.7534481589177622,
+      -0.0023793001423540946
+    ],
+    "online_odometry_distance_diagnostic": 0.38512422577735816,
+    "refined_path_length": 0.5520788045278566,
+    "replan_count": 0,
+    "start_pose": [
+      7.107004021478698,
+      -0.7144976732789413,
+      -0.0023793001423540946,
+      -0.6651084346967087
+    ],
+    "start_time": 27.61119870003313,
+    "straight_line_distance": 0.5520788045278566,
+    "success": true,
+    "waypoint_count": 1,
+    "zero_command_stall_recovery_count": 0
+  },
+  {
+    "actual_trajectory_length": 0.0661935607714489,
+    "actual_trajectory_length_source": "trajectory_timeseries.jsonl",
+    "astar_path_length": 0.5735699612684366,
+    "completed_waypoint_count": 1,
+    "duration": 1.2247985439607874,
+    "end_time": 31.074218138004653,
+    "executor_reason": "goal_reached",
+    "executor_reported_success": true,
+    "failure_reason": null,
+    "final_pose": [
+      7.890027605635877,
+      -0.7288798271708072,
+      -0.0023793001423541016,
+      -0.2482660372816595
+    ],
+    "final_position_error": 0.2021690066404448,
+    "final_yaw_error": null,
+    "goal_id": 7,
+    "goal_pose": [
+      8.091434049480348,
+      -0.746422678247761,
+      0.006585743331802715
+    ],
+    "online_odometry_distance_diagnostic": 0.35222959150863403,
+    "refined_path_length": 0.5501535847106911,
+    "replan_count": 0,
+    "start_pose": [
+      7.5412956630562515,
+      -0.7423333564562153,
+      -0.0023793001423541016,
+      -0.3884013178682331
+    ],
+    "start_time": 29.849419594043866,
+    "straight_line_distance": 0.5501535847106911,
+    "success": true,
+    "waypoint_count": 1,
+    "zero_command_stall_recovery_count": 0
+  },
+  {
+    "actual_trajectory_length": 5.251984528355776,
+    "actual_trajectory_length_source": "trajectory_timeseries.jsonl",
+    "astar_path_length": 7.172798508966742,
+    "completed_waypoint_count": 0,
+    "duration": 6.9224086799658835,
+    "end_time": 40.29004460002761,
+    "executor_reason": "path_preempted_for_local_door",
+    "executor_reported_success": true,
+    "failure_reason": null,
+    "final_pose": [
+      13.37592827254578,
+      -0.8900094688783878,
+      -0.0023793001423541016,
+      -0.034915480630781696
+    ],
+    "final_position_error": 1.5742381389241622,
+    "final_yaw_error": null,
+    "goal_id": 8,
+    "goal_pose": [
+      14.949217793619027,
+      -0.8353669860969384,
+      -0.0023793001423541016
+    ],
+    "online_odometry_distance_diagnostic": 5.456477918378964,
+    "refined_path_length": 7.0032835202218315,
+    "replan_count": 0,
+    "start_pose": [
+      7.946663057325148,
+      -0.7343361501168102,
+      -0.0023793001423541016,
+      -0.21741535826249936
+    ],
+    "start_time": 33.36763592006173,
+    "straight_line_distance": 7.0032835202218315,
+    "success": true,
+    "waypoint_count": 1,
+    "zero_command_stall_recovery_count": 0
+  },
+  {
+    "actual_trajectory_length": 1.6075017980027702,
+    "actual_trajectory_length_source": "trajectory_timeseries.jsonl",
+    "astar_path_length": 2.236466583366431,
+    "completed_waypoint_count": 1,
+    "duration": 4.592181935091503,
+    "end_time": 46.28687119507231,
+    "executor_reason": "goal_reached",
+    "executor_reported_success": true,
+    "failure_reason": null,
+    "final_pose": [
+      13.564253432667376,
+      -2.6930454584310746,
+      -0.0023793001423541016,
+      -1.2552050023236523
+    ],
+    "final_position_error": 0.17999715283949858,
+    "final_yaw_error": null,
+    "goal_id": 9,
+    "goal_pose": [
+      13.6053,
+      -2.8683,
+      -0.0023793001423541016
+    ],
+    "online_odometry_distance_diagnostic": 1.8563389481484887,
+    "refined_path_length": 1.9865154399818024,
+    "replan_count": 0,
+    "start_pose": [
+      13.367892413499352,
+      -0.8960218169948666,
+      -0.0023793001423541016,
+      -0.01700731129081007
+    ],
+    "start_time": 41.694689259980805,
+    "straight_line_distance": 1.9865154399818024,
+    "success": true,
+    "waypoint_count": 1,
+    "zero_command_stall_recovery_count": 0
+  },
+  {
+    "actual_trajectory_length": 1.8999582141059606,
+    "actual_trajectory_length_source": "trajectory_timeseries.jsonl",
+    "astar_path_length": 2.5891389386094033,
+    "completed_waypoint_count": 1,
+    "duration": 3.4660645780386403,
+    "end_time": 52.45292913308367,
+    "executor_reason": "goal_reached",
+    "executor_reported_success": true,
+    "failure_reason": null,
+    "final_pose": [
+      13.180369189878155,
+      -4.681280054362309,
+      -0.0023793001423541016,
+      -1.7067122620435904
+    ],
+    "final_position_error": 0.20147703121177796,
+    "final_yaw_error": null,
+    "goal_id": 10,
+    "goal_pose": [
+      13.125000610947609,
+      -4.87499973475933,
+      -0.0023793001423541016
+    ],
+    "online_odometry_distance_diagnostic": 2.0291108105030626,
+    "refined_path_length": 2.1847790815238635,
+    "replan_count": 0,
+    "start_pose": [
+      13.569605567400737,
+      -2.7359377749831366,
+      -0.0023793001423541016,
+      -1.2657398389417107
+    ],
+    "start_time": 48.98686455504503,
+    "straight_line_distance": 2.1847790815238635,
+    "success": true,
+    "waypoint_count": 1,
+    "zero_command_stall_recovery_count": 0
+  },
+  {
+    "actual_trajectory_length": 2.9684335291540735,
+    "actual_trajectory_length_source": "trajectory_timeseries.jsonl",
+    "astar_path_length": 4.214017235439009,
+    "completed_waypoint_count": 10,
+    "duration": 10.736140631022863,
+    "end_time": 69.65995291504078,
+    "executor_reason": "goal_reached",
+    "executor_reported_success": true,
+    "failure_reason": null,
+    "final_pose": [
+      13.434332432944155,
+      -1.3268934037113567,
+      -0.0023793001423541016,
+      1.6136049472873866
+    ],
+    "final_position_error": 0.2021093674504533,
+    "final_yaw_error": null,
+    "goal_id": 11,
+    "goal_pose": [
+      13.425000622868538,
+      -1.1249995857477177,
+      -0.0023793001423541016
+    ],
+    "online_odometry_distance_diagnostic": 3.6452318730302755,
+    "refined_path_length": 4.214017235439009,
+    "replan_count": 0,
+    "start_pose": [
+      13.148290451399927,
+      -4.349418188938973,
+      -0.0023793001423541016,
+      2.2825980141294435
+    ],
+    "start_time": 58.92381228401791,
+    "straight_line_distance": 3.2362700517107705,
+    "success": true,
+    "waypoint_count": 10,
+    "zero_command_stall_recovery_count": 0
+  },
+  {
+    "actual_trajectory_length": 0.5451917084750248,
+    "actual_trajectory_length_source": "trajectory_timeseries.jsonl",
+    "astar_path_length": 2.2448580858097884,
+    "completed_waypoint_count": 2,
+    "duration": 4.44159289507661,
+    "end_time": 76.31579128606245,
+    "executor_reason": "goal_reached",
+    "executor_reported_success": true,
+    "failure_reason": null,
+    "final_pose": [
+      13.865284260492253,
+      0.3111151501145082,
+      -0.0023793001423541016,
+      1.4042005795837547
+    ],
+    "final_position_error": 0.21410591376097698,
+    "final_yaw_error": null,
+    "goal_id": 12,
+    "goal_pose": [
+      13.875000640749931,
+      0.5250004798173915,
+      -0.0023793001423541016
+    ],
+    "online_odometry_distance_diagnostic": 1.9620868410021552,
+    "refined_path_length": 2.2442658419995722,
+    "replan_count": 0,
+    "start_pose": [
+      13.431020256527574,
+      -1.2909210627653391,
+      -0.0023793001423541016,
+      1.6245658975684956
+    ],
+    "start_time": 71.87419839098584,
+    "straight_line_distance": 1.869408898660289,
+    "success": true,
+    "waypoint_count": 2,
+    "zero_command_stall_recovery_count": 0
+  },
+  {
+    "actual_trajectory_length": 0.8505904620361192,
+    "actual_trajectory_length_source": "trajectory_timeseries.jsonl",
+    "astar_path_length": 2.70653367326425,
+    "completed_waypoint_count": 1,
+    "duration": 3.6241828959900886,
+    "end_time": 82.76768774201628,
+    "executor_reason": "goal_reached",
+    "executor_reported_success": true,
+    "failure_reason": null,
+    "final_pose": [
+      14.022899588983678,
+      2.728221662995044,
+      -0.0023793001423541016,
+      1.501728330865061
+    ],
+    "final_position_error": 0.1967901286298775,
+    "final_yaw_error": null,
+    "goal_id": 13,
+    "goal_pose": [
+      14.025000646710396,
+      2.925000575184823,
+      -0.0023793001423541016
+    ],
+    "online_odometry_distance_diagnostic": 2.38025406802382,
+    "refined_path_length": 2.5612158784230554,
+    "replan_count": 0,
+    "start_pose": [
+      13.865725537334638,
+      0.36874193893149526,
+      -0.0023793001423541016,
+      1.4138474091209168
+    ],
+    "start_time": 79.14350484602619,
+    "straight_line_distance": 2.5612158784230554,
+    "success": true,
+    "waypoint_count": 1,
+    "zero_command_stall_recovery_count": 0
+  },
+  {
+    "actual_trajectory_length": 2.7736938638368986,
+    "actual_trajectory_length_source": "trajectory_timeseries.jsonl",
+    "astar_path_length": 3.873446149653251,
+    "completed_waypoint_count": 4,
+    "duration": 8.80988101894036,
+    "end_time": 99.89106103801169,
+    "executor_reason": "goal_reached",
+    "executor_reported_success": true,
+    "failure_reason": null,
+    "final_pose": [
+      13.89805037756628,
+      -0.9460226774294205,
+      0.0019342223175956852,
+      -1.6075798977750437
+    ],
+    "final_position_error": 0.18045504725132827,
+    "final_yaw_error": null,
+    "goal_id": 14,
+    "goal_pose": [
+      13.875000640749931,
+      -1.1249995857477177,
+      -0.0023793001423541016
+    ],
+    "online_odometry_distance_diagnostic": 3.4311219785421563,
+    "refined_path_length": 3.6026131912028654,
+    "replan_count": 0,
+    "start_pose": [
+      13.853586787870668,
+      2.4465750633892034,
+      -0.0023793001423541016,
+      -2.4713236541579837
+    ],
+    "start_time": 91.08118001907133,
+    "straight_line_distance": 3.5716388433676567,
+    "success": true,
+    "waypoint_count": 4,
+    "zero_command_stall_recovery_count": 0
+  },
+  {
+    "actual_trajectory_length": null,
+    "actual_trajectory_length_source": "trajectory_timeseries.jsonl",
+    "astar_path_length": 0.40274585295191,
+    "completed_waypoint_count": 1,
+    "duration": 1.3021331719355658,
+    "end_time": 106.68163943500258,
+    "executor_reason": "goal_reached",
+    "executor_reported_success": true,
+    "failure_reason": null,
+    "final_pose": [
+      14.200572527910806,
+      -0.8820910519952724,
+      -0.0033529988787301124,
+      0.5859899977145108
+    ],
+    "final_position_error": 0.21057581409959206,
+    "final_yaw_error": null,
+    "goal_id": 15,
+    "goal_pose": [
+      14.23533505094106,
+      -1.0897776920958744,
+      -0.0023793001423541016
+    ],
+    "online_odometry_distance_diagnostic": 0.1888877238647086,
+    "refined_path_length": 0.3816413457212397,
+    "replan_count": 0,
+    "start_pose": [
+      14.210791652423481,
+      -0.7089263584325588,
+      -0.0023793001423541016,
+      0.8592107888646727
+    ],
+    "start_time": 105.37950626306701,
+    "straight_line_distance": 0.3816413457212397,
+    "success": true,
+    "waypoint_count": 1,
+    "zero_command_stall_recovery_count": 0
+  },
+  {
+    "actual_trajectory_length": 1.9537970983375423,
+    "actual_trajectory_length_source": "trajectory_timeseries.jsonl",
+    "astar_path_length": 3.1850363693427877,
+    "completed_waypoint_count": 1,
+    "duration": 8.08123864501249,
+    "end_time": 120.19909981300589,
+    "executor_reason": "goal_reached",
+    "executor_reported_success": true,
+    "failure_reason": null,
+    "final_pose": [
+      16.53811847479027,
+      -1.058422868608422,
+      -0.0023793001423541016,
+      0.2738882273093323
+    ],
+    "final_position_error": 0.19255481092173204,
+    "final_yaw_error": null,
+    "goal_id": 16,
+    "goal_pose": [
+      16.730459974917206,
+      -1.0493618235238975,
+      -0.0023793001423541016
+    ],
+    "online_odometry_distance_diagnostic": 2.869193648252108,
+    "refined_path_length": 3.0157444704115277,
+    "replan_count": 0,
+    "start_pose": [
+      13.722590019376138,
+      -0.9099599201208536,
+      -0.0023793001423541016,
+      3.0720343829899512
+    ],
+    "start_time": 112.1178611679934,
+    "straight_line_distance": 3.011098563667257,
+    "success": true,
+    "waypoint_count": 1,
+    "zero_command_stall_recovery_count": 0
+  },
+  {
+    "actual_trajectory_length": 2.4676658279448738,
+    "actual_trajectory_length_source": "trajectory_timeseries.jsonl",
+    "astar_path_length": 3.3238125077318297,
+    "completed_waypoint_count": 1,
+    "duration": 3.250418866984546,
+    "end_time": 125.36299148504622,
+    "executor_reason": "goal_reached",
+    "executor_reported_success": true,
+    "failure_reason": null,
+    "final_pose": [
+      19.424694013437268,
+      -1.3726014100703048,
+      -0.0023793001423541016,
+      0.011627787436495583
+    ],
+    "final_position_error": 0.17782516527099385,
+    "final_yaw_error": null,
+    "goal_id": 17,
+    "goal_pose": [
+      19.599912898012953,
+      -1.402935085939034,
+      -0.0023793001423541016
+    ],
+    "online_odometry_distance_diagnostic": 2.8899786740299986,
+    "refined_path_length": 3.0257933288655696,
+    "replan_count": 0,
+    "start_pose": [
+      16.59392134241934,
+      -1.0573341069079125,
+      -0.0023793001423541016,
+      0.26302964332893397
+    ],
+    "start_time": 122.11257261806168,
+    "straight_line_distance": 3.0257933288655696,
+    "success": true,
+    "waypoint_count": 1,
+    "zero_command_stall_recovery_count": 0
+  },
+  {
+    "actual_trajectory_length": 2.054442324362994,
+    "actual_trajectory_length_source": "trajectory_timeseries.jsonl",
+    "astar_path_length": 2.5240475787480077,
+    "completed_waypoint_count": 3,
+    "duration": 5.198445649002679,
+    "end_time": 132.1473617600277,
+    "executor_reason": "goal_reached",
+    "executor_reported_success": true,
+    "failure_reason": null,
+    "final_pose": [
+      21.860846967992504,
+      -1.390398035216263,
+      -0.002824103896654717,
+      0.01987167143981899
+    ],
+    "final_position_error": 0.20167366688608077,
+    "final_yaw_error": null,
+    "goal_id": 18,
+    "goal_pose": [
+      22.06066132383143,
+      -1.363076045611669,
+      -0.0023793001423541016
+    ],
+    "online_odometry_distance_diagnostic": 2.3305262574664627,
+    "refined_path_length": null,
+    "replan_count": 0,
+    "start_pose": [
+      19.560739193711814,
+      -1.3881295309201218,
+      -0.0023793001423541016,
+      0.019282934387678523
+    ],
+    "start_time": 126.94891611102503,
+    "straight_line_distance": 2.500047666303163,
+    "success": true,
+    "waypoint_count": 3,
+    "zero_command_stall_recovery_count": 0
+  },
+  {
+    "actual_trajectory_length": 1.6022741920731787,
+    "actual_trajectory_length_source": "trajectory_timeseries.jsonl",
+    "astar_path_length": 1.0055743592672064,
+    "completed_waypoint_count": 1,
+    "duration": 12.227967962040566,
+    "end_time": 166.79888574103825,
+    "executor_reason": "goal_reached",
+    "executor_reported_success": true,
+    "failure_reason": null,
+    "final_pose": [
+      21.534053514063476,
+      -1.5468713643166472,
+      -0.0023793001423541016,
+      -0.48627706716100544
+    ],
+    "final_position_error": 0.20404419931587026,
+    "final_yaw_error": null,
+    "goal_id": 23,
+    "goal_pose": [
+      21.426710390160693,
+      -1.3733447409263262,
+      -0.0023793001423541016
+    ],
+    "online_odometry_distance_diagnostic": 2.1268448816903547,
+    "refined_path_length": 0.8155846975108366,
+    "replan_count": 0,
+    "start_pose": [
+      20.581723642953012,
+      -1.2200606196174308,
+      -0.0023793001423541016,
+      2.496407557611987
+    ],
+    "start_time": 154.57091777899768,
+    "straight_line_distance": 0.8587774011943127,
+    "success": true,
+    "waypoint_count": 1,
+    "zero_command_stall_recovery_count": 0
+  }
+]

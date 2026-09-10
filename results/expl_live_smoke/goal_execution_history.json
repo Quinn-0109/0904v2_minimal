@@ -1,0 +1,458 @@
+{
+  "cancel_topic": "/simenv/cancel_exploration_goal",
+  "command_topic": "/cmd_vel",
+  "distance_error_m": 2.5112721126678266,
+  "duration_sec": 8.153601083904505e-05,
+  "end_pose": {
+    "x": 22.034559512352697,
+    "y": -1.8202182428099978,
+    "yaw": -1.7655135329095417,
+    "z": -0.0023793001423541016
+  },
+  "events": [
+    {
+      "event": "goal_received",
+      "goal_generation": 1,
+      "goal_sequence": 1,
+      "goal_stamp": 50.583,
+      "wall_time": 1788918434.4670906
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918438.6560028
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 2,
+      "goal_sequence": 2,
+      "goal_stamp": 55.905,
+      "wall_time": 1788918440.256861
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918444.2401614
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 3,
+      "goal_sequence": 3,
+      "goal_stamp": 64.22,
+      "wall_time": 1788918450.2801552
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918451.2963657
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 4,
+      "goal_sequence": 4,
+      "goal_stamp": 65.188,
+      "wall_time": 1788918451.3331242
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918453.3523998
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 5,
+      "goal_sequence": 5,
+      "goal_stamp": 67.086,
+      "wall_time": 1788918453.388492
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918454.7643938
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 6,
+      "goal_sequence": 6,
+      "goal_stamp": 69.441,
+      "wall_time": 1788918455.9550238
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918457.929365
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 7,
+      "goal_sequence": 7,
+      "goal_stamp": 72.385,
+      "wall_time": 1788918459.181057
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918460.5749373
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 8,
+      "goal_sequence": 8,
+      "goal_stamp": 74.843,
+      "wall_time": 1788918461.891295
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918463.108416
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 9,
+      "goal_sequence": 9,
+      "goal_stamp": 76.886,
+      "wall_time": 1788918464.1246495
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918465.2154067
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 10,
+      "goal_sequence": 10,
+      "goal_stamp": 80.066,
+      "wall_time": 1788918467.653229
+    },
+    {
+      "command_speed": 1.5499999523162842,
+      "event": "goal_preemption_deceleration_started",
+      "goal_generation": 10,
+      "measured_speed": 0.0,
+      "wall_time": 1788918471.4286726
+    },
+    {
+      "event": "goal_cancelled_by_manager:confirmed_local_door_preemption",
+      "wall_time": 1788918474.391996
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 11,
+      "goal_sequence": 11,
+      "goal_stamp": 87.693,
+      "wall_time": 1788918475.9788957
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918480.3958123
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 12,
+      "goal_sequence": 12,
+      "goal_stamp": 94.369,
+      "wall_time": 1788918484.2056277
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918487.5016937
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 13,
+      "goal_sequence": 13,
+      "goal_stamp": 103.377,
+      "wall_time": 1788918494.1502626
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918495.329934
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 14,
+      "goal_sequence": 14,
+      "goal_stamp": 104.471,
+      "wall_time": 1788918495.3533075
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918496.0830395
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 15,
+      "goal_sequence": 15,
+      "goal_stamp": 105.172,
+      "wall_time": 1788918496.1050014
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918497.2776258
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 16,
+      "goal_sequence": 16,
+      "goal_stamp": 106.279,
+      "wall_time": 1788918497.3082204
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918498.4816434
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 17,
+      "goal_sequence": 17,
+      "goal_stamp": 107.378,
+      "wall_time": 1788918498.512525
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918499.6883447
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 18,
+      "goal_sequence": 18,
+      "goal_stamp": 108.477,
+      "wall_time": 1788918499.7171688
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918500.567131
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 19,
+      "goal_sequence": 19,
+      "goal_stamp": 109.252,
+      "wall_time": 1788918500.5698576
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918501.759742
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 20,
+      "goal_sequence": 20,
+      "goal_stamp": 110.363,
+      "wall_time": 1788918501.773313
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918502.9494019
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 21,
+      "goal_sequence": 21,
+      "goal_stamp": 111.478,
+      "wall_time": 1788918502.9771938
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918504.1469328
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 22,
+      "goal_sequence": 22,
+      "goal_stamp": 112.581,
+      "wall_time": 1788918504.1798959
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918504.6860547
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 23,
+      "goal_sequence": 23,
+      "goal_stamp": 115.273,
+      "wall_time": 1788918507.122056
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918508.5282946
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 24,
+      "goal_sequence": 24,
+      "goal_stamp": 116.598,
+      "wall_time": 1788918508.5768435
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918511.3754773
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 25,
+      "goal_sequence": 25,
+      "goal_stamp": 121.887,
+      "wall_time": 1788918514.3771265
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918518.7143154
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 26,
+      "goal_sequence": 26,
+      "goal_stamp": 132.706,
+      "wall_time": 1788918527.2311401
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918530.6836476
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 27,
+      "goal_sequence": 27,
+      "goal_stamp": 135.853,
+      "wall_time": 1788918530.6912968
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918531.1236389
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 28,
+      "goal_sequence": 28,
+      "goal_stamp": 136.268,
+      "wall_time": 1788918531.1428552
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918532.4368396
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 29,
+      "goal_sequence": 29,
+      "goal_stamp": 137.459,
+      "wall_time": 1788918532.4468606
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918535.8064568
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 30,
+      "goal_sequence": 30,
+      "goal_stamp": 145.698,
+      "wall_time": 1788918541.543392
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918542.6359224
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 31,
+      "goal_sequence": 31,
+      "goal_stamp": 151.796,
+      "wall_time": 1788918549.259488
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918557.1206636
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 32,
+      "goal_sequence": 32,
+      "goal_stamp": 160.881,
+      "wall_time": 1788918559.2250965
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918562.2474563
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 33,
+      "goal_sequence": 33,
+      "goal_stamp": 165.321,
+      "wall_time": 1788918564.0990722
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918565.8877828
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 34,
+      "goal_sequence": 34,
+      "goal_stamp": 166.998,
+      "wall_time": 1788918565.9380035
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918567.7381456
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 35,
+      "goal_sequence": 35,
+      "goal_stamp": 168.68,
+      "wall_time": 1788918567.77106
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918569.058919
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 36,
+      "goal_sequence": 36,
+      "goal_stamp": 190.369,
+      "wall_time": 1788918592.6706994
+    },
+    {
+      "event": "goal_reached",
+      "wall_time": 1788918604.640494
+    },
+    {
+      "event": "goal_received",
+      "goal_generation": 37,
+      "goal_sequence": 37,
+      "goal_stamp": 228.898,
+      "wall_time": 1788918636.4908178
+    }
+  ],
+  "final": false,
+  "goal": {
+    "x": 19.560739193711814,
+    "y": -1.3881295309201218,
+    "yaw": 3.0522990549412534,
+    "z": -0.0023793001423541016
+  },
+  "goal_frame": "camera_init",
+  "goal_sequence": 37,
+  "goal_stamp": 228.898,
+  "goal_topic": "/exploration_goal",
+  "log_revision": 74,
+  "odometry_topic": "/simenv/fastlio_stabilized_odometry",
+  "parameters": {
+    "goal_tolerance_m": 0.22,
+    "maximum_speed_mps": 1.5499999523162842,
+    "maximum_stall_recoveries": 2,
+    "minimum_speed_mps": 0.6,
+    "odometry_timeout_sec": 1.5,
+    "preemption_deceleration_mps2": 0.55,
+    "preemption_timeout_sec": 4.0,
+    "progress_timeout_sec": 8.0,
+    "stall_recovery_seconds": 1.2
+  },
+  "samples": [],
+  "schema": "simenv_goal_execution_log_v1",
+  "start_pose": {
+    "x": 22.034559512352697,
+    "y": -1.8202182428099978,
+    "yaw": -1.7655135329095417,
+    "z": -0.0023793001423541016
+  },
+  "state": "executing",
+  "success": false
+}

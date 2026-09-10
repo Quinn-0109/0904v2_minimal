@@ -1,0 +1,196 @@
+<launch>
+  <!-- Independent floor-local throughput test: spawn at the selected
+       corridor entrance, visit four rooms with two physical camera centres,
+       and stop after the fourth verified EXIT returns to the corridor. -->
+  <arg name="floor_number" default="1"/>
+  <arg name="output_dir"
+       default="$(find simenv_competitor)/../../results/floor_$(arg floor_number)_corridor_rooms_140s"/>
+  <arg name="world_file"
+       default="$(find simenv_competitor)/../../generated_building/competition_scene.world"/>
+  <arg name="layout_metadata"
+       default="$(find simenv_competitor)/../../generated_building/layout_metadata.json"/>
+  <arg name="gazebo_gui" default="false"/>
+  <!-- 140 s is the optimization target. The extra 20 s is diagnostic
+       headroom so a small miss still produces complete result files. -->
+  <arg name="maximum_duration" default="160.0"/>
+  <arg name="auto_generate_visualization" default="true"/>
+
+  <include file="$(find simenv_competitor)/launch/baseline_fastlio_exploration.launch">
+    <arg name="output_dir" value="$(arg output_dir)"/>
+    <arg name="world_file" value="$(arg world_file)"/>
+    <arg name="offline_truth_layout_metadata" value="$(arg layout_metadata)"/>
+    <arg name="baseline_floor_number" value="$(arg floor_number)"/>
+    <arg name="baseline_floor_base_z"
+         value="$(eval 2.6 * (int(arg('floor_number')) - 1))"/>
+    <arg name="gazebo_gui" value="$(arg gazebo_gui)"/>
+    <arg name="maximum_duration" value="$(arg maximum_duration)"/>
+    <arg name="first_floor_auto_generate_visualization"
+         value="$(arg auto_generate_visualization)"/>
+    <arg name="first_floor_corridor_entry_distance_from_mission_start_m" value="0.0"/>
+    <arg name="first_floor_room_phase_target_seconds" value="140.0"/>
+    <!-- Never turn the 140 s target into a best-effort early return. -->
+    <arg name="first_floor_room_phase_deadline_minimum_exited_rooms" value="4"/>
+    <arg name="first_floor_room_phase_deadline_hard_overrun_seconds" value="20.0"/>
+    <arg name="first_floor_stop_immediately_after_all_room_exits" value="true"/>
+    <arg name="baseline_exploration_manager_required" value="true"/>
+    <!-- Timed runs retain danger truth evaluation but omit the independent
+         offline LiDAR ray caster. FAST-LIO already supplies the online map. -->
+    <arg name="enable_truth_lidar_coverage_logger" value="false"/>
+    <!-- FAST-LIO continuously consumes the relayed planar truth pose in this
+         simulator profile, so the separate request monitor is redundant. -->
+    <arg name="localization_truth_recovery_enabled" value="false"/>
+
+    <!-- All floors share the same corridor footprint. Only the physical floor
+         elevation changes; 0.60 m is the normal A1 body spawn offset. -->
+    <arg name="robot_spawn_x" value="0.0"/>
+    <arg name="robot_spawn_y" value="8.80"/>
+    <arg name="robot_spawn_z"
+         value="$(eval 0.60 + 2.6 * (int(arg('floor_number')) - 1))"/>
+    <arg name="robot_spawn_yaw" value="1.5708"/>
+
+    <arg name="enable_second_floor_exploration" value="false"/>
+    <arg name="enable_third_floor_exploration" value="false"/>
+    <arg name="enable_first_floor_stair_manager" value="false"/>
+    <arg name="stair_handoff_on_corridor_exit" value="false"/>
+
+    <!-- Timed flat-floor profile. Two separated camera centres remain
+         mandatory. Their route-arrival headings are approximately opposite,
+         so two 170 degree body fans plus the camera's 60 degree horizontal
+         FOV cover the room circle with overlap; neither point needs to waste
+         time looking through a complete 360 degrees. -->
+    <arg name="first_floor_room_entry_replan_wait_seconds" value="3.0"/>
+    <arg name="first_floor_room_entry_replan_minimum_grid_updates" value="3"/>
+    <!-- In run 1 the near-row doors were confirmed 2.52 m behind the robot
+         and missed the generic 2.50 m gate by only 2 cm. This isolated fast
+         profile admits that bounded confirmation lag, so room 0/1 take over
+         during the initial outbound pass instead of waiting for a retrace. -->
+    <arg name="first_floor_room_new_door_maximum_lookbehind_m" value="4.0"/>
+    <arg name="first_floor_room_visit_budget_seconds" value="31.0"/>
+    <arg name="first_floor_room_mission_entry_minimum_remaining_seconds" value="10.0"/>
+    <!-- The second doorway row is about 14 m ahead. Keep that transit as one
+         continuous centreline command; fresh doorway evidence can still
+         asynchronously preempt it before the endpoint. -->
+    <arg name="first_floor_corridor_far_pair_search_maximum_advance_m" value="14.0"/>
+    <arg name="first_floor_corridor_far_pair_search_target_advance_m" value="14.0"/>
+    <!-- Stop the first online corridor increment at the near doorway row.
+         The 2 m plus detector-barrier experiment in runs 53 to 55 did not
+         reveal the portal before the next step and added one stop. Retain the
+         validated 3 m increment until online in-motion preemption is improved. -->
+    <arg name="first_floor_corridor_near_pair_search_maximum_advance_m" value="3.0"/>
+    <arg name="first_floor_corridor_near_pair_detection_wait_seconds" value="0.0"/>
+    <arg name="first_floor_room_visual_breadth_lateral_m" value="4.25"/>
+    <arg name="first_floor_room_visual_breadth_min_baseline_m" value="3.60"/>
+    <!-- Open rooms retain two opposite-side diagonal views, but centre the
+         deep view nearer the room midpoint to avoid a far-wall detour. -->
+    <arg name="first_floor_room_open_preferred_deep_depth_m" value="6.70"/>
+    <arg name="first_floor_room_open_minimum_deep_depth_m" value="6.25"/>
+    <arg name="first_floor_room_obstacle_second_view_near_door" value="true"/>
+    <arg name="first_floor_room_obstacle_front_opposite_side_pair" value="true"/>
+    <arg name="first_floor_corridor_transit_speed" value="2.05"/>
+    <arg name="first_floor_corridor_search_speed" value="1.90"/>
+    <arg name="first_floor_local_door_forward_high_water_tolerance_m" value="3.0"/>
+    <!-- The initial outbound pass must not outrun the doorway confirmations:
+         run14 confirmed room 1 at 37 s but the robot had already driven past
+         it at 36 s (2.26 m behind > 2.0 m tolerance), then retraced (46.6 s
+         entry).  Widen the high-water gate so the near doorway row is taken
+         over on the first pass instead of after a retrace. -->
+    <arg name="baseline_corridor_resume_failure_limit" value="4"/>
+    <!-- One extra 90-degree hold is used only when the just-exited station
+         still lacks its opposite room after mirror/recenter refresh. F3
+         optimized3 received the fourth-door evidence one cycle late; the
+         old limit=1 moved 4 m to the terminal wall and started a 24 m return
+         instead. Successful paired entries never consume this allowance. -->
+    <arg name="baseline_post_exit_opposite_station_hold_limit" value="2"/>
+    <!-- Stability over raw speed: corridor_rooms_140s_6 fell at -1.0 rad/s
+         full yaw + 0.55 m/s lateral, and run 4 fell on the exit leg at
+         1.35 m/s + 0.55 lateral + 0.45 yaw.  Bound combined translation,
+         lateral and yaw inside rooms and on exits; the corridor legs stay
+         fast. -->
+    <arg name="first_floor_room_entry_speed" value="2.05"/>
+    <arg name="first_floor_room_maximum_yaw_rate" value="1.10"/>
+    <!-- ENTRY/ENTRY_STAGING turns below the executor's fast-turn threshold
+         may translate inside the same bounded 0.75 m/s, 0.35 m/s lateral
+         stability envelope used for exits, eliminating short stop-turn-go
+         cycles without increasing the gait's combined-load limit. -->
+    <arg name="first_floor_room_entry_blended_turn_maximum_yaw_rate"
+         value="0.75"/>
+    <arg name="first_floor_room_two_pose_blended_turn_maximum_yaw_rate"
+         value="0.75"/>
+    <!-- Keep ordinary EXIT turns below the executor's 0.80 rad/s fast-turn
+         threshold.  They can then translate inside the proven 0.75/0.35
+         combined-turn envelope instead of spending about 1.2 s stopped at
+         every large egress heading change (measured in run66 room 4). -->
+    <arg name="first_floor_room_exit_blended_turn_maximum_yaw_rate"
+         value="0.75"/>
+    <arg name="first_floor_room_lateral_speed_limit" value="0.65"/>
+    <!-- 0.15 m remains below the 0.16772 m inflated twin-cylinder radius,
+         so adjacent audited body footprints overlap while service calls drop. -->
+    <arg name="first_floor_scan_lite_segment_sample_spacing_m" value="0.15"/>
+    <arg name="first_floor_fast_corridor_maximum_yaw_rate" value="0.75"/>
+    <!-- run77 showed that the long corridor and the otherwise straight
+         4 m room legs did reach their 1.9 to 2.0 m/s caps, but spent 35 to 50%
+         of their samples below 1.2 m/s while repeatedly ramping between
+         short goals. Tighten only the command response; the established
+         lateral/yaw stability envelopes and obstacle-room caps below remain
+         unchanged. -->
+    <arg name="goal_executor_acceleration" value="2.00"/>
+    <arg name="goal_executor_deceleration" value="1.80"/>
+    <arg name="goal_executor_navigation_turning_translation_limit_mps"
+         value="0.90"/>
+    <arg name="goal_executor_navigation_turning_lateral_limit_mps"
+         value="0.30"/>
+    <!-- run32 fell only on the long open G3->G4 diagonal. Keep fast ENTRY/G3
+         motion, but bound that combined forward/lateral/heading transition. -->
+    <arg name="first_floor_room_open_transition_speed"
+         value="$(eval 1.70 if int(arg('floor_number')) == 3 else 1.90)"/>
+    <arg name="first_floor_room_open_transition_lateral_speed" value="0.55"/>
+    <arg name="first_floor_room_exit_speed" value="1.90"/>
+    <arg name="first_floor_room_exit_lateral_speed_limit" value="0.65"/>
+    <arg name="first_floor_room_fast_exit_approach_speed" value="1.75"/>
+    <arg name="first_floor_room_fast_exit_lateral_speed_limit" value="0.70"/>
+    <!-- Once the inside anchor has aligned the body with the door normal,
+         only accelerate the densely audited straight portal chord. Keep
+         lateral speed at 0.30 m/s and all approach/3-D safety gates intact. -->
+    <arg name="first_floor_room_portal_crossing_speed" value="1.90"/>
+    <arg name="first_floor_room_open_transition_distance_gain" value="0.90"/>
+    <arg name="first_floor_room_portal_crossing_lateral_speed" value="0.30"/>
+    <!-- Both separated physical viewpoints use a 170-degree body fan. Their
+         approximately opposite arrival headings plus the camera's 60-degree
+         horizontal FOV provide overlapping room coverage; neither point
+         performs a full 360-degree spin. -->
+    <arg name="first_floor_room_primary_sweep_angle_rad" value="2.967059728"/>
+    <arg name="first_floor_room_secondary_sweep_angle_rad" value="2.967059728"/>
+    <!-- The measured-speed safety threshold remains 0.12 m/s; only shorten
+         the already-below-threshold confirmation hold for each camera fan. -->
+    <arg name="first_floor_visual_sweep_settle_hold_seconds" value="0.02"/>
+
+    <arg name="first_floor_room_camera_sweep_angular_speed" value="2.10"/>
+    <!-- Synchronized RGB-D at 12 Hz retained 6 to 46 accepted observations
+         at 2 rad/s in runs 36 to 39, so view two uses the proven speed. -->
+    <arg name="first_floor_room_secondary_sweep_angular_speed" value="2.10"/>
+    <arg name="goal_executor_maximum_visual_sweep_angular_speed" value="2.10"/>
+    <arg name="first_floor_room_obstacle_transition_speed" value="1.20"/>
+    <!-- Keep necessary table-avoidance bends, but prevent each short A* leg
+         from rebuilding speed from the global 0.65 m/s floor.  This affects
+         only a G3->G4 route whose direct chord is confirmed obstructed. -->
+    <arg name="first_floor_room_obstacle_transition_minimum_speed" value="0.65"/>
+
+    <arg name="first_floor_room_obstacle_transition_lateral_speed" value="0.35"/>
+    <arg name="first_floor_room_obstacle_transition_heading_gain" value="1.10"/>
+    <arg name="first_floor_room_obstacle_transition_maximum_yaw_rate" value="0.65"/>
+    <arg name="first_floor_room_obstacle_transition_distance_gain" value="0.85"/>
+    <arg name="first_floor_room_two_pose_maximum_straight_chord_m" value="5.50"/>
+    <!-- The live 3-D refiner still samples every replacement chord at 10 cm.
+         A 0.35 m route band removes two stop-and-go points around a real
+         obstacle, while a blocked direct G3->G4 chord remains impossible. -->
+    <arg name="first_floor_room_two_pose_route_deviation_tolerance_m" value="0.35"/>
+    <!-- Permit one audited chord to absorb a short pre-turn waypoint. The
+         obstacle-motion profile still limits commanded yaw to 0.65 rad/s. -->
+    <arg name="first_floor_room_two_pose_maximum_yaw_change_rad" value="1.30"/>
+    <!-- The measured corridor-side anchor already clears the door plane.
+         Add only the minimum verified 0.35 m body-clearance extension in the
+         timed F1 profile. Run50's 0.65 m extension crossed the corridor
+         centreline, then paid for a separate 0.72 m recenter goal. -->
+    <arg name="first_floor_room_exit_corridor_extension_m" value="0.35"/>
+  </include>
+</launch>

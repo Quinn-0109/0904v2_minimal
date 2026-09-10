@@ -1,0 +1,62 @@
+<?xml version="1.0"?>
+<!-- SCAN-Planner as the local planner in the SimEnv Gazebo (Unitree A1) sim.
+     PREREQ: base sim up via ./docker/run.sh sim|control (gzserver/A1/Livox/state_from_gazebo ->
+     /Odometry_gazebo, /livox/Pointcloud2, tf, /clock). Replaces TARE explore_simenv.launch.
+     Wiring: scan_to_map -> /registered_scan -> SCAN-Planner grid_map (cloud_is_world=true);
+             /Odometry_gazebo -> SCAN-Planner body_pose; closed_loop_controller -> /cmd_vel (BODY);
+             body_cmd_vel_driver -> Gazebo a1_gazebo set_model_state.
+     navi_mode=1 (navi_mode=3/reference-path crashes scan_planner_node with boost::lock_error
+     in this image build; prior session settled on mode 1; verified reaching room_0). -->
+<launch>
+  <arg name="navi_mode" default="1"/>
+  <arg name="results_dir" default="/workspace/SimEnv/results/scan_planner_demo"/>
+  <arg name="detected_json" default="$(arg results_dir)/detected_danger.json"/>
+  <arg name="camera_video" default="$(arg results_dir)/scanplanner_camera_fixed.mp4"/>
+
+  <node pkg="simenv_bridge" type="set_sim_physics.py" name="set_sim_physics" output="screen"/>
+
+  <node pkg="simenv_bridge" type="scan_to_map.py" name="scan_to_map" output="screen">
+    <param name="input"        value="/livox/Pointcloud2"/>
+    <param name="output"       value="/registered_scan"/>
+    <param name="target_frame" value="map"/>
+    <param name="min_range"    value="0.5"/>
+    <param name="max_range"    value="12.0"/>
+  </node>
+
+  <node pkg="simenv_bridge" type="body_cmd_vel_driver.py" name="body_cmd_vel_driver" output="screen">
+    <param name="model_name" value="a1_gazebo"/>
+    <param name="rate"   value="30"/>
+    <param name="max_v"  value="1.5"/>
+    <param name="max_w"  value="2.0"/>
+    <param name="linear_scale" value="2.5"/>
+    <param name="lock_z" value="0.6"/>
+  </node>
+
+  <node pkg="simenv_bridge" type="scanplanner_goal_sequencer.py" name="scanplanner_goal_sequencer" output="screen">
+    <param name="goal_tol" value="1.0"/>
+    <param name="rate"     value="3.0"/>
+    <param name="stall_seconds" value="20.0"/>
+    <param name="layout_path" value="/workspace/SimEnv/generated_building/layout_metadata.json"/>
+  </node>
+
+  <node pkg="simenv_bridge" type="danger_detector.py" name="danger_detector" output="screen">
+    <param name="image_topic" value="/real_sense/rgb/image_raw"/>
+    <param name="camera_info_topic" value="/real_sense/rgb/camera_info"/>
+    <param name="depth_topic" value="/real_sense/depth/image_raw"/>
+    <param name="out_json" value="$(arg detected_json)"/>
+    <param name="merge_radius" value="1.2"/>
+    <param name="scan_merge_radius" value="1.2"/>
+    <param name="confirm_count" value="1"/>
+  </node>
+
+  <node pkg="simenv_bridge" type="camera_video_recorder.py" name="camera_video_recorder" output="screen">
+    <param name="out" value="$(arg camera_video)"/>
+    <param name="fps" value="10.0"/>
+  </node>
+
+  <include file="$(find scan_planner)/launch/simenv_scan.launch">
+    <arg name="navi_mode" value="$(arg navi_mode)"/>
+    <arg name="max_vel" value="1.5"/>
+    <arg name="max_acc" value="2.0"/>
+  </include>
+</launch>

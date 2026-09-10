@@ -1,0 +1,198 @@
+{
+  "astar_success_count": 4,
+  "complete_room_count": 1,
+  "corridor_branch_complete_count": 2,
+  "corridor_branch_count": 3,
+  "corridor_branch_merged_aliases": {},
+  "corridor_branch_scheduler_enabled": true,
+  "corridor_branch_station_frame": {
+    "axis": [
+      0.9998688392780238,
+      0.01619580935974901
+    ],
+    "origin": [
+      7.218682741732083,
+      -1.2034329623467683
+    ]
+  },
+  "corridor_branches": [
+    {
+      "attempt_count": 1,
+      "branch_id": "side_branch_01",
+      "cooldown_until": 114.77033999108244,
+      "entry_quality": 0.0,
+      "entry_target": [
+        13.569605567400737,
+        -2.7359377749831366
+      ],
+      "frontier": null,
+      "last_seen": 47.021588835981674,
+      "observations": 1,
+      "side": -1,
+      "state": "ENTERED_PARTIAL",
+      "station": 6.153381909292319
+    },
+    {
+      "attempt_count": 1,
+      "branch_id": "side_branch_02",
+      "cooldown_until": 0.0,
+      "entry_quality": 0.0,
+      "entry_target": [
+        13.865725537334638,
+        0.36874193893149526
+      ],
+      "frontier": null,
+      "last_seen": 77.12167622498237,
+      "observations": 1,
+      "side": 1,
+      "state": "COVERED",
+      "station": 6.210105759526265
+    },
+    {
+      "attempt_count": 2,
+      "branch_id": "side_branch_03",
+      "cooldown_until": 0.0,
+      "entry_quality": 0.0,
+      "entry_target": [
+        21.975736120936993,
+        -1.3827098084558314
+      ],
+      "frontier": null,
+      "last_seen": 172.76322563597932,
+      "observations": 2,
+      "side": 1,
+      "state": "COVERED",
+      "station": 13.316423039330868
+    }
+  ],
+  "corridor_entry_elapsed_sec": 11.811,
+  "corridor_entry_source": "CORRIDOR_ENTRY_FORWARD_LOCKED",
+  "corridor_entry_to_fourth_room_exit_elapsed_sec": null,
+  "corridor_entry_to_fourth_room_exit_target_met": false,
+  "corridor_entry_to_return_elapsed_sec": null,
+  "corridor_full_loop_complete": false,
+  "corridor_full_loop_elapsed_sec": null,
+  "corridor_monotonic_forward_probe": {
+    "activation_after_failed_recoveries": 2,
+    "enabled": true,
+    "mode_active": false,
+    "probe_distance_m": 0.6,
+    "probe_limit": 24,
+    "selected_count": 0
+  },
+  "corridor_return_elapsed_sec": null,
+  "corridor_return_pose": null,
+  "corridor_return_reason": null,
+  "corridor_return_verified": false,
+  "corridor_sweep": {
+    "anchor": [
+      22.01196368864376,
+      -2.2512363796525214
+    ],
+    "confirmation_count": 3,
+    "confirmation_updates_required": 3,
+    "direction_aligned": true,
+    "established": true,
+    "forward_distance_m": 7.0,
+    "minimum_advance_m": 2.5,
+    "minimum_aspect_ratio": 1.6,
+    "minimum_visible_length_m": 4.0,
+    "recent_exclusion_m": 1.5,
+    "reversal_count": 0,
+    "reversal_limit": 2
+  },
+  "depth_breadth_phase": "DISABLED",
+  "depth_breadth_region_count": 6,
+  "depth_breadth_scheduler_enabled": false,
+  "exited_room_count": 2,
+  "fast_lio_ready_time_sec": 36.61863388295751,
+  "first_fuel_goal_time_sec": null,
+  "fourth_room_exit_elapsed_sec": null,
+  "fourth_room_exit_room_phase_elapsed_sec": null,
+  "fourth_room_exit_to_corridor_return_elapsed_sec": null,
+  "frontier_termination_decision_count": 12,
+  "fuel_planning_count": 0,
+  "goal_execution_failure_count": 0,
+  "goal_execution_success_count": 19,
+  "lightweight_room_scheduler_enabled": true,
+  "local_door_candidate_last_elapsed_sec": 122.43550043203868,
+  "local_doorway_detector_enabled": true,
+  "local_rescan_count": 11,
+  "local_rescan_last_completed_elapsed_sec": 111.18038331007119,
+  "mission_budget_starts_after_startup": true,
+  "mission_home_reached": false,
+  "mission_home_tolerance_m": 0.5,
+  "mission_start_pose": [
+    -0.002215123686144684,
+    -0.00778108237232851,
+    -0.0023793001423541,
+    -0.0064825851369847455
+  ],
+  "net_displacement_m": 22.081,
+  "post_entry_lidar_observed_cell_count": 0,
+  "post_room_corridor_sweep": {
+    "attempts": 0,
+    "done": false,
+    "enabled": true,
+    "max_goals": 1
+  },
+  "recognized_room_count": 2,
+  "region_coverage_status": {
+    "coverage_complete": false,
+    "coverage_ratio": 0.3508695652173913,
+    "coverage_source": "post_entry_lidar_rays",
+    "domain_cells": 2300,
+    "entry_depth_m": 0.34005413278336244,
+    "entry_requirement_met": false,
+    "frontier_cells": 33,
+    "known_free_cells": 807,
+    "known_free_m2": 18.15750144302848,
+    "largest_unknown_m2": 23.51250186860565,
+    "map_known_free_cells": 1281,
+    "physical_entry_observed": true,
+    "post_entry_goal_count": 0,
+    "post_entry_observed_cells": 807,
+    "reason": "measured",
+    "unknown_cells": 1493
+  },
+  "region_entry_return_pending": false,
+  "room_entry_candidate_last_elapsed_sec": 122.43562691297848,
+  "room_exit_map_snapshots": [
+    {
+      "elapsed_sec": 69.763,
+      "grid_shape": [
+        143,
+        247
+      ],
+      "room_id": "estimated_room_01",
+      "snapshot_file": "room_exit_map_snapshots/room_exit_01_grid.npz",
+      "trajectory_sample_count": 620
+    },
+    {
+      "elapsed_sec": 99.996,
+      "grid_shape": [
+        143,
+        247
+      ],
+      "room_id": "estimated_room_02",
+      "snapshot_file": "room_exit_map_snapshots/room_exit_02_grid.npz",
+      "trajectory_sample_count": 885
+    }
+  ],
+  "room_phase_started_at_sec": 46.28687119507231,
+  "room_phase_target_met": false,
+  "room_phase_target_seconds": 150.0,
+  "room_target_count": 4,
+  "stair_wait_anchor": [
+    7.197299164192611,
+    0.1167093274939688,
+    -0.0023793001423541016
+  ],
+  "stair_wait_tolerance_m": 0.6,
+  "startup_elapsed_sec": 62.73603633604944,
+  "task_mode": "baseline_fastlio_exploration",
+  "termination_reason": "running",
+  "total_trajectory_length_m": 53.3107,
+  "visited_region_sample_count": 5,
+  "voxel_map_ready_time_sec": 62.62392350402661
+}

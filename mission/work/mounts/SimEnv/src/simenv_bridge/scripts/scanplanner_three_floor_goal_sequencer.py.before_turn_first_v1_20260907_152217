@@ -1,0 +1,2225 @@
+#!/usr/bin/env python3
+"""Run SCAN-Planner on F1/F2/F3 and hand stair ownership to RL managers.
+
+The main-entrance step is crossed with the stair RL policy and a constrained
+forward/yaw command.  Once the robot is physically clear of the threshold,
+this node reloads the plane policy and gives the remaining flat-floor
+waypoints to SCAN's manual-goal interface.  Every room has two complementary
+camera/LiDAR scan poses.  Between floors it disables the flat-floor command mux, triggers the
+appropriate physical stair manager, restores the plane policy on the upper
+landing, and only then re-enables SCAN motion.
+"""
+
+import json
+import math
+import os
+import threading
+import time
+
+import rospy
+from geometry_msgs.msg import PoseStamped, Twist
+from nav_msgs.msg import Odometry
+from sensor_msgs.msg import PointCloud2
+from std_msgs.msg import Bool, Float32, String
+
+
+OBLIQUE_VIEWPOINT_POLICIES = {
+    "open_middle_deep_then_near_oblique",
+    "deep_obstacle_front_oblique_pair",
+    "front_obstacle_side_bypass_oblique",
+}
+
+
+def normalize_angle(angle):
+    return math.atan2(math.sin(float(angle)), math.cos(float(angle)))
+
+
+def accumulated_rotation(previous_yaw, current_yaw):
+    return abs(normalize_angle(float(current_yaw) - float(previous_yaw)))
+
+
+def directional_rotation_increment(previous_yaw, current_yaw, yaw_rate):
+    direction = 1.0 if float(yaw_rate) >= 0.0 else -1.0
+    return max(0.0, direction * normalize_angle(
+        float(current_yaw) - float(previous_yaw)))
+
+
+def attitude_loss_debounce(previous_since, upright_z, minimum_upright_z,
+                           now, minimum_duration):
+    if float(upright_z) >= float(minimum_upright_z):
+        return None, False
+    since = float(now) if previous_since is None else float(previous_since)
+    return since, float(now) - since >= float(minimum_duration)
+
+
+def plane_attitude_speed_scale(upright_z, slowdown_upright_z=0.97,
+                               hold_upright_z=0.90):
+    """Continuously unload the plane gait before a lean becomes a fall.
+
+    ``upright_z`` is cos(roll)*cos(pitch).  Normal learned-gait oscillation is
+    above the slowdown threshold.  A larger lean gets a proportional command
+    reduction and a severe lean gets a zero-command recovery hold.  This is a
+    preventive control guard; the independent 0.55/0.60 s failure contract is
+    intentionally unchanged.
+    """
+    if upright_z is None:
+        return 0.0
+    upper = float(slowdown_upright_z)
+    lower = min(upper - 1.0e-6, float(hold_upright_z))
+    value = float(upright_z)
+    if value >= upper:
+        return 1.0
+    if value <= lower:
+        return 0.0
+    return (value - lower) / (upper - lower)
+
+
+def is_room_scan_waypoint(waypoint, expected_rooms):
+    note = str(waypoint.get("note", ""))
+    # ``_center`` remains the immutable template fallback.  Run-local mission
+    # configs replace every fallback with explicit scan_a/scan_b waypoints.
+    if any(note == str(room) + "_center" for room in expected_rooms):
+        return True
+    if not bool(waypoint.get("scan", False)):
+        return False
+    room_id = str(waypoint.get("room_id", ""))
+    role = str(waypoint.get("viewpoint_role", ""))
+    if room_id in {str(room) for room in expected_rooms} and role in ("G3", "G4"):
+        return True
+    return any(note in (str(room) + "_scan_a", str(room) + "_scan_b",
+                        str(room) + "_g3", str(room) + "_g4")
+               for room in expected_rooms)
+
+
+def waypoint_tolerance(note, default_tolerance=0.48,
+                       room_tolerance=0.72, handoff_tolerance=0.55):
+    text = str(note)
+    if ((text.endswith(("_scan_a", "_scan_b", "_g3", "_g4"))) and
+            "_room_" in text):
+        return float(room_tolerance)
+    if text.endswith("_handoff") or text.endswith("_stair_exit"):
+        return float(handoff_tolerance)
+    return float(default_tolerance)
+
+
+def point_segment_distance_2d(point, start, end):
+    dx, dy = float(end[0]) - float(start[0]), float(end[1]) - float(start[1])
+    denominator = dx * dx + dy * dy
+    if denominator <= 1.0e-12:
+        return math.hypot(float(point[0]) - float(start[0]),
+                          float(point[1]) - float(start[1]))
+    ratio = ((float(point[0]) - float(start[0])) * dx +
+             (float(point[1]) - float(start[1])) * dy) / denominator
+    ratio = max(0.0, min(1.0, ratio))
+    nearest = (float(start[0]) + ratio * dx,
+               float(start[1]) + ratio * dy)
+    return math.hypot(float(point[0]) - nearest[0],
+                      float(point[1]) - nearest[1])
+
+
+def oblique_actual_geometry(deep_pose, near_pose, door, limits=None,
+                            room_type="open", obstacle=None):
+    """Validate the actual deep-G3/near-G4 geometry in door coordinates."""
+    limits = limits or {}
+    direction = float(door["inward_direction"])
+    door_x, door_y = float(door["centre"][0]), float(door["centre"][1])
+
+    def local(pose):
+        return (direction * (float(pose[0]) - door_x),
+                float(pose[1]) - door_y)
+
+    deep_local, near_local = local(deep_pose), local(near_pose)
+    depth_delta = deep_local[0] - near_local[0]
+    lateral_delta = abs(deep_local[1] - near_local[1])
+    angle_deg = math.degrees(math.atan2(
+        lateral_delta, max(0.0, depth_delta)))
+    epsilon = 1.0e-9
+    central_half_width = float(limits.get(
+        "central_half_width_m", float("inf")))
+    depth_ok = bool(
+        float(limits.get("g3_depth_minimum", -float("inf"))) - epsilon <=
+        deep_local[0] <=
+        float(limits.get("g3_depth_maximum", float("inf"))) + epsilon and
+        float(limits.get("g4_depth_minimum", -float("inf"))) - epsilon <=
+        near_local[0] <=
+        float(limits.get("g4_depth_maximum", float("inf"))) + epsilon and
+        depth_delta >=
+        float(limits.get("minimum_depth_delta", 1.0)) - epsilon)
+    lateral_ok = bool(
+        lateral_delta >=
+        float(limits.get("minimum_lateral_delta", 0.8)) - epsilon and
+        abs(deep_local[1]) <= central_half_width + epsilon and
+        abs(near_local[1]) <= central_half_width + epsilon)
+    angle_ok = bool(
+        float(limits.get("angle_minimum", 20.0)) - epsilon <= angle_deg <=
+        float(limits.get("angle_maximum", 70.0)) + epsilon)
+    obstacle_ok = True
+    obstacle_relation = "none"
+    if obstacle is not None and room_type == "deep_obstacle":
+        obstacle_relation = "both_before_obstacle"
+        front = float(obstacle["front_depth_m"])
+        reserve = float(limits.get("obstacle_clearance_m", 0.72))
+        obstacle_ok = bool(
+            deep_local[0] <= front - reserve + epsilon and
+            near_local[0] <= front - reserve + epsilon)
+    elif obstacle is not None and room_type == "shallow_obstacle":
+        obstacle_relation = "g3_behind_g4_opposite_side"
+        back = float(obstacle["back_depth_m"])
+        reserve = float(limits.get("obstacle_clearance_m", 0.72))
+        obstacle_lateral = float(obstacle["lateral_m"])
+        obstacle_ok = bool(
+            deep_local[0] >= back + reserve - epsilon and
+            (deep_local[1] - obstacle_lateral) *
+            (near_local[1] - obstacle_lateral) < 0.0)
+    passed = bool(
+        depth_ok and lateral_ok and angle_ok and obstacle_ok)
+    return {
+        "passed": passed,
+        "g3_local_depth_lateral_m": list(deep_local),
+        "g4_local_depth_lateral_m": list(near_local),
+        "actual_depth_delta_m": depth_delta,
+        "actual_lateral_delta_m": lateral_delta,
+        "actual_viewpoint_line_angle_deg": angle_deg,
+        "depth_ok": depth_ok,
+        "lateral_and_central_band_ok": lateral_ok,
+        "angle_ok": angle_ok,
+        "obstacle_relation": obstacle_relation,
+        "obstacle_relation_ok": obstacle_ok,
+    }
+
+
+def physical_two_view_contract(viewpoints, door, room_type, obstacle,
+                               minimum_separation, minimum_rotation,
+                               viewpoint_policy=None,
+                               actual_geometry_limits=None):
+    """Evaluate the geometry/rotation part of one physical room contract."""
+    try:
+        g3, g4 = viewpoints["G3"], viewpoints["G4"]
+        first = g3["actual_pose"]
+        second = g4["actual_pose"]
+        separation = math.hypot(float(second[0]) - float(first[0]),
+                                float(second[1]) - float(first[1]))
+        scans_ok = (float(g3["scan_rotation_rad"]) >= minimum_rotation and
+                    float(g4["scan_rotation_rad"]) >= minimum_rotation)
+        direction = float(door["inward_direction"])
+        door_x, door_y = float(door["centre"][0]), float(door["centre"][1])
+
+        def local(pose):
+            return (direction * (float(pose[0]) - door_x),
+                    float(pose[1]) - door_y)
+
+        first_local, second_local = local(first), local(second)
+        geometry = oblique_actual_geometry(
+            first, second, door, limits=actual_geometry_limits,
+            room_type=room_type, obstacle=obstacle)
+        result = {
+            "viewpoint_separation_m": separation,
+            "separation_ok": separation >= float(minimum_separation),
+            "scans_ok": scans_ok,
+            "room_geometry_ok": geometry["passed"],
+        }
+        result.update(geometry)
+        return result
+    except (KeyError, TypeError, ValueError, IndexError):
+        return {"viewpoint_separation_m": None, "separation_ok": False,
+                "scans_ok": False, "room_geometry_ok": False}
+
+
+def is_direct_entrance_waypoint(note):
+    return str(note).startswith("main_entrance_")
+
+
+def is_direct_plane_waypoint(waypoint):
+    return str(waypoint.get("controller", "")) == "direct_plane_rl"
+
+
+def is_direct_stair_waypoint(waypoint):
+    return str(waypoint.get("controller", "")) == "direct_stair_rl"
+
+
+def direct_rl_command(pose, target, maximum_speed, maximum_yaw_rate=0.35,
+                      position_tolerance=0.48, target_yaw=None,
+                      heading_tolerance=0.12,
+                      minimum_forward_speed=0.18,
+                      distance_gain=0.70,
+                      translation_heading_limit=0.16):
+    """Return a turn-before-forward command for the entrance step.
+
+    SCAN correctly sees the apron as an obstacle, but its simultaneous
+    lateral/yaw avoidance command destabilizes the learned gait on contact.
+    The short entrance bridge uses the physical stair-RL policy with
+    forward/yaw commands only; plane RL and SCAN take over inside the lobby.
+    """
+    dx = float(target[0]) - float(pose[0])
+    dy = float(target[1]) - float(pose[1])
+    distance = math.hypot(dx, dy)
+    if distance <= float(position_tolerance):
+        if target_yaw is None:
+            return 0.0, 0.0, distance, True
+        final_error = normalize_angle(float(target_yaw) - float(pose[3]))
+        if abs(final_error) <= float(heading_tolerance):
+            return 0.0, 0.0, distance, True
+        yaw_rate = max(-float(maximum_yaw_rate), min(
+            float(maximum_yaw_rate), 1.1 * final_error))
+        return 0.0, yaw_rate, distance, False
+    desired = math.atan2(dy, dx)
+    error = normalize_angle(desired - float(pose[3]))
+    yaw_rate = max(-float(maximum_yaw_rate), min(
+        float(maximum_yaw_rate), 1.1 * error))
+    forward = 0.0
+    if abs(error) <= float(translation_heading_limit):
+        nominal = min(
+            float(maximum_speed), max(
+                float(minimum_forward_speed), float(distance_gain) * distance))
+        # Preserve the audited straight segment as closely as possible while
+        # allowing the plane gait to round safe A* bends.  The downstream mux
+        # applies a second yaw-dependent slowdown and stops translation for
+        # large angular commands.
+        forward = nominal * max(0.25, math.cos(error))
+    return forward, yaw_rate, distance, False
+
+
+def direct_holonomic_rl_command(
+        pose, target, maximum_speed, maximum_yaw_rate=1.15,
+        position_tolerance=0.28, target_yaw=None,
+        heading_tolerance=0.12, minimum_speed=0.30,
+        distance_gain=1.10, maximum_lateral_speed=0.75,
+        maximum_reverse_speed=0.20, translation_heading_limit=1.45):
+    """Track an audited segment while yawing, without geometrical corner cut.
+
+    Plane RL accepts body-frame forward and lateral commands.  Resolving the
+    desired world-frame segment velocity into both components keeps the
+    commanded translation collinear with the already-audited segment.  The
+    scalar speed is reduced before component clamping, so the clamp cannot
+    rotate the world-frame velocity toward an obstacle.
+    """
+    dx = float(target[0]) - float(pose[0])
+    dy = float(target[1]) - float(pose[1])
+    distance = math.hypot(dx, dy)
+    if distance <= float(position_tolerance):
+        if target_yaw is None:
+            return 0.0, 0.0, 0.0, distance, True
+        final_error = normalize_angle(float(target_yaw) - float(pose[3]))
+        if abs(final_error) <= float(heading_tolerance):
+            return 0.0, 0.0, 0.0, distance, True
+        yaw_rate = max(-float(maximum_yaw_rate), min(
+            float(maximum_yaw_rate), 1.1 * final_error))
+        return 0.0, 0.0, yaw_rate, distance, False
+
+    desired = math.atan2(dy, dx)
+    error = normalize_angle(desired - float(pose[3]))
+    yaw_rate = max(-float(maximum_yaw_rate), min(
+        float(maximum_yaw_rate), 1.1 * error))
+    if abs(error) > float(translation_heading_limit):
+        return 0.0, 0.0, yaw_rate, distance, False
+
+    speed = min(float(maximum_speed), max(
+        float(minimum_speed), float(distance_gain) * distance))
+    cosine, sine = math.cos(error), math.sin(error)
+    if abs(sine) > 1.0e-9:
+        speed = min(speed, float(maximum_lateral_speed) / abs(sine))
+    if cosine < -1.0e-9:
+        speed = min(speed, float(maximum_reverse_speed) / -cosine)
+    return speed * cosine, speed * sine, yaw_rate, distance, False
+
+
+def direct_entrance_rl_command(
+        pose, target, target_yaw, maximum_speed, maximum_yaw_rate=0.35,
+        position_tolerance=0.48, heading_tolerance=0.12,
+        heading_release_tolerance=0.20, minimum_forward_speed=0.18,
+        distance_gain=0.70, lateral_gain=0.60,
+        maximum_lateral_speed=0.12):
+    """Follow the main-entrance axis while correcting stochastic side drift.
+
+    Pointing the robot directly at each waypoint is unsafe after a stair-gait
+    stumble: lateral displacement rotates the requested heading away from the
+    doorway and can leave the robot pivoting in place.  Entrance waypoints all
+    carry the validated doorway yaw, so keep that heading invariant and use a
+    small body-lateral command to remove cross-track error.  Translation is
+    held until the heading is back inside a conservative release gate.
+    """
+    dx = float(target[0]) - float(pose[0])
+    dy = float(target[1]) - float(pose[1])
+    distance = math.hypot(dx, dy)
+    heading_error = normalize_angle(float(target_yaw) - float(pose[3]))
+    yaw_rate = max(-float(maximum_yaw_rate), min(
+        float(maximum_yaw_rate), 1.1 * heading_error))
+
+    if distance <= float(position_tolerance):
+        reached = abs(heading_error) <= float(heading_tolerance)
+        return 0.0, 0.0, (0.0 if reached else yaw_rate), distance, reached
+    if abs(heading_error) > float(heading_release_tolerance):
+        return 0.0, 0.0, yaw_rate, distance, False
+
+    yaw = float(pose[3])
+    forward_error = math.cos(yaw) * dx + math.sin(yaw) * dy
+    lateral_error = -math.sin(yaw) * dx + math.cos(yaw) * dy
+    forward = 0.0
+    if forward_error > 0.02:
+        forward = min(float(maximum_speed), max(
+            float(minimum_forward_speed),
+            float(distance_gain) * forward_error))
+    lateral = max(-float(maximum_lateral_speed), min(
+        float(maximum_lateral_speed), float(lateral_gain) * lateral_error))
+    return forward, lateral, yaw_rate, distance, False
+
+
+def policy_kind(value):
+    text = str(value).lower()
+    if "stair" in text:
+        return "stair"
+    if "plane" in text or "flat" in text:
+        return "plane"
+    return "unknown"
+
+
+def load_config(path):
+    with open(path, "r", encoding="utf-8") as stream:
+        config = json.load(stream)
+    if config.get("schema") != "scanplanner_three_floor_rl_mission_v1":
+        raise ValueError("unsupported mission config schema")
+    floors = config.get("floors", [])
+    if [floor.get("floor_number") for floor in floors] != [1, 2, 3]:
+        raise ValueError("mission config must contain floors 1, 2, and 3")
+    return config
+
+
+def atomic_write_json(path, payload):
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    temporary = path + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as stream:
+        json.dump(payload, stream, ensure_ascii=False, indent=2, sort_keys=True)
+        stream.write("\n")
+    os.replace(temporary, path)
+
+
+class ThreeFloorGoalSequencer:
+    MANAGER_TOPICS = (
+        "/simenv/stair_transition_state",
+        "/simenv/second_to_third_floor_stair_state",
+        "/simenv/third_to_first_floor_stair_state",
+    )
+
+    def __init__(self):
+        self._config_path = rospy.get_param(
+            "~mission_config",
+            "/workspace/SimEnv/src/simenv_bridge/config/three_floor_rl_mission.json",
+        )
+        self._output_dir = rospy.get_param(
+            "~output_dir", "/workspace/SimEnv/results/scanplanner_three_floor_rl")
+        self._config = load_config(self._config_path)
+        self._plane_policy = str(self._config["runtime"]["plane_policy"])
+        self._stair_policy = str(self._config["runtime"]["stair_policy"])
+        self._goal_tolerance = float(rospy.get_param("~goal_tolerance", 0.48))
+        self._room_tolerance = float(rospy.get_param("~room_tolerance", 0.72))
+        self._handoff_tolerance = float(
+            rospy.get_param("~handoff_tolerance", 0.55))
+        self._floor_height_tolerance = float(
+            rospy.get_param("~floor_height_tolerance", 0.85))
+        self._nominal_body_height = float(
+            rospy.get_param("~nominal_body_height", 0.34))
+        self._waypoint_timeout = float(
+            rospy.get_param("~waypoint_timeout_sec", 150.0))
+        self._progress_timeout = float(
+            rospy.get_param("~progress_timeout_sec", 45.0))
+        self._progress_distance = float(
+            rospy.get_param("~progress_distance_m", 0.08))
+        self._maximum_replans = int(rospy.get_param("~maximum_replans", 2))
+        self._policy_timeout = float(
+            rospy.get_param("~policy_timeout_sec", 35.0))
+        self._handoff_timeout = float(
+            rospy.get_param("~handoff_timeout_sec", 90.0))
+        self._startup_timeout = float(
+            rospy.get_param("~startup_timeout_sec", 240.0))
+        self._scan_turn = float(rospy.get_param("~room_scan_turn_rad", 2.0 * math.pi))
+        self._scan_yaw_rate = float(rospy.get_param("~room_scan_yaw_rate", 0.45))
+        self._scan_timeout = float(rospy.get_param("~room_scan_timeout_sec", 40.0))
+        self._room_scan_settle = max(
+            0.0, float(rospy.get_param("~room_scan_settle_sec", 0.5)))
+        self._rate_hz = max(2.0, float(rospy.get_param("~rate", 10.0)))
+        self._stage_announcement_hold = max(
+            0.0, float(rospy.get_param(
+                "~stage_announcement_hold_sec", 0.5)))
+        self._floor_control_settle = max(
+            0.0, float(rospy.get_param("~floor_control_settle_sec", 0.5)))
+        self._manager_release_settle = max(
+            0.0, float(rospy.get_param("~manager_release_settle_sec", 0.7)))
+        self._minimum_upright_z = float(
+            rospy.get_param("~minimum_upright_z", 0.55))
+        self._minimum_upright_duration = max(
+            0.0, float(rospy.get_param(
+                "~minimum_upright_duration_sec", 0.60)))
+        self._speed_scale = max(0.1, float(rospy.get_param("~speed_scale", 1.0)))
+        self._entrance_speed_scale = max(
+            0.1, float(rospy.get_param(
+                "~entrance_speed_scale", self._speed_scale)))
+        self._maximum_floor_speed = max(
+            0.05, float(rospy.get_param("~maximum_floor_speed", 1.0)))
+        self._direct_plane_yaw_rate = max(
+            0.1, float(rospy.get_param("~direct_plane_yaw_rate", 0.55)))
+        self._direct_plane_min_speed = max(
+            0.18, float(rospy.get_param(
+                "~direct_plane_min_forward_speed", 0.30)))
+        self._direct_plane_distance_gain = max(
+            0.70, float(rospy.get_param(
+                "~direct_plane_distance_gain", 1.10)))
+        self._direct_plane_translation_heading_limit = max(
+            0.16, min(1.50, float(rospy.get_param(
+                "~direct_plane_translation_heading_limit_rad", 1.45))))
+        self._direct_plane_max_lateral_speed = max(
+            0.18, min(0.90, float(rospy.get_param(
+                "~direct_plane_max_lateral_speed_mps", 0.75))))
+        self._plane_attitude_slowdown_upright_z = min(
+            1.0, max(0.0, float(rospy.get_param(
+                "~plane_attitude_slowdown_upright_z", 0.97))))
+        self._plane_attitude_hold_upright_z = min(
+            self._plane_attitude_slowdown_upright_z - 1.0e-6,
+            max(0.0, float(rospy.get_param(
+                "~plane_attitude_hold_upright_z", 0.90))))
+        self._direct_stair_yaw_rate = max(
+            0.1, float(rospy.get_param("~direct_stair_yaw_rate", 0.35)))
+        self._entrance_heading_release = max(
+            0.05, float(rospy.get_param(
+                "~entrance_fixed_heading_release_rad", 0.20)))
+        self._entrance_lateral_gain = max(
+            0.0, float(rospy.get_param("~entrance_lateral_gain", 0.60)))
+        self._entrance_max_lateral_speed = max(
+            0.0, float(rospy.get_param(
+                "~entrance_max_lateral_speed_mps", 0.12)))
+        self._entrance_progress_timeout = max(
+            2.0, float(rospy.get_param(
+                "~entrance_progress_timeout_sec", 5.0)))
+        self._entrance_recovery_hold = max(
+            0.0, float(rospy.get_param(
+                "~entrance_recovery_hold_sec", 1.0)))
+        self._entrance_recovery_max_attempts = max(
+            0, int(rospy.get_param(
+                "~entrance_recovery_max_attempts", 2)))
+        self._plane_fast_takeover = bool(rospy.get_param(
+            "~plane_fast_takeover", True))
+        self._plane_fast_blend = max(
+            0.25, float(rospy.get_param(
+                "~plane_fast_takeover_blend_seconds", 1.25)))
+        self._plane_fast_zero_hold = max(
+            0.10, float(rospy.get_param(
+                "~plane_fast_takeover_zero_hold_seconds", 0.75)))
+        self._plane_motion_ramp_seconds = max(
+            0.0, float(rospy.get_param(
+                "~plane_motion_start_ramp_seconds", 1.50)))
+        self._plane_motion_ramp_initial_speed = max(
+            0.05, float(rospy.get_param(
+                "~plane_motion_start_ramp_initial_speed_mps", 0.45)))
+        self._plane_motion_ramp_minimum_upright_z = min(
+            1.0, max(0.0, float(rospy.get_param(
+                "~plane_motion_start_ramp_minimum_upright_z", 0.985))))
+        timing = self._config.get("task_timing", {})
+        self._mission_budget = float(
+            timing.get("maximum_exploration_duration_sec", 600.0))
+        self._runtime_audit_clearance = max(0.30, float(rospy.get_param(
+            "~runtime_3d_path_clearance_m", 0.42)))
+        self._runtime_audit_max_age = max(0.2, float(rospy.get_param(
+            "~runtime_3d_cloud_max_age_sec", 2.0)))
+        # Simulated Livox self-returns from the A1 body and legs extend beyond
+        # 0.55 m.  Remove the complete robot envelope before evaluating real
+        # obstacle clearance along the next path segment.
+        self._runtime_audit_self_radius = max(0.65, float(rospy.get_param(
+            "~runtime_3d_self_filter_radius_m", 1.05)))
+
+        os.makedirs(self._output_dir, exist_ok=True)
+        self._lock = threading.RLock()
+        self._write_lock = threading.Lock()
+        self._pose = None
+        self._upright_z = None
+        self._ready = False
+        self._ready_at = None
+        self._cloud_seen = False
+        self._latest_cloud_points = []
+        self._latest_cloud_monotonic = None
+        self._last_cloud_decode_monotonic = None
+        self._camera_ready = False
+        self._exploration_clock_ready = False
+        self._policy_ack_at = {"plane": None, "stair": None}
+        self._plane_motion_ramp_started_at = None
+        self._manager_states = {}
+        self._floor_control_enabled = False
+        self._failure = None
+        self._started_wall_time = time.time()
+        self._exploration_started_monotonic = None
+        self._exploration_started_sim_time = None
+        self._events = []
+        self._attitude_lost_since = None
+        self._room_evidence = {}
+        self._room_evidence_path = os.path.join(
+            self._output_dir, "physical_two_view_room_evidence.json")
+        self._danger_rescan_request = None
+        self._danger_rescanned_rooms = set()
+
+        self._goal_pub = rospy.Publisher(
+            "/move_base_simple/goal", PoseStamped, queue_size=1, latch=True)
+        self._scan_active_pub = rospy.Publisher(
+            "/scanplanner/scan_active", Bool, queue_size=1, latch=True)
+        self._room_scan_active_pub = rospy.Publisher(
+            "/scanplanner/room_scan_active", Bool, queue_size=1, latch=True)
+        self._scan_cmd_pub = rospy.Publisher(
+            "/scanplanner/scan_cmd_vel", Twist, queue_size=2)
+        self._floor_enable_pub = rospy.Publisher(
+            "/scanplanner/floor_control_enabled", Bool, queue_size=1, latch=True)
+        self._speed_pub = rospy.Publisher(
+            "/scanplanner/floor_speed_limit", Float32, queue_size=1, latch=True)
+        self._route_state_pub = rospy.Publisher(
+            "/scanplanner/route_state", String, queue_size=1, latch=True)
+        self._complete_pub = rospy.Publisher(
+            "/scanplanner/route_complete", Bool, queue_size=1, latch=True)
+        self._failed_pub = rospy.Publisher(
+            "/scanplanner/route_failed", Bool, queue_size=1, latch=True)
+        self._exploration_active_pub = rospy.Publisher(
+            "/simenv/exploration_active", Bool, queue_size=1, latch=True)
+        self._policy_pub = rospy.Publisher(
+            "/simenv/rl_policy_request", String, queue_size=1, latch=True)
+        self._baseline_state_pub = rospy.Publisher(
+            "/simenv/baseline_state", String, queue_size=1, latch=True)
+        self._second_state_pub = rospy.Publisher(
+            "/simenv/second_floor_state", String, queue_size=1, latch=True)
+        self._third_state_pub = rospy.Publisher(
+            "/simenv/third_floor_state", String, queue_size=1, latch=True)
+
+        rospy.Subscriber(
+            "/Odometry_gazebo", Odometry, self._on_odom, queue_size=20)
+        rospy.Subscriber(
+            "/registered_scan", PointCloud2, self._on_cloud, queue_size=1)
+        rospy.Subscriber(
+            "/locomotion_ready", Bool, self._on_ready, queue_size=5)
+        rospy.Subscriber(
+            "/simenv/recording_camera_ready", Bool,
+            self._on_camera_ready, queue_size=2)
+        rospy.Subscriber(
+            "/simenv/exploration_clock_ready", Bool,
+            self._on_exploration_clock_ready, queue_size=2)
+        rospy.Subscriber(
+            "/rl_takeover_status", String, self._on_policy_status, queue_size=10)
+        rospy.Subscriber(
+            "/simenv/mission_abort", Bool, self._on_mission_abort, queue_size=2)
+        rospy.Subscriber(
+            "/scanplanner/danger_rescan_request", String,
+            self._on_danger_rescan_request, queue_size=2)
+        for topic in self.MANAGER_TOPICS:
+            rospy.Subscriber(
+                topic, String, self._on_manager_state,
+                callback_args=topic, queue_size=10)
+
+        self._floor_enable_pub.publish(Bool(data=False))
+        self._scan_active_pub.publish(Bool(data=False))
+        self._room_scan_active_pub.publish(Bool(data=False))
+        self._complete_pub.publish(Bool(data=False))
+        self._failed_pub.publish(Bool(data=False))
+        self._exploration_active_pub.publish(Bool(data=False))
+        self._record_event("sequencer_started", config=self._config_path)
+        rospy.on_shutdown(self._on_shutdown)
+
+    def _record_event(self, event, **fields):
+        payload = {"event": str(event), "wall_time": round(time.time(), 3)}
+        payload.update(fields)
+        with self._lock:
+            self._events.append(payload)
+            self._events = self._events[-1000:]
+
+    def _publish_route_state(self, phase, **fields):
+        payload = {"phase": str(phase), "wall_time": round(time.time(), 3)}
+        payload.update(fields)
+        self._route_state_pub.publish(
+            String(data=json.dumps(payload, sort_keys=True)))
+        self._record_event("route_state", **payload)
+
+    def _on_odom(self, message):
+        position = message.pose.pose.position
+        orientation = message.pose.pose.orientation
+        yaw = math.atan2(
+            2.0 * (orientation.w * orientation.z +
+                   orientation.x * orientation.y),
+            1.0 - 2.0 * (orientation.y * orientation.y +
+                         orientation.z * orientation.z),
+        )
+        with self._lock:
+            self._pose = (float(position.x), float(position.y),
+                          float(position.z), float(yaw))
+            upright_z = 1.0 - 2.0 * (
+                float(orientation.x) ** 2 + float(orientation.y) ** 2)
+            self._upright_z = float(upright_z)
+            guard_active = (self._exploration_started_monotonic is not None and
+                            self._floor_control_enabled)
+            if guard_active and upright_z < self._minimum_upright_z:
+                now = time.monotonic()
+                self._attitude_lost_since, attitude_lost = (
+                    attitude_loss_debounce(
+                        self._attitude_lost_since, upright_z,
+                        self._minimum_upright_z, now,
+                        self._minimum_upright_duration))
+                if attitude_lost and self._failure is None:
+                    self._failure = (
+                        "owned_rl_attitude_lost_upright_z_{:.3f}".format(
+                            upright_z))
+            else:
+                self._attitude_lost_since = None
+
+    def _on_cloud(self, message):
+        now = time.monotonic()
+        with self._lock:
+            self._cloud_seen = True
+            previous = self._last_cloud_decode_monotonic
+            if previous is not None and now - previous < 0.15:
+                return
+            self._last_cloud_decode_monotonic = now
+        try:
+            from sensor_msgs import point_cloud2
+            points = []
+            for index, point in enumerate(point_cloud2.read_points(
+                    message, field_names=("x", "y", "z"), skip_nans=True)):
+                if index % 2 == 0:
+                    points.append((float(point[0]), float(point[1]),
+                                   float(point[2])))
+                if len(points) >= 3000:
+                    break
+        except (ImportError, TypeError, ValueError, AttributeError):
+            return
+        with self._lock:
+            self._latest_cloud_points = points
+            self._latest_cloud_monotonic = now
+
+    def _room_record(self, waypoint, floor_number):
+        room_id = str(waypoint.get("room_id", ""))
+        if not room_id:
+            return None
+        record = self._room_evidence.get(room_id)
+        if record is None:
+            record = {
+                "room_id": room_id,
+                "floor_number": int(floor_number),
+                "room_type": waypoint.get("room_type"),
+                "viewpoint_policy": waypoint.get("viewpoint_policy"),
+                "viewpoint_fallback_reason": waypoint.get(
+                    "viewpoint_fallback_reason"),
+                "viewpoint_fallback_level": waypoint.get(
+                    "viewpoint_fallback_level", "primary"),
+                "planned_viewpoint_line_angle_deg": waypoint.get(
+                    "planned_viewpoint_line_angle_deg"),
+                "planned_minimum_viewpoint_separation_m": waypoint.get(
+                    "planned_minimum_viewpoint_separation_m"),
+                "planned_room_paths": dict(
+                    waypoint.get("planned_room_paths") or {}),
+                "door": waypoint.get("door_contract"),
+                "primary_obstacle": waypoint.get("primary_obstacle"),
+                "minimum_viewpoint_separation_m": float(waypoint.get(
+                    "minimum_viewpoint_separation_m", 1.20)),
+                "minimum_scan_rotation_rad": float(waypoint.get(
+                    "minimum_scan_rotation_rad", math.radians(210.0))),
+                "phases": {},
+                "viewpoints": {},
+                "runtime_3d_audits": [],
+                "extra_scan_count": 0,
+                "runtime_audit_refresh_count": 0,
+                "danger_rescan_count": 0,
+                "danger_rescan_trajectory": [],
+                "replan_count": 0,
+                "recovery_count": 0,
+                "geometry_correction_attempted": False,
+                "geometry_correction_count": 0,
+                "actual_geometry_limits": dict(
+                    waypoint.get("actual_geometry_limits") or {}),
+                "dual_view_robustness": dict(
+                    (waypoint.get("actual_geometry_limits") or {}).get(
+                        "dual_view_robustness") or {}),
+                "opposite_small_occluder_sides": bool(
+                    (waypoint.get("actual_geometry_limits") or {}).get(
+                        "opposite_small_occluder_sides", False)),
+                "physical_two_view_contract_met": False,
+                "door_plane_exit_evidence": None,
+            }
+            self._room_evidence[room_id] = record
+        return record
+
+    def _write_room_evidence(self, status="running"):
+        records = [copy for _room, copy in sorted(
+            ((key, dict(value)) for key, value in self._room_evidence.items()))]
+        payload = {
+            "schema": "scanplanner_physical_two_view_evidence_v2",
+            "status": str(status),
+            "time_basis": "ros_simulation_time",
+            "minimum_scan_rotation_rad": math.radians(210.0),
+            "rooms": records,
+            "completed_room_count": sum(
+                bool(item.get("physical_two_view_contract_met"))
+                for item in records),
+        }
+        with self._write_lock:
+            atomic_write_json(self._room_evidence_path, payload)
+
+    def _runtime_3d_audit(self, floor, waypoint):
+        room_id = str(waypoint.get("room_id", ""))
+        if not room_id or not bool(waypoint.get(
+                "runtime_3d_audit_required", False)):
+            return True
+        with self._lock:
+            start = self._pose
+            points = list(self._latest_cloud_points)
+            sampled_at = self._latest_cloud_monotonic
+        now = time.monotonic()
+        target = (float(waypoint["x"]), float(waypoint["y"]))
+        floor_z = float(floor["z"])
+        fresh = sampled_at is not None and now - sampled_at <= self._runtime_audit_max_age
+        relevant = [point for point in points
+                    if floor_z + 0.05 <= point[2] <= floor_z + 0.95]
+        candidates = [] if start is None else [
+            point for point in relevant
+            if math.hypot(point[0] - start[0], point[1] - start[1]) >
+            self._runtime_audit_self_radius]
+        closest_point = None
+        if candidates:
+            closest_point = min(
+                candidates,
+                key=lambda point: point_segment_distance_2d(
+                    point, start, target))
+            minimum = point_segment_distance_2d(
+                closest_point, start, target)
+        else:
+            minimum = float("inf") if start is not None else 0.0
+        passed = bool(fresh and start is not None and points and
+                      minimum >= self._runtime_audit_clearance)
+        record = self._room_record(waypoint, floor["floor_number"])
+        audit = {
+            "phase": waypoint.get("room_phase"),
+            "waypoint": waypoint.get("note"),
+            "ros_sim_time": round(float(rospy.get_time()), 3),
+            "cloud_fresh": bool(fresh),
+            "cloud_point_count": len(points),
+            "collision_height_point_count": len(relevant),
+            "post_self_filter_point_count": len(candidates),
+            "self_filter_radius_m": self._runtime_audit_self_radius,
+            "closest_obstacle_point_xyz": (
+                [round(float(value), 3) for value in closest_point]
+                if closest_point is not None else None),
+            "closest_point_distance_from_robot_m": (
+                round(math.hypot(closest_point[0] - start[0],
+                                 closest_point[1] - start[1]), 3)
+                if closest_point is not None else None),
+            "minimum_segment_point_clearance_m": (
+                round(minimum, 3) if math.isfinite(minimum) else None),
+            "required_clearance_m": self._runtime_audit_clearance,
+            "passed": passed,
+        }
+        if record is not None:
+            record["runtime_3d_audits"].append(audit)
+        self._record_event("runtime_3d_path_audit", room_id=room_id, **audit)
+        self._write_room_evidence("running")
+        return passed
+
+    def _ensure_runtime_3d_audit(self, floor, waypoint):
+        if self._runtime_3d_audit(floor, waypoint):
+            return True
+        record = self._room_record(waypoint, floor["floor_number"])
+        if record is not None:
+            record["extra_scan_count"] += 1
+            record["runtime_audit_refresh_count"] += 1
+        self._publish_route_state(
+            "LOCAL_RESCAN", floor=int(floor["floor_number"]),
+            room_id=waypoint.get("room_id"), waypoint=waypoint.get("note"),
+            reason="fresh_3d_path_evidence_failed", maximum_attempts=1)
+        # One bounded low-angle look refreshes the local Livox evidence.  It
+        # never counts as either mandatory 210-degree camera scan.
+        self._publish_scan(True, 0.22)
+        self._sleep(0.45)
+        self._publish_scan(False)
+        self._sleep(0.15)
+        if self._runtime_3d_audit(floor, waypoint):
+            return True
+        with self._lock:
+            if self._failure is None:
+                self._failure = "runtime_3d_path_audit_failed:{}".format(
+                    waypoint.get("note"))
+        return False
+
+    def _record_room_execution(self, floor, waypoint, execution,
+                               sim_start, sim_end):
+        record = self._room_record(waypoint, floor["floor_number"])
+        if record is None:
+            return
+        phase = str(waypoint.get("room_phase", ""))
+        item = {
+            "waypoint": waypoint.get("note"),
+            "start_ros_sim_time": round(float(sim_start), 3),
+            "end_ros_sim_time": round(float(sim_end), 3),
+            "planned_pose": list(execution.get("target", [])),
+            "actual_pose": list(execution.get("reached_pose", [])),
+            "success": bool(execution.get("success")),
+            "runtime_3d_audit_passed": bool(
+                record["runtime_3d_audits"][-1]["passed"]
+                if record["runtime_3d_audits"] else False),
+        }
+        if phase in ("ENTRY", "G3", "G4", "RETURN", "EXIT"):
+            record["phases"][phase] = item
+        if phase in ("G3", "G4"):
+            item.update({
+                "scan_rotation_rad": execution.get("scan_rotation_rad"),
+                "scan_completed": execution.get("scan_completed"),
+                "door_relative_depth_m": waypoint.get(
+                    "door_relative_depth_m"),
+                "door_relative_lateral_m": waypoint.get(
+                    "door_relative_lateral_m"),
+                "obstacle_lateral_sign": waypoint.get(
+                    "obstacle_lateral_sign"),
+                "viewpoint_semantic": waypoint.get(
+                    "viewpoint_semantic"),
+                "geometry_correction_attempted": bool(execution.get(
+                    "geometry_correction_attempted", False)),
+            })
+            record["viewpoints"][phase] = item
+        if phase in ("RETURN", "EXIT_INNER"):
+            record["last_exit_inner_pose"] = item["actual_pose"]
+        record["replan_count"] += int(execution.get("replans", 0))
+        record["recovery_count"] += int(execution.get(
+            "stall_recoveries", 0))
+        if phase == "EXIT":
+            door = record["door"]
+            inside = record.get("last_exit_inner_pose")
+            outside = item["actual_pose"]
+            direction = float(door["inward_direction"])
+            door_x = float(door["centre"][0])
+            crossed = bool(
+                inside and outside and
+                direction * (float(inside[0]) - door_x) > 0.35 and
+                direction * (float(outside[0]) - door_x) < -0.35)
+            evaluation = physical_two_view_contract(
+                record["viewpoints"], door, record["room_type"],
+                record["primary_obstacle"],
+                record["minimum_viewpoint_separation_m"],
+                record["minimum_scan_rotation_rad"],
+                viewpoint_policy=record["viewpoint_policy"],
+                actual_geometry_limits=record["actual_geometry_limits"])
+            latest_audits = {}
+            for audit in record["runtime_3d_audits"]:
+                latest_audits[str(audit.get("waypoint"))] = audit
+            audit_ok = bool(latest_audits) and all(
+                audit["passed"] for audit in latest_audits.values())
+            record["door_plane_exit_evidence"] = {
+                "inside_pose": inside, "outside_pose": outside,
+                "door_plane_x": door_x, "physically_crossed": crossed,
+            }
+            record.update(evaluation)
+            record["physical_two_view_contract_met"] = bool(
+                crossed and audit_ok and evaluation["separation_ok"] and
+                evaluation["scans_ok"] and evaluation["room_geometry_ok"])
+        self._write_room_evidence("running")
+
+    def _on_mission_abort(self, message):
+        if not bool(message.data):
+            return
+        with self._lock:
+            if self._failure is None:
+                self._failure = "mission_aborted_by_supervisor"
+
+    def _on_danger_rescan_request(self, message):
+        try:
+            request = json.loads(str(message.data))
+        except (TypeError, ValueError):
+            return
+        if not isinstance(request, dict):
+            return
+        with self._lock:
+            self._danger_rescan_request = request
+
+    def _deadline_ok(self):
+        with self._lock:
+            started = self._exploration_started_sim_time
+            failure = self._failure
+        if failure:
+            return False
+        if started is None:
+            return True
+        elapsed = max(0.0, float(rospy.get_time()) - started)
+        if elapsed < self._mission_budget:
+            return True
+        with self._lock:
+            if self._failure is None:
+                self._failure = "exploration_deadline_exceeded_{:.1f}s".format(
+                    self._mission_budget)
+        return False
+
+    def _on_ready(self, message):
+        with self._lock:
+            self._ready = bool(message.data)
+            if message.data:
+                self._ready_at = time.monotonic()
+
+    def _on_camera_ready(self, message):
+        with self._lock:
+            self._camera_ready = bool(message.data)
+
+    def _on_exploration_clock_ready(self, message):
+        with self._lock:
+            self._exploration_clock_ready = bool(message.data)
+
+    def _on_policy_status(self, message):
+        text = str(message.data)
+        now = time.monotonic()
+        kind = policy_kind(text)
+        expected_path = {
+            "plane": self._plane_policy,
+            "stair": self._stair_policy,
+        }.get(kind)
+        if ("policy_reloaded:" in text and expected_path and
+                os.path.basename(expected_path) in text):
+            with self._lock:
+                self._policy_ack_at[kind] = now
+        if "policy_reload_failed:" in text:
+            with self._lock:
+                self._failure = "policy_reload_failed:{}".format(text)
+        self._record_event("policy_status", status=text,
+                           policy=policy_kind(text))
+
+    def _on_manager_state(self, message, topic):
+        text = str(message.data).strip()
+        with self._lock:
+            self._manager_states[topic] = text
+            terminal_failure = (
+                "FAILED", "TIMEOUT", "FALL_DETECTED", "ALIGNMENT_LOST",
+                "ATTITUDE_LOST")
+            if any(token in text.upper() for token in terminal_failure):
+                self._failure = "stair_manager_failure:{}:{}".format(topic, text)
+        self._record_event("stair_state", topic=topic, state=text)
+
+    def _sleep(self, seconds):
+        deadline = time.monotonic() + max(0.0, float(seconds))
+        while not rospy.is_shutdown() and time.monotonic() < deadline:
+            if not self._deadline_ok():
+                return
+            time.sleep(min(1.0 / self._rate_hz,
+                           max(0.0, deadline - time.monotonic())))
+
+    def _wait(self, predicate, timeout, failure_reason):
+        deadline = time.monotonic() + float(timeout)
+        while not rospy.is_shutdown() and time.monotonic() < deadline:
+            if not self._deadline_ok():
+                return False
+            with self._lock:
+                failure = self._failure
+            if failure:
+                return False
+            if predicate():
+                return True
+            time.sleep(1.0 / self._rate_hz)
+        with self._lock:
+            if self._failure is None:
+                self._failure = str(failure_reason)
+        return False
+
+    def _wait_for_startup(self):
+        self._publish_route_state("WAIT_PLANE_RL_AND_SCANPLANNER")
+
+        def ready():
+            with self._lock:
+                return (self._pose is not None and self._ready and
+                        self._cloud_seen and self._camera_ready and
+                        self._goal_pub.get_num_connections() > 0)
+
+        return self._wait(
+            ready, self._startup_timeout,
+            "startup_timeout_waiting_for_plane_rl_scan_camera_or_scanplanner")
+
+    def _clock_acknowledged(self):
+        with self._lock:
+            return self._exploration_clock_ready
+
+    def _set_floor_enabled(self, enabled):
+        if not enabled:
+            self._publish_scan(False)
+        with self._lock:
+            self._floor_control_enabled = bool(enabled)
+        self._floor_enable_pub.publish(Bool(data=bool(enabled)))
+        self._record_event("floor_control", enabled=bool(enabled))
+        self._sleep(self._floor_control_settle)
+
+    def _arm_plane_fast_takeover(self):
+        """Arm the controller's one-shot flat-policy handoff profile.
+
+        Every plane reload occurs with zero command on a level apron or
+        landing.  The shorter blend/hold is therefore restricted to plane
+        policies and is enabled last so the controller never observes a
+        partially written profile.
+        """
+        if not self._plane_fast_takeover:
+            return
+        rospy.set_param(
+            "/simenv/plane_fast_takeover_blend_seconds",
+            self._plane_fast_blend)
+        rospy.set_param(
+            "/simenv/plane_fast_takeover_zero_hold_seconds",
+            self._plane_fast_zero_hold)
+        rospy.set_param("/simenv/plane_fast_takeover_enabled", True)
+
+    def _switch_rl_policy(self, policy, expected_kind, route_phase,
+                          floor_number, failure_reason):
+        """Reload one gait and require fresh reload plus readiness evidence."""
+        expected_kind = str(expected_kind)
+        if expected_kind not in self._policy_ack_at:
+            raise ValueError("unsupported RL policy kind: {}".format(expected_kind))
+        self._publish_scan(False)
+        request_at = time.monotonic()
+        with self._lock:
+            self._policy_ack_at[expected_kind] = None
+            self._ready_at = None
+        self._publish_route_state(
+            route_phase, floor=int(floor_number), policy=str(policy),
+            expected_policy_kind=expected_kind)
+        if expected_kind == "plane":
+            self._arm_plane_fast_takeover()
+        deadline = time.monotonic() + self._policy_timeout
+        next_request = 0.0
+        while not rospy.is_shutdown() and time.monotonic() < deadline:
+            if not self._deadline_ok():
+                return False
+            now = time.monotonic()
+            if now >= next_request:
+                self._policy_pub.publish(String(data=str(policy)))
+                next_request = now + 0.75
+            with self._lock:
+                ack_at = self._policy_ack_at[expected_kind]
+                ready_at = self._ready_at
+                ready = self._ready
+                failure = self._failure
+            if failure:
+                return False
+            if (ack_at is not None and ack_at >= request_at and ready and
+                    ready_at is not None and ready_at >= request_at):
+                if expected_kind == "plane":
+                    with self._lock:
+                        self._plane_motion_ramp_started_at = time.monotonic()
+                self._record_event(
+                    "rl_policy_switch_ready", floor=int(floor_number),
+                    policy=str(policy), policy_kind=expected_kind)
+                return True
+            time.sleep(1.0 / self._rate_hz)
+        with self._lock:
+            if self._failure is None:
+                self._failure = str(failure_reason)
+        return False
+
+    def _publish_goal(self, waypoint):
+        message = PoseStamped()
+        message.header.stamp = rospy.Time.now()
+        message.header.frame_id = "map"
+        message.pose.position.x = float(waypoint["x"])
+        message.pose.position.y = float(waypoint["y"])
+        message.pose.position.z = float(waypoint.get("z", 0.0))
+        half_yaw = 0.5 * float(waypoint.get("yaw", 0.0))
+        message.pose.orientation.z = math.sin(half_yaw)
+        message.pose.orientation.w = math.cos(half_yaw)
+        self._goal_pub.publish(message)
+
+    def _publish_scan(self, active, yaw_rate=0.0, forward=0.0, lateral=0.0):
+        self._scan_active_pub.publish(Bool(data=bool(active)))
+        command = Twist()
+        command.linear.x = float(forward) if active else 0.0
+        command.linear.y = float(lateral) if active else 0.0
+        command.angular.z = float(yaw_rate) if active else 0.0
+        self._scan_cmd_pub.publish(command)
+
+    def _publish_room_scan_active(self, active):
+        self._room_scan_active_pub.publish(Bool(data=bool(active)))
+
+    def _drive_direct_waypoint(self, floor, waypoint, effective_speed,
+                               tolerance, index, policy_kind_name):
+        target = (float(waypoint["x"]), float(waypoint["y"]))
+        note = str(waypoint["note"])
+
+        # ROOM_VIEWPOINT_SPEED_CAP
+        # Random-scene preparation stores the intended physical speed in the
+        # waypoint. Never let later adaptive calculations enlarge an internal
+        # room-viewpoint move beyond that configured value.
+        is_room_viewpoint = (
+            "_room_" in note and
+            note.endswith(("_g3", "_g4", "_scan_a", "_scan_b"))
+        )
+        if is_room_viewpoint:
+            requested_effective_speed = float(effective_speed)
+            configured_viewpoint_speed = float(
+                waypoint.get("speed", requested_effective_speed)
+            )
+            safe_viewpoint_speed = min(
+                requested_effective_speed,
+                configured_viewpoint_speed,
+                0.90,
+            )
+            effective_speed = max(0.10, safe_viewpoint_speed)
+
+            if effective_speed < requested_effective_speed - 1e-6:
+                rospy.logwarn(
+                    "Room viewpoint speed cap: %s %.3f -> %.3f m/s "
+                    "(configured %.3f)",
+                    note,
+                    requested_effective_speed,
+                    effective_speed,
+                    configured_viewpoint_speed,
+                )
+
+        target_yaw = (float(waypoint.get("yaw", 0.0))
+                      if bool(waypoint.get("align_yaw", False)) else None)
+        maximum_yaw_rate = float(waypoint.get(
+            "alignment_yaw_rate",
+            self._direct_stair_yaw_rate if policy_kind_name == "stair"
+            else self._direct_plane_yaw_rate))
+        heading_tolerance = float(waypoint.get(
+            "heading_tolerance", 0.12))
+        entrance_mode = is_direct_entrance_waypoint(note)
+        entrance_yaw = float(waypoint.get("yaw", math.pi / 2.0))
+        deadline = time.monotonic() + self._waypoint_timeout
+        progress_timeout = (
+            self._entrance_progress_timeout
+            if entrance_mode else self._progress_timeout)
+        progress_deadline = time.monotonic() + progress_timeout
+        best_distance = float("inf")
+        best_heading_error = float("inf")
+        stall_recoveries = 0
+        distance = float("inf")
+        self._publish_route_state(
+            "NAVIGATE_DIRECT_{}_RL".format(policy_kind_name.upper()),
+            floor=int(floor["floor_number"]),
+            waypoint_index=index, waypoint=note, target=list(target),
+            forward_only=not entrance_mode,
+            control_mode=(
+                "fixed_entrance_heading_with_lateral_correction"
+                if entrance_mode else "turn_before_forward"))
+        while not rospy.is_shutdown() and time.monotonic() < deadline:
+            if not self._deadline_ok():
+                break
+            with self._lock:
+                pose = self._pose
+                ready = self._ready
+                failure = self._failure
+            if failure:
+                break
+            if pose is None or not ready:
+                self._publish_scan(False)
+                time.sleep(1.0 / self._rate_hz)
+                continue
+            lateral = 0.0
+            motion_speed = effective_speed
+            plane_upright_hold = False
+            if policy_kind_name == "plane":
+                with self._lock:
+                    ramp_started = self._plane_motion_ramp_started_at
+                    upright_z = self._upright_z
+                ramp_duration = self._plane_motion_ramp_seconds
+                if ramp_started is not None and ramp_duration > 0.0:
+                    if (upright_z is None or upright_z <
+                            self._plane_motion_ramp_minimum_upright_z):
+                        plane_upright_hold = True
+                        with self._lock:
+                            self._plane_motion_ramp_started_at = (
+                                time.monotonic())
+                        rospy.logwarn_throttle(
+                            0.50,
+                            "Plane takeover ramp holding zero until upright "
+                            "recovers (upright_z=%s, required=%.3f).",
+                            ("unavailable" if upright_z is None else
+                             "{:.3f}".format(upright_z)),
+                            self._plane_motion_ramp_minimum_upright_z)
+                    ramp_ratio = max(0.0, min(
+                        1.0, (time.monotonic() - ramp_started) /
+                        ramp_duration))
+                    initial_speed = min(
+                        effective_speed,
+                        self._plane_motion_ramp_initial_speed)
+                    motion_speed = (initial_speed +
+                                    ramp_ratio *
+                                    (effective_speed - initial_speed))
+                    if ramp_ratio >= 1.0:
+                        with self._lock:
+                            self._plane_motion_ramp_started_at = None
+                attitude_scale = plane_attitude_speed_scale(
+                    upright_z,
+                    self._plane_attitude_slowdown_upright_z,
+                    self._plane_attitude_hold_upright_z)
+                motion_speed *= attitude_scale
+                if attitude_scale <= 0.0:
+                    plane_upright_hold = True
+                elif attitude_scale < 1.0:
+                    rospy.logwarn_throttle(
+                        0.50,
+                        "Plane attitude guard scaling translation to %.2f "
+                        "(upright_z=%.3f).",
+                        attitude_scale, upright_z)
+            if entrance_mode:
+                forward, lateral, yaw_rate, distance, reached = (
+                    direct_entrance_rl_command(
+                        pose, target, entrance_yaw, motion_speed,
+                        maximum_yaw_rate=maximum_yaw_rate,
+                        position_tolerance=tolerance,
+                        heading_tolerance=heading_tolerance,
+                        heading_release_tolerance=self._entrance_heading_release,
+                        minimum_forward_speed=0.18,
+                        distance_gain=0.70,
+                        lateral_gain=self._entrance_lateral_gain,
+                        maximum_lateral_speed=self._entrance_max_lateral_speed))
+                heading_error = abs(normalize_angle(entrance_yaw - pose[3]))
+            else:
+                strict_door_crossing = (
+                    note.endswith("_entry") or note.endswith("_exit"))
+                # Immediately after an upper-floor policy handoff, turn fully
+                # into the long corridor before translating.  A simultaneous
+                # lateral/yaw command at full corridor speed can excite the
+                # freshly landed gait even though the geometric segment is
+                # collision-free.  The waypoint flag retains the same audited
+                # segment while using forward/yaw-only tracking for this leg.
+                plane_forward_only = bool(
+                    waypoint.get("plane_forward_only", False))
+                if (policy_kind_name == "plane" and
+                        not strict_door_crossing and
+                        not plane_forward_only):
+                    distance_gain = float(waypoint.get(
+                        "direct_plane_distance_gain",
+                        self._direct_plane_distance_gain))
+                    maximum_lateral_speed = float(waypoint.get(
+                        "direct_plane_max_lateral_speed_mps",
+                        self._direct_plane_max_lateral_speed))
+                    forward, lateral, yaw_rate, distance, reached = (
+                        direct_holonomic_rl_command(
+                            pose, target, motion_speed,
+                            maximum_yaw_rate=maximum_yaw_rate,
+                            position_tolerance=tolerance,
+                            target_yaw=target_yaw,
+                            heading_tolerance=heading_tolerance,
+                            minimum_speed=self._direct_plane_min_speed,
+                            distance_gain=distance_gain,
+                            maximum_lateral_speed=maximum_lateral_speed,
+                            translation_heading_limit=(
+                                self._direct_plane_translation_heading_limit)))
+                else:
+                    distance_gain = float(waypoint.get(
+                        "direct_plane_distance_gain",
+                        self._direct_plane_distance_gain))
+                    forward, yaw_rate, distance, reached = direct_rl_command(
+                        pose, target, motion_speed,
+                        maximum_yaw_rate=maximum_yaw_rate,
+                        position_tolerance=tolerance,
+                        target_yaw=target_yaw,
+                        heading_tolerance=heading_tolerance,
+                        minimum_forward_speed=(
+                            self._direct_plane_min_speed
+                            if policy_kind_name == "plane" else 0.18),
+                        distance_gain=(
+                            distance_gain
+                            if policy_kind_name == "plane" else 0.70),
+                        translation_heading_limit=0.16)
+                heading_error = float("inf")
+            if plane_upright_hold:
+                forward = 0.0
+                lateral = 0.0
+                yaw_rate = 0.0
+            if reached:
+                if not bool(waypoint.get("pass_through", False)):
+                    self._publish_scan(False)
+                return pose, distance, stall_recoveries
+            self._publish_scan(True, yaw_rate, forward, lateral)
+            distance_progress = distance <= best_distance - self._progress_distance
+            heading_progress = (
+                entrance_mode and
+                heading_error <= best_heading_error - 0.08)
+            if distance_progress or heading_progress:
+                best_distance = distance
+                best_heading_error = heading_error
+                progress_deadline = time.monotonic() + progress_timeout
+            elif time.monotonic() >= progress_deadline:
+                if (entrance_mode and stall_recoveries <
+                        self._entrance_recovery_max_attempts):
+                    stall_recoveries += 1
+                    self._publish_scan(False)
+                    self._record_event(
+                        "entrance_stall_recovery", floor=int(floor["floor_number"]),
+                        waypoint=note, attempt=stall_recoveries,
+                        pose=[round(value, 4) for value in pose],
+                        distance_m=round(distance, 4),
+                        heading_error_rad=round(heading_error, 4),
+                        zero_hold_sec=self._entrance_recovery_hold)
+                    self._publish_route_state(
+                        "RECOVER_ENTRANCE_STALL",
+                        floor=int(floor["floor_number"]), waypoint=note,
+                        attempt=stall_recoveries,
+                        distance_m=round(distance, 4),
+                        heading_error_rad=round(heading_error, 4))
+                    self._sleep(self._entrance_recovery_hold)
+                    best_distance = distance
+                    best_heading_error = heading_error
+                    progress_deadline = time.monotonic() + progress_timeout
+                    continue
+                with self._lock:
+                    if self._failure is None:
+                        self._failure = "direct_rl_no_progress:{}".format(note)
+                break
+            time.sleep(1.0 / self._rate_hz)
+        self._publish_scan(False)
+        return None, distance, stall_recoveries
+
+    def _scan_room(self, floor_number, waypoint, allow_danger_rescan=True):
+        note = str(waypoint["note"])
+        scan_turn = float(waypoint.get("scan_turn_rad", self._scan_turn))
+        scan_yaw_rate = float(
+            waypoint.get("scan_yaw_rate", self._scan_yaw_rate))
+        scan_timeout = float(
+            waypoint.get("scan_timeout_sec", self._scan_timeout))
+        scan_settle = max(0.0, float(
+            waypoint.get("scan_settle_sec", self._room_scan_settle)))
+        pause_interval = max(0.0, float(
+            waypoint.get("scan_pause_interval_rad", 0.0)))
+        pause_dwell = max(0.0, float(
+            waypoint.get("scan_pause_dwell_sec", 0.0)))
+        with self._lock:
+            if self._pose is None:
+                return False, 0.0
+            previous_yaw = self._pose[3]
+        total = 0.0
+        next_pause = pause_interval if pause_interval > 0.0 else None
+        pause_count = 0
+        deadline = time.monotonic() + scan_timeout
+        progress_deadline = time.monotonic() + min(8.0, scan_timeout)
+        self._publish_route_state(
+            "SCAN_ROOM" if allow_danger_rescan else "LOCAL_DANGER_RESCAN",
+            floor=floor_number, waypoint=note,
+            room_id=waypoint.get("room_id"),
+            viewpoint_role=waypoint.get("viewpoint_role"),
+            room_type=waypoint.get("room_type"),
+            viewpoint_policy=waypoint.get("viewpoint_policy"),
+            door_plane_x=(waypoint.get("door_contract") or {}).get(
+                "centre", [None])[0],
+            door_inward_direction=(waypoint.get("door_contract") or {}).get(
+                "inward_direction"),
+            target_rotation_rad=scan_turn, yaw_rate_rad_s=scan_yaw_rate)
+        # Let the detector atomically receive this room's door contract before
+        # the scan-active edge. This prevents the first image from inheriting
+        # the previous room's half-plane filter or evidence label.
+        self._sleep(0.05)
+        self._publish_room_scan_active(True)
+        while not rospy.is_shutdown() and time.monotonic() < deadline:
+            if not self._deadline_ok():
+                self._publish_scan(False)
+                self._publish_room_scan_active(False)
+                return False, total
+            with self._lock:
+                pose = self._pose
+                ready = self._ready
+                failure = self._failure
+            if failure or not ready or pose is None:
+                self._publish_scan(False)
+                self._publish_room_scan_active(False)
+                return False, total
+            increment = directional_rotation_increment(
+                previous_yaw, pose[3], scan_yaw_rate)
+            if increment > 0.002:
+                total += increment
+                previous_yaw = pose[3]
+                progress_deadline = time.monotonic() + 8.0
+            if (next_pause is not None and total >= next_pause and
+                    next_pause <= scan_turn - 0.30):
+                self._publish_scan(True, 0.0)
+                pause_count += 1
+                self._record_event(
+                    "room_scan_observation_pause", floor=floor_number,
+                    waypoint=note, pause_index=pause_count,
+                    rotation_rad=round(total, 3),
+                    dwell_sec=round(pause_dwell, 3))
+                self._sleep(pause_dwell)
+                next_pause += pause_interval
+                progress_deadline = time.monotonic() + 8.0
+                continue
+            self._publish_scan(True, scan_yaw_rate)
+            if total >= scan_turn - 0.08:
+                # Preserve the already budgeted settle as a real stationary
+                # observation window.  final-v5 seed 3 exposed a red sphere
+                # with two valid frames while the old code disabled detection
+                # before sleeping here, leaving it one frame short of the
+                # three-frame confirmation threshold.
+                self._publish_scan(True, 0.0)
+                if scan_settle > 0.0:
+                    self._record_event(
+                        "room_scan_final_observation_dwell",
+                        floor=floor_number, waypoint=note,
+                        rotation_rad=round(total, 3),
+                        dwell_sec=round(scan_settle, 3))
+                    self._sleep(scan_settle)
+                self._publish_scan(False)
+                self._publish_room_scan_active(False)
+                self._record_event(
+                    "room_scan_complete", floor=floor_number,
+                    waypoint=note, rotation_rad=round(total, 3),
+                    target_rotation_rad=round(scan_turn, 3),
+                    yaw_rate_rad_s=round(scan_yaw_rate, 3),
+                    observation_pauses=pause_count,
+                    final_observation_dwell_sec=round(scan_settle, 3),
+                    local_danger_rescan=not allow_danger_rescan)
+                if allow_danger_rescan:
+                    # The detector publishes on the falling scan-active edge.
+                    # Give that callback a short wall-clock handshake window;
+                    # all mission accounting remains ROS/Gazebo simulation
+                    # time and this wait is still inside the 600 s budget.
+                    handshake_deadline = time.monotonic() + 0.20
+                    request = None
+                    while (not rospy.is_shutdown() and
+                           time.monotonic() < handshake_deadline):
+                        with self._lock:
+                            candidate = self._danger_rescan_request
+                        if (candidate is not None and
+                                str(candidate.get("room_id")) ==
+                                str(waypoint.get("room_id")) and
+                                str(candidate.get("waypoint")) == note):
+                            request = candidate
+                            break
+                        time.sleep(0.01)
+                    room_key = str(waypoint.get("room_id"))
+                    if (request is not None and
+                            room_key not in self._danger_rescanned_rooms):
+                        self._danger_rescanned_rooms.add(room_key)
+                        with self._lock:
+                            self._danger_rescan_request = None
+                        record = self._room_record(
+                            waypoint, floor_number)
+                        if record is not None:
+                            record["extra_scan_count"] += 1
+                            record["danger_rescan_count"] += 1
+                        self._record_event(
+                            "local_danger_rescan_requested",
+                            floor=floor_number, waypoint=note,
+                            room_id=room_key, request=request,
+                            maximum_attempts_per_room=1)
+                        rescan_waypoint = dict(waypoint)
+                        return_waypoint = None
+                        preferred_role = str(request.get(
+                            "preferred_viewpoint_role", "G4"))
+                        if preferred_role == "G3":
+                            floor = next((item for item in self._config["floors"]
+                                          if int(item["floor_number"]) ==
+                                          int(floor_number)), None)
+                            preferred = next((item for item in
+                                              (floor or {}).get("waypoints", [])
+                                              if str(item.get("room_id")) == room_key
+                                              and str(item.get("room_phase")) ==
+                                              "G3"), None)
+                            if preferred is not None:
+                                rescan_waypoint = dict(preferred)
+                                return_waypoint = dict(waypoint)
+                                speed = min(
+                                    self._maximum_floor_speed,
+                                    self._speed_scale * float(
+                                        rescan_waypoint["speed"]))
+                                # This is the exact reverse of the already
+                                # A*-validated and freshly audited G3->G4
+                                # segment. Re-auditing sparse live points here
+                                # could spend the room's unrelated single
+                                # point-cloud refresh allowance.
+                                reached, distance, _recoveries = (
+                                    self._drive_direct_waypoint(
+                                        floor, rescan_waypoint, speed,
+                                        float(rescan_waypoint.get(
+                                            "tolerance", 0.12)), -1, "plane"))
+                                if reached is None:
+                                    soft_reason = None
+                                    expected_no_progress = (
+                                        "direct_rl_no_progress:" +
+                                        str(rescan_waypoint.get("note", "")))
+                                    with self._lock:
+                                        if self._failure == expected_no_progress:
+                                            # This motion belongs only to the
+                                            # optional detection rescan. Keep
+                                            # the completed G4 scan and let the
+                                            # normal room-return route continue.
+                                            soft_reason = self._failure
+                                            self._failure = None
+                                        elif self._failure is None:
+                                            self._failure = (
+                                                "danger_rescan_G3_return_failed:"
+                                                + room_key)
+                                    if soft_reason is not None:
+                                        self._record_event(
+                                            "local_danger_rescan_soft_skipped",
+                                            floor=floor_number,
+                                            waypoint=note,
+                                            room_id=room_key,
+                                            reason=soft_reason)
+                                        self._write_room_evidence("running")
+                                        return True, total
+                                    return False, total
+                                if record is not None:
+                                    record["danger_rescan_trajectory"].append({
+                                        "from_role": "G4",
+                                        "to_role": "G3",
+                                        "actual_pose": [round(float(value), 4)
+                                                        for value in reached],
+                                        "distance_error_m": round(
+                                            float(distance), 4),
+                                    })
+                        # Reverse the sweep to revisit the just-observed arc
+                        # without adding a turn-to-start maneuver.
+                        rescan_waypoint["scan_yaw_rate"] = -scan_yaw_rate
+                        rescan_ok, rescan_rotation = self._scan_room(
+                            floor_number, rescan_waypoint,
+                            allow_danger_rescan=False)
+                        self._record_event(
+                            "local_danger_rescan_complete",
+                            floor=floor_number, waypoint=note,
+                            room_id=room_key, success=bool(rescan_ok),
+                            rotation_rad=round(rescan_rotation, 3))
+                        if not rescan_ok:
+                            return False, total
+                        if return_waypoint is not None:
+                            speed = min(
+                                self._maximum_floor_speed,
+                                self._speed_scale * float(
+                                    return_waypoint["speed"]))
+                            # Restore along the same validated segment before
+                            # the regular G4->RETURN route resumes.
+                            reached, distance, _recoveries = (
+                                self._drive_direct_waypoint(
+                                    floor, return_waypoint, speed,
+                                    float(return_waypoint.get(
+                                        "tolerance", 0.12)), -1, "plane"))
+                            if reached is None:
+                                with self._lock:
+                                    if self._failure is None:
+                                        self._failure = (
+                                            "danger_rescan_G4_restore_failed:"
+                                            + room_key)
+                                return False, total
+                            if record is not None:
+                                record["danger_rescan_trajectory"].append({
+                                    "from_role": "G3",
+                                    "to_role": "G4",
+                                    "actual_pose": [round(float(value), 4)
+                                                    for value in reached],
+                                    "distance_error_m": round(
+                                        float(distance), 4),
+                                })
+                        self._write_room_evidence("running")
+                return True, total
+            if time.monotonic() >= progress_deadline:
+                break
+            time.sleep(1.0 / self._rate_hz)
+        self._publish_scan(False)
+        self._publish_room_scan_active(False)
+        with self._lock:
+            if self._failure is None:
+                self._failure = "room_scan_timeout:{}".format(note)
+        return False, total
+
+    def _tour_path(self, floor_number):
+        if int(floor_number) == 1:
+            return os.path.join(self._output_dir, "tour_summary.json")
+        directory = "second_floor" if int(floor_number) == 2 else "third_floor"
+        return os.path.join(self._output_dir, directory, "tour_summary.json")
+
+    def _actual_oblique_waypoint_ok(self, floor, waypoint, pose):
+        if str(waypoint.get("viewpoint_policy", "")) not in (
+                OBLIQUE_VIEWPOINT_POLICIES):
+            return True
+        phase = str(waypoint.get("room_phase", ""))
+        if phase not in ("G3", "G4"):
+            return True
+        door = waypoint.get("door_contract") or {}
+        direction = float(door["inward_direction"])
+        depth = direction * (
+            float(pose[0]) - float(door["centre"][0]))
+        lateral = float(pose[1]) - float(door["centre"][1])
+        limits = waypoint.get("actual_geometry_limits") or {}
+        epsilon = 1.0e-9
+        if phase == "G3":
+            endpoint_ok = bool(
+                float(limits.get("g3_depth_minimum", -float("inf"))) -
+                epsilon <=
+                depth <=
+                float(limits.get("g3_depth_maximum", float("inf"))) +
+                epsilon and
+                abs(lateral) <= float(limits.get(
+                    "central_half_width_m", float("inf"))) + epsilon)
+            obstacle = waypoint.get("primary_obstacle")
+            room_type = str(waypoint.get("room_type", ""))
+            if obstacle is not None and room_type == "deep_obstacle":
+                endpoint_ok = endpoint_ok and depth <= (
+                    float(obstacle["front_depth_m"]) -
+                    float(limits.get("obstacle_clearance_m", 0.72)))
+            elif obstacle is not None and room_type == "shallow_obstacle":
+                endpoint_ok = endpoint_ok and depth >= (
+                    float(obstacle["back_depth_m"]) +
+                    float(limits.get("obstacle_clearance_m", 0.72)))
+            return endpoint_ok
+        record = self._room_record(waypoint, floor["floor_number"])
+        first = (record.get("viewpoints", {}).get("G3", {})
+                 .get("actual_pose"))
+        if not first:
+            return False
+        result = oblique_actual_geometry(
+            first, pose, door, limits=limits,
+            room_type=str(waypoint.get("room_type", "open")),
+            obstacle=waypoint.get("primary_obstacle"))
+        return bool(result["passed"])
+
+    def _correct_oblique_waypoint(self, floor, waypoint, reached_pose,
+                                  effective_speed, index):
+        if self._actual_oblique_waypoint_ok(floor, waypoint, reached_pose):
+            return reached_pose, 0.0, 0, False
+        record = self._room_record(waypoint, floor["floor_number"])
+        if int(record.get("geometry_correction_count", 0)) >= 1:
+            with self._lock:
+                if self._failure is None:
+                    self._failure = (
+                        "actual_oblique_geometry_failed_after_one_correction:{}"
+                        .format(waypoint.get("note")))
+            return None, float("inf"), 0, False
+        record["geometry_correction_attempted"] = True
+        record["geometry_correction_count"] += 1
+        correction = dict(waypoint)
+        tolerance = float(waypoint.get(
+            "geometry_correction_tolerance_m", 0.08))
+        self._record_event(
+            "oblique_geometry_correction", floor=int(floor["floor_number"]),
+            room_id=waypoint.get("room_id"), waypoint=waypoint.get("note"),
+            maximum_attempts=1, tolerance_m=tolerance)
+        corrected_pose, distance, recoveries = self._drive_direct_waypoint(
+            floor, correction, effective_speed, tolerance, index, "plane")
+        if (corrected_pose is None or
+                not self._actual_oblique_waypoint_ok(
+                    floor, waypoint, corrected_pose)):
+            with self._lock:
+                if self._failure is None:
+                    self._failure = (
+                        "actual_oblique_geometry_failed:{}".format(
+                            waypoint.get("note")))
+            return None, distance, recoveries, True
+        return corrected_pose, distance, recoveries, True
+
+    def _write_tour(self, floor, records, status, reason=None):
+        successful = status == "completed"
+        payload = {
+            "schema": "scanplanner_floor_tour_v1",
+            "planner": "SCAN-Planner",
+            "motion_backend": "plane_rl",
+            "policy": self._plane_policy,
+            "entrance_motion_backend": (
+                "stair_rl" if int(floor["floor_number"]) == 1 else None),
+            "entrance_policy": (
+                self._stair_policy if int(floor["floor_number"]) == 1 else None),
+            "floor_number": int(floor["floor_number"]),
+            "floor_index": int(floor["floor_index"]),
+            "floor_z": float(floor["z"]),
+            "status": str(status),
+            "success": successful,
+            "termination_reason": (
+                "SCANPLANNER_FLOOR_COMPLETE" if successful else str(reason)),
+            "expected_rooms": list(floor["expected_rooms"]),
+            "waypoints_planned": len(floor["waypoints"]),
+            "waypoints": list(records),
+            "started_wall_time": round(self._started_wall_time, 3),
+            "updated_wall_time": round(time.time(), 3),
+        }
+        with self._write_lock:
+            atomic_write_json(self._tour_path(floor["floor_number"]), payload)
+
+    def _run_floor(self, floor):
+        floor_number = int(floor["floor_number"])
+        entrance_stair_active = floor_number == 1
+        records = []
+        self._write_tour(floor, records, "running")
+        self._set_floor_enabled(True)
+        descent_handoff_stair_active = False
+        if not entrance_stair_active:
+            self._publish_route_state("EXPLORE_FLOOR", floor=floor_number)
+            self._sleep(self._stage_announcement_hold)
+
+        for index, waypoint in enumerate(floor["waypoints"]):
+            note = str(waypoint["note"])
+            if entrance_stair_active and not is_direct_entrance_waypoint(note):
+                self._set_floor_enabled(False)
+                if not self._switch_rl_policy(
+                        self._plane_policy, "plane",
+                        "RESTORE_PLANE_RL_AFTER_ENTRANCE", floor_number,
+                        "plane_policy_restore_timeout_after_main_entrance"):
+                    with self._lock:
+                        reason = self._failure
+                    self._write_tour(floor, records, "failed", reason)
+                    return False
+                entrance_stair_active = False
+                self._set_floor_enabled(True)
+                self._publish_route_state("EXPLORE_FLOOR", floor=floor_number)
+                self._sleep(self._stage_announcement_hold)
+            if (is_direct_stair_waypoint(waypoint) and
+                    not descent_handoff_stair_active):
+                self._set_floor_enabled(False)
+                if not self._switch_rl_policy(
+                        self._stair_policy, "stair",
+                        "PREPARE_DESCENT_THRESHOLD_STAIR_RL", floor_number,
+                        "stair_policy_switch_timeout_before_descent_handoff"):
+                    with self._lock:
+                        reason = self._failure
+                    self._write_tour(floor, records, "failed", reason)
+                    return False
+                descent_handoff_stair_active = True
+                self._set_floor_enabled(True)
+                self._publish_route_state(
+                    "ENTER_DESCENT_THRESHOLD_STAIR_RL", floor=floor_number,
+                    waypoint=note)
+                self._sleep(self._stage_announcement_hold)
+            tolerance = float(waypoint.get(
+                "tolerance", waypoint_tolerance(
+                    note, self._goal_tolerance, self._room_tolerance,
+                    self._handoff_tolerance)))
+            target = (float(waypoint["x"]), float(waypoint["y"]))
+            if (waypoint.get("room_id") and
+                    not self._ensure_runtime_3d_audit(floor, waypoint)):
+                with self._lock:
+                    reason = self._failure
+                self._write_tour(floor, records, "failed", reason)
+                return False
+            if bool(waypoint.get("speed_scale_exempt", False)):
+                waypoint_speed_scale = 1.0
+            else:
+                waypoint_speed_scale = (
+                    self._entrance_speed_scale
+                    if (is_direct_entrance_waypoint(note) or
+                        is_direct_stair_waypoint(waypoint))
+                    else self._speed_scale)
+            effective_speed = min(
+                self._maximum_floor_speed,
+                waypoint_speed_scale * float(waypoint["speed"]),
+            )
+            self._speed_pub.publish(Float32(data=effective_speed))
+            direct_policy_kind = None
+            if (is_direct_entrance_waypoint(note) or
+                    is_direct_stair_waypoint(waypoint)):
+                direct_policy_kind = "stair"
+            elif is_direct_plane_waypoint(waypoint):
+                direct_policy_kind = "plane"
+            if direct_policy_kind is not None:
+                direct_policy = (
+                    self._stair_policy if direct_policy_kind == "stair"
+                    else self._plane_policy)
+                direct_controller = "direct_forward_{}_rl".format(
+                    direct_policy_kind)
+                started = time.monotonic()
+                sim_started = float(rospy.get_time())
+                reached_pose, distance, stall_recoveries = self._drive_direct_waypoint(
+                    floor, waypoint, effective_speed, tolerance, index,
+                    direct_policy_kind)
+                if reached_pose is None:
+                    with self._lock:
+                        if self._failure is None:
+                            self._failure = "direct_rl_timeout:{}".format(note)
+                        reason = self._failure
+                    records.append({
+                        "index": index,
+                        "note": note,
+                        "target": [target[0], target[1], float(waypoint["z"])],
+                        "success": False,
+                        "distance_error_m": (
+                            round(distance, 4) if math.isfinite(distance) else None),
+                        "replans": 0,
+                        "stall_recoveries": int(stall_recoveries),
+                        "controller": direct_controller,
+                        "policy": direct_policy,
+                    })
+                    self._write_tour(floor, records, "failed", reason)
+                    return False
+                geometry_correction_attempted = False
+                if str(waypoint.get("viewpoint_policy", "")) in (
+                        OBLIQUE_VIEWPOINT_POLICIES):
+                    phase = str(waypoint.get("room_phase", ""))
+                    if phase in ("G3", "G4"):
+                        (reached_pose, correction_distance,
+                         correction_recoveries,
+                         geometry_correction_attempted) = (
+                            self._correct_oblique_waypoint(
+                                floor, waypoint, reached_pose,
+                                effective_speed, index))
+                        stall_recoveries += int(correction_recoveries)
+                        if math.isfinite(correction_distance):
+                            distance = correction_distance
+                        if reached_pose is None:
+                            with self._lock:
+                                reason = self._failure
+                            self._write_tour(
+                                floor, records, "failed", reason)
+                            return False
+                scan_completed = False
+                scan_rotation = 0.0
+                if is_room_scan_waypoint(waypoint, floor["expected_rooms"]):
+                    scan_completed, scan_rotation = self._scan_room(
+                        floor_number, waypoint)
+                    if not scan_completed:
+                        records.append({
+                            "index": index,
+                            "note": note,
+                            "target": [
+                                target[0], target[1], float(waypoint["z"])],
+                            "success": False,
+                            "scan_completed": False,
+                            "scan_rotation_rad": round(scan_rotation, 3),
+                            "reached_pose": [
+                                round(value, 4) for value in reached_pose],
+                            "distance_error_m": round(distance, 4),
+                            "replans": 0,
+                            "controller": direct_controller,
+                            "policy": direct_policy,
+                        })
+                        with self._lock:
+                            reason = self._failure
+                        self._write_tour(floor, records, "failed", reason)
+                        return False
+                record = {
+                    "index": index,
+                    "note": note,
+                    "target": [target[0], target[1], float(waypoint["z"])],
+                    "success": True,
+                    "scan_completed": scan_completed,
+                    "scan_rotation_rad": round(scan_rotation, 3),
+                    "reached_pose": [round(value, 4) for value in reached_pose],
+                    "distance_error_m": round(distance, 4),
+                    "replans": 0,
+                    "stall_recoveries": int(stall_recoveries),
+                    "geometry_correction_attempted": bool(
+                        geometry_correction_attempted),
+                    "controller": direct_controller,
+                    "policy": direct_policy,
+                    "effective_speed_limit_mps": round(effective_speed, 3),
+                    "elapsed_sec": round(float(rospy.get_time()) - sim_started, 3),
+                    "time_basis": "ros_simulation_time",
+                    "wall_elapsed_sec": round(time.monotonic() - started, 3),
+                    "wall_time": round(time.time(), 3),
+                }
+                records.append(record)
+                self._record_room_execution(
+                    floor, waypoint, record, sim_started,
+                    float(rospy.get_time()))
+                self._sleep(max(0.0, float(
+                    waypoint.get("post_reach_settle_sec", 0.0))))
+                self._record_event(
+                    "waypoint_reached", floor=floor_number, waypoint=note,
+                    distance_m=record["distance_error_m"],
+                    controller=record["controller"],
+                    scan_completed=scan_completed)
+                self._write_tour(floor, records, "running")
+                continue
+            self._publish_goal(waypoint)
+            self._publish_route_state(
+                "NAVIGATE_SCANPLANNER", floor=floor_number,
+                waypoint_index=index, waypoint=note, target=list(target))
+            started = time.monotonic()
+            sim_started = float(rospy.get_time())
+            hard_deadline = started + self._waypoint_timeout
+            progress_deadline = started + self._progress_timeout
+            best_distance = float("inf")
+            replans = 0
+            reached_pose = None
+            distance = float("inf")
+            while not rospy.is_shutdown() and time.monotonic() < hard_deadline:
+                if not self._deadline_ok():
+                    break
+                with self._lock:
+                    pose = self._pose
+                    ready = self._ready
+                    failure = self._failure
+                if failure:
+                    break
+                if pose is None or not ready:
+                    time.sleep(1.0 / self._rate_hz)
+                    continue
+                distance = math.hypot(pose[0] - target[0], pose[1] - target[1])
+                expected_body_z = float(floor["z"]) + self._nominal_body_height
+                height_ok = abs(pose[2] - expected_body_z) <= self._floor_height_tolerance
+                if distance <= tolerance and height_ok:
+                    reached_pose = pose
+                    break
+                if distance <= best_distance - self._progress_distance:
+                    best_distance = distance
+                    progress_deadline = time.monotonic() + self._progress_timeout
+                elif time.monotonic() >= progress_deadline:
+                    if replans < self._maximum_replans:
+                        replans += 1
+                        best_distance = distance
+                        progress_deadline = time.monotonic() + self._progress_timeout
+                        self._publish_goal(waypoint)
+                        self._record_event(
+                            "scanplanner_goal_reissued", floor=floor_number,
+                            waypoint=note, attempt=replans,
+                            distance_m=round(distance, 3))
+                    else:
+                        with self._lock:
+                            self._failure = "scanplanner_no_progress:{}".format(note)
+                        break
+                time.sleep(1.0 / self._rate_hz)
+
+            if reached_pose is None:
+                with self._lock:
+                    if self._failure is None:
+                        self._failure = "scanplanner_waypoint_timeout:{}".format(note)
+                    reason = self._failure
+                records.append({
+                    "index": index,
+                    "note": note,
+                    "target": [target[0], target[1], float(waypoint["z"])],
+                    "success": False,
+                    "distance_error_m": (
+                        round(distance, 4) if math.isfinite(distance) else None),
+                    "replans": replans,
+                })
+                self._write_tour(floor, records, "failed", reason)
+                return False
+
+            scan_completed = False
+            scan_rotation = 0.0
+            if is_room_scan_waypoint(waypoint, floor["expected_rooms"]):
+                scan_completed, scan_rotation = self._scan_room(
+                    floor_number, waypoint)
+                if not scan_completed:
+                    records.append({
+                        "index": index,
+                        "note": note,
+                        "target": [target[0], target[1], float(waypoint["z"])],
+                        "success": False,
+                        "scan_completed": False,
+                        "scan_rotation_rad": round(scan_rotation, 3),
+                        "reached_pose": [round(value, 4) for value in reached_pose],
+                    })
+                    with self._lock:
+                        reason = self._failure
+                    self._write_tour(floor, records, "failed", reason)
+                    return False
+
+            record = {
+                "index": index,
+                "note": note,
+                "target": [target[0], target[1], float(waypoint["z"])],
+                "success": True,
+                "scan_completed": scan_completed,
+                "scan_rotation_rad": round(scan_rotation, 3),
+                "reached_pose": [round(value, 4) for value in reached_pose],
+                "distance_error_m": round(distance, 4),
+                "replans": replans,
+                "effective_speed_limit_mps": round(effective_speed, 3),
+                "elapsed_sec": round(float(rospy.get_time()) - sim_started, 3),
+                "time_basis": "ros_simulation_time",
+                "wall_elapsed_sec": round(time.monotonic() - started, 3),
+                "wall_time": round(time.time(), 3),
+            }
+            records.append(record)
+            self._record_room_execution(
+                floor, waypoint, record, sim_started,
+                float(rospy.get_time()))
+            self._sleep(max(0.0, float(
+                waypoint.get("post_reach_settle_sec", 0.0))))
+            self._record_event(
+                "waypoint_reached", floor=floor_number, waypoint=note,
+                distance_m=record["distance_error_m"],
+                scan_completed=scan_completed)
+            self._write_tour(floor, records, "running")
+
+        self._write_tour(floor, records, "completed")
+        self._write_room_evidence("running")
+        self._record_event("floor_complete", floor=floor_number)
+        return True
+
+    def _trigger_floor_transition(self, floor_number):
+        self._set_floor_enabled(False)
+        if int(floor_number) == 1:
+            publisher = self._baseline_state_pub
+            token = "STAIR_WAIT_ZONE"
+        elif int(floor_number) == 2:
+            publisher = self._second_state_pub
+            token = "SECOND_FLOOR_EXPLORATION_COMPLETE"
+        else:
+            publisher = self._third_state_pub
+            token = "THIRD_FLOOR_EXPLORATION_COMPLETE"
+        # The stair manager performs the plane->stair handoff at the aligned
+        # landing through its mechanically safe FixedStand boundary.  A hot
+        # reload here can apply an unrelated stair-policy action while the
+        # plane gait still owns the joints and has physically rolled the dog
+        # over in descent smoke testing.
+        self._publish_route_state(
+            "RELEASE_TO_STAIR_RL", floor=floor_number, token=token)
+        for _ in range(3):
+            publisher.publish(String(data=token))
+            self._sleep(0.15)
+        self._record_event("stair_trigger", floor=floor_number, token=token)
+        return True
+
+    def _state_is(self, topic, token):
+        with self._lock:
+            return self._manager_states.get(topic) == token
+
+    def _restore_plane_and_release_manager(self, floor_number, manager_topic,
+                                           reached_token, ready_publisher,
+                                           ready_token, handoff_token):
+        self._publish_route_state(
+            "WAIT_UPPER_LANDING", floor=floor_number,
+            expected=reached_token)
+        if not self._wait(
+                lambda: self._state_is(manager_topic, reached_token),
+                self._handoff_timeout,
+                "timeout_waiting_for_{}".format(reached_token.lower())):
+            return False
+
+        if not self._switch_rl_policy(
+                self._plane_policy, "plane", "RESTORE_PLANE_RL",
+                floor_number,
+                "plane_policy_restore_timeout_floor_{}".format(floor_number)):
+            return False
+
+        ready_publisher.publish(String(data=ready_token))
+        self._record_event(
+            "upper_floor_plane_ready", floor=floor_number,
+            token=ready_token)
+        if not self._wait(
+                lambda: self._state_is(manager_topic, handoff_token),
+                self._handoff_timeout,
+                "timeout_waiting_for_{}".format(handoff_token.lower())):
+            return False
+        self._sleep(self._manager_release_settle)
+        # The plane policy can report ready several seconds before the stair
+        # manager releases the landing. Starting the ramp at policy-ready
+        # therefore lets it expire while the robot is still parked, causing
+        # the first upper-floor corridor command to jump directly to ~2.2 m/s.
+        # Re-arm the same bounded ramp at the actual ownership handoff.
+        with self._lock:
+            self._plane_motion_ramp_started_at = time.monotonic()
+        self._record_event(
+            "upper_floor_plane_motion_ramp_rearmed",
+            floor=int(floor_number), duration_sec=round(
+                self._plane_motion_ramp_seconds, 3),
+            initial_speed_mps=round(
+                self._plane_motion_ramp_initial_speed, 3))
+        return True
+
+    def _publish_failure(self, floor_number):
+        if int(floor_number) == 1:
+            self._baseline_state_pub.publish(
+                String(data="FIRST_FLOOR_EXPLORATION_FAILED"))
+        elif int(floor_number) == 2:
+            self._second_state_pub.publish(
+                String(data="SECOND_FLOOR_EXPLORATION_FAILED"))
+        else:
+            self._third_state_pub.publish(
+                String(data="THIRD_FLOOR_EXPLORATION_FAILED"))
+
+    def _fail(self, floor_number):
+        self._set_floor_enabled(False)
+        self._publish_failure(floor_number)
+        self._failed_pub.publish(Bool(data=True))
+        with self._lock:
+            reason = self._failure or "unknown_failure"
+        self._publish_route_state(
+            "THREE_FLOOR_ROUTE_FAILED", floor=floor_number, reason=reason)
+        self._write_room_evidence("failed")
+        atomic_write_json(os.path.join(
+            self._output_dir, "scanplanner_route_summary.json"), {
+                "schema": "scanplanner_three_floor_route_v1",
+                "status": "failed",
+                "failure_reason": reason,
+                "failed_floor": int(floor_number),
+                "events": list(self._events),
+            })
+        rospy.logerr("SCAN three-floor route failed on F%d: %s",
+                     floor_number, reason)
+
+    def run(self):
+        if not self._wait_for_startup():
+            self._fail(1)
+            return False
+
+        # The entrance step is the mission's first physical motion, so make
+        # its stair policy part of algorithm preparation.  The strict 600 s
+        # clock starts only after this policy has emitted a fresh readiness
+        # edge; the subsequent flat-policy restore remains task time.
+        if not self._switch_rl_policy(
+                self._stair_policy, "stair",
+                "PREPARE_ENTRANCE_STAIR_RL", 1,
+                "stair_policy_preparation_timeout_at_main_entrance"):
+            self._fail(1)
+            return False
+
+        with self._lock:
+            self._exploration_started_monotonic = time.monotonic()
+            self._exploration_started_sim_time = float(rospy.get_time())
+            initial_pose = list(self._pose) if self._pose is not None else None
+        self._publish_route_state(
+            "EXPLORATION_STARTED",
+            preparation_excluded=True,
+            budget_sec=self._mission_budget,
+            time_basis="ros_simulation_time",
+            initial_odom_pose=initial_pose,
+        )
+        self._exploration_active_pub.publish(Bool(data=True))
+
+        if not self._wait(
+                self._clock_acknowledged,
+                min(10.0, self._policy_timeout),
+                "supervisor_exploration_clock_ack_timeout"):
+            self._fail(1)
+            return False
+
+        self._publish_route_state(
+            "ENTER_MAIN_ENTRANCE_STAIR_RL", floor=1,
+            policy=self._stair_policy)
+        self._sleep(self._stage_announcement_hold)
+
+        for floor in self._config["floors"]:
+            floor_number = int(floor["floor_number"])
+            if floor_number == 2:
+                if not self._restore_plane_and_release_manager(
+                        2, "/simenv/stair_transition_state",
+                        "SECOND_FLOOR_REACHED", self._second_state_pub,
+                        "SECOND_FLOOR_EXPLORATION_READY",
+                        "SECOND_FLOOR_HANDOFF_COMPLETE"):
+                    self._fail(2)
+                    return False
+            elif floor_number == 3:
+                if not self._restore_plane_and_release_manager(
+                        3, "/simenv/second_to_third_floor_stair_state",
+                        "THIRD_FLOOR_REACHED", self._third_state_pub,
+                        "THIRD_FLOOR_EXPLORATION_READY",
+                        "THIRD_FLOOR_HANDOFF_COMPLETE"):
+                    self._fail(3)
+                    return False
+
+            if not self._run_floor(floor):
+                self._fail(floor_number)
+                return False
+            if not self._trigger_floor_transition(floor_number):
+                self._fail(floor_number)
+                return False
+
+        self._complete_pub.publish(Bool(data=True))
+        self._write_room_evidence("completed")
+        self._publish_route_state(
+            "THREE_FLOOR_SCAN_ROUTE_COMPLETE_DESCENT_ACTIVE")
+        atomic_write_json(os.path.join(
+            self._output_dir, "scanplanner_route_summary.json"), {
+                "schema": "scanplanner_three_floor_route_v1",
+                "status": "completed",
+                "planner": "SCAN-Planner",
+                "motion_backend": "plane_rl",
+                "floors_completed": [1, 2, 3],
+                "events": list(self._events),
+            })
+        rospy.loginfo(
+            "SCAN explored all three floors; stair descent owns the return.")
+        return True
+
+    def _on_shutdown(self):
+        self._publish_scan(False)
+        self._publish_room_scan_active(False)
+        self._floor_enable_pub.publish(Bool(data=False))
+
+
+def main():
+    rospy.init_node("scanplanner_three_floor_goal_sequencer", anonymous=False)
+    sequencer = ThreeFloorGoalSequencer()
+    sequencer.run()
+    rospy.spin()
+
+
+if __name__ == "__main__":
+    main()

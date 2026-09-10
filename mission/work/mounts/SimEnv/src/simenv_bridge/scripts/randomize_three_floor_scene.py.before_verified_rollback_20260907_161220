@@ -1,0 +1,3258 @@
+#!/usr/bin/env python3
+"""Randomize a prepared three-floor scene and derive two scan poses per room.
+
+All outputs are run-local.  Independent per-floor seeds control furniture and
+red-ball placement, while the source generated scene remains unchanged.
+"""
+
+import argparse
+import copy
+import hashlib
+import json
+import math
+import os
+import random
+import tempfile
+import xml.etree.ElementTree as ET
+
+
+def read_json(path):
+    with open(path, "r", encoding="utf-8") as stream:
+        return json.load(stream)
+
+
+def atomic_json(path, payload):
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=".three-floor-randomization-", suffix=".json", dir=directory)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, ensure_ascii=False, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def atomic_xml(tree, path):
+    directory = os.path.dirname(os.path.abspath(path))
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=".three-floor-randomization-", suffix=".xml", dir=directory)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            tree.write(stream, encoding="utf-8", xml_declaration=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def read_red_distractors_from_world(path):
+    """Read fixed red non-danger geometry used by the rendered RGB test.
+
+    A red sphere and a red box can have clear world-space centres and still
+    merge into one HSV contour.  The detector deliberately rejects that
+    non-circular contour, so placement must audit projected silhouettes in
+    addition to furniture line of sight.
+    """
+    records = []
+    root = ET.parse(path).getroot()
+    for model in root.iter("model"):
+        name = str(model.get("name", ""))
+        if not name.startswith("distractor_red_box_"):
+            continue
+        pose_node = model.find("pose")
+        size_node = model.find("./link/visual/geometry/box/size")
+        if pose_node is None or size_node is None:
+            continue
+        pose = [float(value) for value in (pose_node.text or "").split()]
+        size = [float(value) for value in (size_node.text or "").split()]
+        if len(pose) < 3 or len(size) < 3:
+            continue
+        records.append({"id": name, "pose": pose[:6], "size": size[:3]})
+    return records
+
+
+def floor_index(floor):
+    return int(floor.get("floor_index", -1))
+
+
+def room_is_left(room):
+    return float(room["bounds"]["x_max"]) < 0.0
+
+
+def room_center_y(room):
+    bounds = room["bounds"]
+    return 0.5 * (float(bounds["y_min"]) + float(bounds["y_max"]))
+
+
+def door_scan_xy(room):
+    bounds = room["bounds"]
+    # A direct waypoint may be accepted up to 0.25 m early.  One metre of
+    # inset still leaves the robot centre >=0.75 m from the partition while
+    # it rotates, avoiding the doorway-frame stall seen at a 0.65 m inset.
+    x = (float(bounds["x_max"]) - 1.00 if room_is_left(room)
+         else float(bounds["x_min"]) + 1.00)
+    return x, room_center_y(room)
+
+
+def oriented_extents(size, yaw):
+    half_x, half_y = 0.5 * float(size[0]), 0.5 * float(size[1])
+    cosine, sine = abs(math.cos(yaw)), abs(math.sin(yaw))
+    return (cosine * half_x + sine * half_y,
+            sine * half_x + cosine * half_y)
+
+
+def point_box_clearance(x, y, furniture):
+    pose, size = furniture["pose"], furniture["size"]
+    yaw = float(pose[5]) if len(pose) > 5 else 0.0
+    dx, dy = float(x) - float(pose[0]), float(y) - float(pose[1])
+    cosine, sine = math.cos(yaw), math.sin(yaw)
+    local_x = cosine * dx + sine * dy
+    local_y = -sine * dx + cosine * dy
+    outside_x = max(abs(local_x) - 0.5 * float(size[0]), 0.0)
+    outside_y = max(abs(local_y) - 0.5 * float(size[1]), 0.0)
+    return math.hypot(outside_x, outside_y)
+
+
+def furniture_clearance(x, y, room):
+    furniture = room.get("furniture", [])
+    if not furniture:
+        return float("inf")
+    return min(point_box_clearance(x, y, item) for item in furniture)
+
+
+def wall_clearance(x, y, room):
+    bounds = room["bounds"]
+    return min(float(x) - float(bounds["x_min"]),
+               float(bounds["x_max"]) - float(x),
+               float(y) - float(bounds["y_min"]),
+               float(bounds["y_max"]) - float(y))
+
+
+def segment_clear(x0, y0, x1, y1, room, clearance,
+                  wall_clearance_required=None):
+    for step in range(1, 40):
+        ratio = step / 40.0
+        x = x0 + ratio * (x1 - x0)
+        y = y0 + ratio * (y1 - y0)
+        if furniture_clearance(x, y, room) < clearance:
+            return False
+        if (wall_clearance_required is not None and
+                wall_clearance(x, y, room) < wall_clearance_required):
+            return False
+    return True
+
+
+def segment_box_intersects(x0, y0, x1, y1, furniture, clearance=0.0):
+    """Conservatively test a segment against an inflated yawed rectangle."""
+    pose, size = furniture["pose"], furniture["size"]
+    yaw = float(pose[5]) if len(pose) > 5 else 0.0
+    cosine, sine = math.cos(yaw), math.sin(yaw)
+
+    def local(x, y):
+        dx, dy = float(x) - float(pose[0]), float(y) - float(pose[1])
+        return (cosine * dx + sine * dy,
+                -sine * dx + cosine * dy)
+
+    start_x, start_y = local(x0, y0)
+    end_x, end_y = local(x1, y1)
+    delta_x, delta_y = end_x - start_x, end_y - start_y
+    half_x = 0.5 * float(size[0]) + float(clearance)
+    half_y = 0.5 * float(size[1]) + float(clearance)
+    lower, upper = 0.0, 1.0
+    for origin, delta, half_extent in (
+            (start_x, delta_x, half_x), (start_y, delta_y, half_y)):
+        if abs(delta) < 1.0e-12:
+            if abs(origin) > half_extent:
+                return False
+            continue
+        first = (-half_extent - origin) / delta
+        second = (half_extent - origin) / delta
+        if first > second:
+            first, second = second, first
+        lower = max(lower, first)
+        upper = min(upper, second)
+        if lower > upper:
+            return False
+    return True
+
+
+def line_of_sight_clear(x0, y0, x1, y1, room, clearance=0.12):
+    return not any(segment_box_intersects(
+        x0, y0, x1, y1, item, clearance)
+        for item in room.get("furniture", []))
+
+
+def normalize_angle(angle):
+    return math.atan2(math.sin(float(angle)), math.cos(float(angle)))
+
+
+def safe_asin(ratio):
+    """Clamp an asin input defensively into its mathematical domain."""
+    return math.asin(max(-1.0, min(1.0, float(ratio))))
+
+
+def scan_bearing_separation_rad(origin_x, origin_y, first_x, first_y,
+                                 second_x, second_y):
+    """Absolute centre-bearing difference between two points from one origin."""
+    first = math.atan2(float(first_y) - float(origin_y),
+                       float(first_x) - float(origin_x))
+    second = math.atan2(float(second_y) - float(origin_y),
+                        float(second_x) - float(origin_x))
+    return abs(normalize_angle(second - first))
+
+
+def required_projected_bearing_separation(radius_m, first_range_m,
+                                          second_range_m, minimum_gap_rad):
+    """Bearing separation that keeps two sphere silhouettes disjoint.
+
+    A sphere of ``radius_m`` at range ``r`` subtends a half-angle
+    ``asin(radius_m / r)`` from the scan origin, so the projected
+    silhouettes keep ``minimum_gap_rad`` of empty bearing space only when
+    the centre-bearing separation reaches the sum of both half-angles plus
+    the configured gap.
+    """
+    return (safe_asin(float(radius_m) / max(float(first_range_m), 1.0e-9)) +
+            safe_asin(float(radius_m) / max(float(second_range_m), 1.0e-9)) +
+            float(minimum_gap_rad))
+
+
+def projected_silhouettes_separated(scan, radius_m, first_x, first_y,
+                                    second_x, second_y, minimum_gap_rad):
+    """Return True when two balls cannot overlap in one scan's bearing space."""
+    origin_x, origin_y = float(scan["pose"][0]), float(scan["pose"][1])
+    first_range = math.hypot(float(first_x) - origin_x,
+                             float(first_y) - origin_y)
+    second_range = math.hypot(float(second_x) - origin_x,
+                              float(second_y) - origin_y)
+    separation = scan_bearing_separation_rad(
+        origin_x, origin_y, first_x, first_y, second_x, second_y)
+    return separation >= required_projected_bearing_separation(
+        radius_m, first_range, second_range, minimum_gap_rad)
+
+
+def directional_turn(start_yaw, end_yaw, turn_sign):
+    return ((float(end_yaw) - float(start_yaw)) * float(turn_sign)) % (
+        2.0 * math.pi)
+
+
+def scan_observation_pause_count(turn_rad, interval_rad, end_margin_rad=0.30):
+    """Count the stationary observations the sequencer will take in a turn."""
+    turn = max(0.0, float(turn_rad))
+    interval = float(interval_rad)
+    if interval <= 0.0:
+        return 0
+    # _scan_room pauses at k*interval while that threshold is no closer than
+    # end_margin_rad to the requested endpoint.  The epsilon preserves an
+    # exactly-on-the-boundary pause despite ordinary float representation.
+    return max(0, int(math.floor(
+        (turn - float(end_margin_rad)) / interval + 1.0e-9)))
+
+
+def scan_observes_point(x, y, scan, room, settings, include_camera_fov):
+    sx, sy, _, yaw = [float(value) for value in scan["pose"]]
+    distance = math.hypot(float(x) - sx, float(y) - sy)
+    if include_camera_fov:
+        minimum_range = float(settings.get(
+            "scan_coverage_minimum_range_m", 0.75))
+        maximum_range = float(settings.get(
+            "scan_coverage_maximum_range_m", 6.50))
+    else:
+        minimum_range = float(scan.get("detection_minimum_range_m", 1.00))
+        maximum_range = float(scan.get("detection_maximum_range_m", 6.00))
+    if distance < minimum_range or distance > maximum_range:
+        return False
+
+    bearing = math.atan2(float(y) - sy, float(x) - sx)
+    turn_sign = 1.0 if float(scan["scan_yaw_rate"]) >= 0.0 else -1.0
+    progress = directional_turn(yaw, bearing, turn_sign)
+    turn = float(scan["scan_turn_rad"])
+    if include_camera_fov:
+        half_fov = 0.5 * float(settings.get(
+            "camera_horizontal_fov_rad", 1.0466666666666666))
+        yaw_uncertainty = float(settings.get(
+            "scan_start_yaw_uncertainty_rad", 0.18))
+        edge = max(0.0, half_fov - yaw_uncertainty)
+        inside_sector = progress <= turn + edge or progress >= 2.0 * math.pi - edge
+    else:
+        endpoint_margin = float(scan.get(
+            "detection_heading_margin_rad", 0.35))
+        inside_sector = endpoint_margin <= progress <= turn - endpoint_margin
+    return inside_sector and line_of_sight_clear(sx, sy, x, y, room)
+
+
+def room_observation_grid(room, settings):
+    bounds = room["bounds"]
+    resolution = float(settings.get("scan_coverage_grid_resolution_m", 0.40))
+    wall_margin = float(settings.get("red_ball_wall_margin_m", 0.55))
+    obstacle_margin = float(settings.get(
+        "red_ball_furniture_clearance_m", 0.30))
+    points = []
+    y = float(bounds["y_min"]) + wall_margin
+    while y <= float(bounds["y_max"]) - wall_margin + 1.0e-9:
+        x = float(bounds["x_min"]) + wall_margin
+        while x <= float(bounds["x_max"]) - wall_margin + 1.0e-9:
+            if furniture_clearance(x, y, room) >= obstacle_margin:
+                points.append((x, y))
+            x += resolution
+        y += resolution
+    return points
+
+
+def scan_pair_coverage(room, scans, settings, grid=None):
+    grid = room_observation_grid(room, settings) if grid is None else grid
+    covered = 0
+    robust = 0
+    for x, y in grid:
+        if any(scan_observes_point(
+                x, y, scan, room, settings, True) for scan in scans):
+            covered += 1
+        if any(scan_observes_point(
+                x, y, scan, room, settings, False) for scan in scans):
+            robust += 1
+    total = len(grid)
+    return {
+        "grid_resolution_m": float(settings.get(
+            "scan_coverage_grid_resolution_m", 0.40)),
+        "observable_cell_count": total,
+        "covered_cell_count": covered,
+        "robust_detection_cell_count": robust,
+        "coverage_fraction": (float(covered) / total if total else 0.0),
+        "robust_detection_fraction": (float(robust) / total if total else 0.0),
+        "camera_horizontal_fov_rad": float(settings.get(
+            "camera_horizontal_fov_rad", 1.0466666666666666)),
+        "coverage_minimum_range_m": float(settings.get(
+            "scan_coverage_minimum_range_m", 0.75)),
+        "coverage_maximum_range_m": float(settings.get(
+            "scan_coverage_maximum_range_m", 6.50)),
+    }
+
+
+def scan_pair_edge_coverage(room, scans, settings, grid=None):
+    """Measure truth-independent visibility along all four room edges.
+
+    Whole-room coverage can hide a narrow boundary blind spot: many central
+    cells remain visible while an official source near a wall is outside both
+    swept camera sectors. Keep the audit symmetric by evaluating equal-width
+    strips at every room edge; no danger-source position is consulted.
+    """
+    grid = room_observation_grid(room, settings) if grid is None else grid
+    if not grid:
+        return {
+            "edge_strip_width_m": 0.0,
+            "edge_coverage_fractions": {},
+            "minimum_edge_coverage_fraction": 0.0,
+        }
+    strip_width = max(0.40, float(settings.get(
+        "scan_heading_edge_strip_width_m", 2.0)))
+    minimum_x = min(point[0] for point in grid)
+    maximum_x = max(point[0] for point in grid)
+    minimum_y = min(point[1] for point in grid)
+    maximum_y = max(point[1] for point in grid)
+    strips = {
+        "x_min": [point for point in grid
+                  if point[0] <= minimum_x + strip_width],
+        "x_max": [point for point in grid
+                  if point[0] >= maximum_x - strip_width],
+        "y_min": [point for point in grid
+                  if point[1] <= minimum_y + strip_width],
+        "y_max": [point for point in grid
+                  if point[1] >= maximum_y - strip_width],
+    }
+    fractions = {}
+    for name, points in strips.items():
+        visible = sum(any(scan_observes_point(
+            x, y, scan, room, settings, True) for scan in scans)
+            for x, y in points)
+        fractions[name] = (float(visible) / len(points)
+                           if points else 0.0)
+    return {
+        "edge_strip_width_m": strip_width,
+        "edge_coverage_fractions": fractions,
+        "minimum_edge_coverage_fraction": min(fractions.values()),
+    }
+
+
+# BOUNDARY_VISIBILITY_PLANNER_V2
+def scan_pair_boundary_los_score(room, scans, settings):
+    """Score wall-adjacent visibility using geometry, never danger truth."""
+    dense_settings = dict(settings)
+    dense_settings["scan_coverage_grid_resolution_m"] = float(
+        settings.get("boundary_los_grid_resolution_m", 0.20))
+    grid = room_observation_grid(room, dense_settings)
+    if not grid:
+        return 0.0
+
+    strip_width = float(settings.get(
+        "boundary_los_strip_width_m", 1.20))
+    sector_count = max(1, int(settings.get(
+        "boundary_los_sector_count", 5)))
+
+    minimum_x = min(point[0] for point in grid)
+    maximum_x = max(point[0] for point in grid)
+    minimum_y = min(point[1] for point in grid)
+    maximum_y = max(point[1] for point in grid)
+
+    strips = {
+        "x_min": [p for p in grid
+                  if p[0] <= minimum_x + strip_width],
+        "x_max": [p for p in grid
+                  if p[0] >= maximum_x - strip_width],
+        "y_min": [p for p in grid
+                  if p[1] <= minimum_y + strip_width],
+        "y_max": [p for p in grid
+                  if p[1] >= maximum_y - strip_width],
+    }
+
+    minimum_range = float(settings.get(
+        "red_ball_robust_minimum_center_range_m", 1.15))
+    maximum_range = float(settings.get(
+        "red_ball_scan_maximum_range_m", 7.0))
+    los_clearance = float(settings.get(
+        "red_ball_line_of_sight_clearance_m", 0.35))
+
+    visible = {}
+    for point in grid:
+        visible[point] = any(
+            minimum_range <= math.hypot(
+                point[0] - float(scan["pose"][0]),
+                point[1] - float(scan["pose"][1])
+            ) <= maximum_range
+            and line_of_sight_clear(
+                float(scan["pose"][0]),
+                float(scan["pose"][1]),
+                point[0],
+                point[1],
+                room,
+                los_clearance
+            )
+            for scan in scans
+        )
+
+    score = 0.0
+    for name, points in strips.items():
+        coordinate_index = 1 if name.startswith("x_") else 0
+        coordinate_minimum = (
+            minimum_y if coordinate_index == 1 else minimum_x
+        )
+        coordinate_maximum = (
+            maximum_y if coordinate_index == 1 else maximum_x
+        )
+        span = max(
+            1.0e-9, coordinate_maximum - coordinate_minimum)
+        sectors = [[] for _ in range(sector_count)]
+
+        for point in points:
+            normalized = (
+                point[coordinate_index] - coordinate_minimum
+            ) / span
+            index = min(
+                sector_count - 1,
+                max(0, int(math.floor(
+                    normalized * sector_count))))
+            sectors[index].append(point)
+
+        for sector in sectors:
+            if sector:
+                score += (
+                    float(sum(visible[p] for p in sector))
+                    / len(sector)
+                )
+
+    return score
+
+
+def repair_weak_open_room_scan_heading(room, scans, settings, grid=None,
+                                       room_type=None):
+    """Repair one weak edge sector without moving or lengthening the scans.
+
+    Only one start heading may change. The smallest discrete adjustment that
+    reaches the configured four-edge coverage floor is selected, and both
+    whole-room camera coverage and central-sector detection coverage must be
+    no worse than the unmodified pair. Positions, turn magnitudes, turn
+    directions, speeds and detector thresholds are never changed.
+    """
+    original = copy.deepcopy(scans)
+    audit = {
+        "applied": False,
+        "reason": "room_type_not_open",
+        "adjusted_viewpoint_role": None,
+        "heading_adjustment_rad": 0.0,
+    }
+    effective_room_type = (room.get("room_type", "")
+                           if room_type is None else room_type)
+    if str(effective_room_type) not in ("open", "shallow_obstacle"):
+        return original, audit
+    grid = room_observation_grid(room, settings) if grid is None else grid
+    baseline_coverage = scan_pair_coverage(
+        room, original, settings, grid=grid)
+    baseline_edges = scan_pair_edge_coverage(
+        room, original, settings, grid=grid)
+    target = float(settings.get(
+        "minimum_open_edge_scan_coverage_fraction", 0.35))
+    repair_trigger = target
+    audit.update({
+        "reason": "edge_coverage_not_severely_weak",
+        "target_edge_coverage_fraction": target,
+        "repair_trigger_fraction": repair_trigger,
+        "before": dict(baseline_edges),
+        "before_covered_cell_count": int(
+            baseline_coverage["covered_cell_count"]),
+        "before_robust_detection_cell_count": int(
+            baseline_coverage["robust_detection_cell_count"]),
+    })
+    if (baseline_edges["minimum_edge_coverage_fraction"] >=
+            repair_trigger - 1.0e-9):
+        audit["after"] = dict(baseline_edges)
+        return original, audit
+
+    step = math.radians(max(1.0, float(settings.get(
+        "scan_heading_repair_step_deg", 10.0))))
+    maximum = math.radians(max(0.0, float(settings.get(
+        "scan_heading_repair_maximum_deg", 90.0))))
+    step_count = int(math.floor(maximum / step + 1.0e-9))
+    feasible = []
+    for step_index in range(1, step_count + 1):
+        for scan_index in range(len(original)):
+            for direction in (-1.0, 1.0):
+                adjustment = direction * step_index * step
+                candidate = copy.deepcopy(original)
+                candidate[scan_index]["pose"][3] = normalize_angle(
+                    float(candidate[scan_index]["pose"][3]) + adjustment)
+                coverage = scan_pair_coverage(
+                    room, candidate, settings, grid=grid)
+                if (coverage["covered_cell_count"] <
+                        baseline_coverage["covered_cell_count"] or
+                        coverage["robust_detection_cell_count"] <
+                        baseline_coverage["robust_detection_cell_count"]):
+                    continue
+                edges = scan_pair_edge_coverage(
+                    room, candidate, settings, grid=grid)
+                if (edges["minimum_edge_coverage_fraction"] <
+                        target - 1.0e-9):
+                    continue
+                score = (
+                    -abs(adjustment),
+                    edges["minimum_edge_coverage_fraction"],
+                    coverage["covered_cell_count"],
+                    coverage["robust_detection_cell_count"],
+                )
+                feasible.append((score, scan_index, adjustment,
+                                 candidate, coverage, edges))
+        # Conservatism is the first objective: once this adjustment size has
+        # a valid single-view repair, never consider a larger heading change.
+        if feasible:
+            break
+    if not feasible:
+        audit["reason"] = "no_bounded_single_view_repair"
+        audit["after"] = dict(baseline_edges)
+        return original, audit
+
+    (_score, scan_index, adjustment, repaired,
+     repaired_coverage, repaired_edges) = max(
+         feasible, key=lambda item: item[0])
+    repaired[scan_index]["scan_start_heading_source"] = (
+        "bounded_geometry_edge_coverage_repair")
+    repaired[scan_index]["scan_heading_adjustment_rad"] = adjustment
+    audit.update({
+        "applied": True,
+        "reason": "weak_open_room_edge_coverage",
+        "adjusted_viewpoint_role": str(
+            repaired[scan_index].get("role", scan_index)),
+        "heading_adjustment_rad": adjustment,
+        "after": dict(repaired_edges),
+        "after_covered_cell_count": int(
+            repaired_coverage["covered_cell_count"]),
+        "after_robust_detection_cell_count": int(
+            repaired_coverage["robust_detection_cell_count"]),
+    })
+    return repaired, audit
+
+
+def robust_detection_view(x, y, scan, room, settings,
+                          check_arrival_origins=True,
+                          check_vertical_projection=True,
+                          check_range_margin=True):
+    """Evaluate one target using the rendered camera and arrival envelope."""
+    sx, sy, _, yaw = [float(value) for value in scan["pose"]]
+    dx, dy = float(x) - sx, float(y) - sy
+    distance = math.hypot(dx, dy)
+    position_uncertainty = float(settings.get(
+        "red_ball_arrival_position_uncertainty_m", 0.12))
+    minimum_range = float(settings.get(
+        "red_ball_robust_minimum_center_range_m", 1.15))
+    maximum_range = float(settings.get(
+        "red_ball_robust_maximum_center_range_m", 3.80))
+    if not (distance - position_uncertainty >= minimum_range and
+            distance + position_uncertainty <= maximum_range):
+        return None
+    range_margin = min(
+        distance - position_uncertainty - minimum_range,
+        maximum_range - distance - position_uncertainty)
+    # Merely landing inside the hard range envelope is not robust enough for
+    # repeatable RGB-D confirmation.  Seed 41 exposed a target with only
+    # 0.023 m margin, which generated weak evidence and an avoidable rescan.
+    if (check_range_margin and range_margin < float(settings.get(
+            "red_ball_view_range_margin_m", 0.25))):
+        return None
+    bearing = math.atan2(dy, dx)
+    sign = 1.0 if float(scan["scan_yaw_rate"]) >= 0.0 else -1.0
+    progress = directional_turn(yaw, bearing, sign)
+    turn = float(scan["scan_turn_rad"])
+    yaw_uncertainty = math.radians(float(settings.get(
+        "red_ball_arrival_yaw_uncertainty_deg", 8.0)))
+    position_bearing_uncertainty = safe_asin(
+        position_uncertainty / max(distance, position_uncertainty + 1.0e-9))
+    required_angle_margin = (float(scan.get(
+        "detection_heading_margin_rad", 0.35)) + yaw_uncertainty +
+        position_bearing_uncertainty)
+    angular_slack = min(progress, turn - progress) - required_angle_margin
+    if angular_slack < 0.0:
+        return None
+    los_clearance = float(settings.get(
+        "red_ball_line_of_sight_clearance_m", 0.35))
+    origins = [(sx, sy)]
+    if check_arrival_origins:
+        for offset_x, offset_y in ((position_uncertainty, 0.0),
+                                   (-position_uncertainty, 0.0),
+                                   (0.0, position_uncertainty),
+                                   (0.0, -position_uncertainty)):
+            origins.append((sx + offset_x, sy + offset_y))
+    if not all(line_of_sight_clear(
+            origin_x, origin_y, x, y, room, los_clearance)
+            for origin_x, origin_y in origins):
+        return None
+    horizontal_pixels = float(settings.get(
+        "recording_camera_horizontal_pixels", 320.0))
+    horizontal_fov = float(settings.get(
+        "camera_horizontal_fov_rad", 1.0466666666666666))
+    focal_px = horizontal_pixels / (2.0 * math.tan(0.5 * horizontal_fov))
+    radius_m = float(settings.get("red_ball_radius_m", 0.15))
+    projected_radius = focal_px * radius_m / (distance + position_uncertainty)
+    if projected_radius < float(settings.get(
+            "red_ball_minimum_projected_radius_px", 10.0)):
+        return None
+    # The detector uses the level 320x240 recording camera, not a top-down
+    # sensor.  Check the complete ground sphere against its vertical raster,
+    # retaining pitch/settling uncertainty and a pixel-edge margin.
+    vertical_pixels = float(settings.get(
+        "recording_camera_vertical_pixels", 240.0))
+    vertical_half_fov = math.atan2(0.5 * vertical_pixels, focal_px)
+    camera_height = (float(settings.get(
+        "robot_nominal_base_height_m", 0.31)) +
+        float(settings.get("recording_camera_mount_height_m", 0.08)))
+    camera_forward = float(settings.get(
+        "recording_camera_mount_forward_m", 0.30))
+    nearest_sensor_range = max(
+        1.0e-6, distance - position_uncertainty - camera_forward)
+    sphere_top = 2.0 * radius_m
+    top_angle = math.atan2(sphere_top - camera_height,
+                           nearest_sensor_range)
+    bottom_angle = math.atan2(-camera_height, nearest_sensor_range)
+    pitch_uncertainty = math.radians(float(settings.get(
+        "red_ball_camera_pitch_uncertainty_deg", 8.0)))
+    vertical_edge_margin = math.radians(float(settings.get(
+        "red_ball_vertical_edge_margin_deg", 2.0)))
+    vertical_slack = min(
+        vertical_half_fov - pitch_uncertainty - vertical_edge_margin - top_angle,
+        bottom_angle + vertical_half_fov - pitch_uncertainty -
+        vertical_edge_margin)
+    if check_vertical_projection and vertical_slack < 0.0:
+        return None
+    return {
+        "scan_id": str(scan.get("id", "")),
+        "viewpoint_role": str(scan.get("role", "")),
+        "uncertainty_safe": True,
+        "distance_m": distance,
+        "range_margin_m": range_margin,
+        "angular_slack_rad": angular_slack,
+        "line_of_sight_clearance_m": los_clearance,
+        "projected_radius_px": projected_radius,
+        "vertical_half_fov_rad": vertical_half_fov,
+        "vertical_projection_slack_rad": vertical_slack,
+        "camera_pitch_uncertainty_deg": math.degrees(pitch_uncertainty),
+    }
+
+
+def red_distractor_projection_evidence(x, y, target_z, scan,
+                                       red_distractors, settings):
+    """Require a sphere silhouette to remain separate from every red box.
+
+    The box is conservatively represented by its horizontal circumscribed
+    radius.  Five base-position samples cover the configured +/- arrival
+    error.  A positive edge gap is not enough: the existing projected-object
+    gap is retained beyond both silhouettes so morphology cannot join them.
+    """
+    position_uncertainty = float(settings.get(
+        "red_ball_arrival_position_uncertainty_m", 0.12))
+    required_gap = float(settings.get(
+        "red_ball_distractor_projected_gap_rad",
+        settings.get("red_ball_minimum_projected_gap_rad",
+                     math.radians(3.0))))
+    sphere_radius = float(settings.get("red_ball_radius_m", 0.15))
+    sx, sy = float(scan["pose"][0]), float(scan["pose"][1])
+    origins = [(sx, sy),
+               (sx + position_uncertainty, sy),
+               (sx - position_uncertainty, sy),
+               (sx, sy + position_uncertainty),
+               (sx, sy - position_uncertainty)]
+    minimum_edge_gap = float("inf")
+    nearest_id = None
+    for distractor in red_distractors or []:
+        pose = distractor.get("pose", [])
+        size = distractor.get("size", [])
+        if len(pose) < 3 or len(size) < 2:
+            continue
+        if abs(float(pose[2]) - float(target_z)) > 0.45:
+            continue
+        bx, by = float(pose[0]), float(pose[1])
+        box_radius = 0.5 * math.hypot(float(size[0]), float(size[1]))
+        for origin_x, origin_y in origins:
+            target_distance = math.hypot(float(x) - origin_x,
+                                         float(y) - origin_y)
+            box_distance = math.hypot(bx - origin_x, by - origin_y)
+            if target_distance <= sphere_radius or box_distance <= box_radius:
+                return None
+            separation = abs(normalize_angle(
+                math.atan2(float(y) - origin_y, float(x) - origin_x) -
+                math.atan2(by - origin_y, bx - origin_x)))
+            edge_gap = (separation -
+                        safe_asin(sphere_radius / target_distance) -
+                        safe_asin(box_radius / box_distance))
+            if edge_gap < minimum_edge_gap:
+                minimum_edge_gap = edge_gap
+                nearest_id = str(distractor.get("id", ""))
+            if edge_gap < required_gap:
+                return None
+    return {
+        "red_distractor_projection_safe": True,
+        "minimum_red_distractor_edge_gap_rad": (
+            minimum_edge_gap if math.isfinite(minimum_edge_gap) else None),
+        "required_red_distractor_edge_gap_rad": required_gap,
+        "nearest_red_distractor_id": nearest_id,
+    }
+
+
+def dual_view_parallax_deg(x, y, first, second):
+    first_bearing = math.atan2(
+        float(first["pose"][1]) - float(y),
+        float(first["pose"][0]) - float(x))
+    second_bearing = math.atan2(
+        float(second["pose"][1]) - float(y),
+        float(second["pose"][0]) - float(x))
+    return math.degrees(abs(normalize_angle(second_bearing - first_bearing)))
+
+
+def dual_view_robustness(room, scans, settings, grid=None):
+    """Measure cells with two independent, uncertainty-safe camera views."""
+    grid = room_observation_grid(room, settings) if grid is None else grid
+    stride = max(1, int(settings.get(
+        "dual_view_scoring_grid_stride", 4)))
+    grid = grid[::stride]
+    minimum_parallax = float(settings.get(
+        "minimum_dual_view_parallax_deg", 30.0))
+    robust_dual = 0
+    diverse_dual = 0
+    diverse_parallaxes = []
+    for x, y in grid:
+        visible = [robust_detection_view(
+            x, y, scan, room, settings, check_arrival_origins=False,
+            check_vertical_projection=False, check_range_margin=False)
+                   for scan in scans]
+        if len(visible) < 2 or any(item is None for item in visible[:2]):
+            continue
+        robust_dual += 1
+        parallax = dual_view_parallax_deg(x, y, scans[0], scans[1])
+        if parallax >= minimum_parallax:
+            diverse_dual += 1
+            diverse_parallaxes.append(parallax)
+    total = len(grid)
+    return {
+        "robust_dual_view_cell_count": robust_dual,
+        "diverse_dual_view_cell_count": diverse_dual,
+        "dual_view_robust_fraction": (
+            float(diverse_dual) / total if total else 0.0),
+        "minimum_dual_view_parallax_deg": minimum_parallax,
+        "minimum_observed_dual_view_parallax_deg": (
+            min(diverse_parallaxes) if diverse_parallaxes else None),
+    }
+
+
+def build_floor_seeds(mission, floors, offset):
+    settings = mission.setdefault("scene_randomization", {})
+    base = settings.get("floor_seeds", [1103, 2207, 3301])
+    if not isinstance(base, list) or len(base) != len(floors):
+        raise ValueError("scene_randomization.floor_seeds must have one value per floor")
+    effective = [int(value) + int(offset) for value in base]
+    if len(set(effective)) != len(effective):
+        raise ValueError("effective floor seeds must be pairwise distinct")
+    expected_indices = list(range(len(floors)))
+    actual_indices = [floor_index(floor) for floor in sorted(floors, key=floor_index)]
+    if actual_indices != expected_indices:
+        raise ValueError("layout floor_index values must be {}".format(expected_indices))
+    return {index: effective[index] for index in expected_indices}
+
+
+def randomize_furniture(layout, seed_by_floor, settings):
+    poses = {}
+    room_jitter_x = float(settings.get("furniture_room_jitter_x_m", 0.45))
+    room_jitter_y = float(settings.get("furniture_room_jitter_y_m", 0.65))
+    item_jitter = float(settings.get("furniture_item_jitter_m", 0.12))
+    yaw_jitter = float(settings.get("furniture_yaw_jitter_rad", 0.18))
+    wall_margin = float(settings.get("furniture_wall_margin_m", 0.20))
+
+    for floor in sorted(layout["floors"], key=floor_index):
+        index = floor_index(floor)
+        floor["scene_seed"] = seed_by_floor[index]
+        rng = random.Random(seed_by_floor[index] ^ 0x4F425354)
+        for room in floor.get("rooms", []):
+            shared_dx = rng.uniform(-room_jitter_x, room_jitter_x)
+            shared_dy = rng.uniform(-room_jitter_y, room_jitter_y)
+            for item in room.get("furniture", []):
+                original = [float(value) for value in item["pose"]]
+                size = [float(value) for value in item["size"]]
+                selected = None
+                for attempt in range(180):
+                    if attempt < 120:
+                        scale = 1.0
+                    elif attempt < 160:
+                        scale = 0.30
+                    else:
+                        scale = 0.05
+                    yaw = original[5] + rng.uniform(-yaw_jitter, yaw_jitter) * scale
+                    x = original[0] + shared_dx * scale + rng.uniform(-item_jitter, item_jitter) * scale
+                    y = original[1] + shared_dy * scale + rng.uniform(-item_jitter, item_jitter) * scale
+                    extent_x, extent_y = oriented_extents(size, yaw)
+                    bounds = room["bounds"]
+                    if x - extent_x < float(bounds["x_min"]) + wall_margin:
+                        continue
+                    if x + extent_x > float(bounds["x_max"]) - wall_margin:
+                        continue
+                    if y - extent_y < float(bounds["y_min"]) + wall_margin:
+                        continue
+                    if y + extent_y > float(bounds["y_max"]) - wall_margin:
+                        continue
+                    scan_x, scan_y = door_scan_xy(room)
+                    scan_minimum = float(settings.get(
+                        "scan_point_minimum_furniture_clearance_m", 0.65))
+                    scan_reserve = max(scan_minimum, float(settings.get(
+                        "door_scan_furniture_reserve_m", 0.78)))
+                    candidate_item = {"pose": [x, y, original[2],
+                                                original[3], original[4], yaw],
+                                      "size": size}
+                    if point_box_clearance(
+                            scan_x, scan_y, candidate_item) < scan_reserve:
+                        continue
+                    selected = [x, y, original[2], original[3], original[4], yaw]
+                    break
+                if selected is None:
+                    raise ValueError("could not safely randomize {}".format(item["id"]))
+                item["pose"] = selected
+                item_id = str(item["id"])
+                if item_id in poses:
+                    raise ValueError("duplicate furniture id {}".format(item_id))
+                poses[item_id] = selected
+    return poses
+
+
+def derive_scan_points(layout, seed_by_floor, settings):
+    points = {}
+    minimum = float(settings.get("scan_point_minimum_furniture_clearance_m", 0.65))
+    path_minimum = float(settings.get(
+        "scan_path_minimum_furniture_clearance_m", 0.50))
+    separation = float(settings.get("scan_point_minimum_separation_m", 0.80))
+    maximum_separation = float(settings.get(
+        "scan_point_maximum_separation_m", 1.50))
+    maximum_local_route = float(settings.get(
+        "scan_pair_maximum_local_route_m", 5.40))
+    yaw_rate = abs(float(settings.get("scan_yaw_rate_rad_s", 1.00)))
+    scan_minimum_turn = float(settings.get(
+        "scan_point_minimum_turn_rad", 0.40))
+    scan_maximum_turn = float(settings.get(
+        "scan_point_maximum_turn_rad", 2.65))
+    combined_minimum_turn = float(settings.get(
+        "scan_pair_minimum_combined_turn_rad", 2.80))
+    combined_maximum_turn = float(settings.get(
+        "scan_pair_maximum_combined_turn_rad", 3.65))
+    alternate_directions = bool(settings.get(
+        "alternate_scan_turn_directions", True))
+    scan_a_settle = float(settings.get("scan_a_settle_sec", 0.25))
+    scan_b_settle = float(settings.get("scan_b_settle_sec", 0.20))
+    last_room_settle = float(settings.get(
+        "last_room_scan_settle_sec", 0.30))
+    scan_pause_interval = float(settings.get(
+        "scan_pause_interval_rad", 0.0))
+    scan_pause_dwell = float(settings.get(
+        "scan_pause_dwell_sec", 0.60))
+    scan_a_navigation_speed = float(settings.get(
+        "scan_a_navigation_speed", 0.50))
+    scan_b_navigation_speed = float(settings.get(
+        "scan_b_navigation_speed", 0.35))
+    detection_minimum_range = float(settings.get(
+        "red_ball_scan_minimum_range_m", 1.00))
+    detection_maximum_range = float(settings.get(
+        "red_ball_scan_maximum_range_m", 6.00))
+    detection_heading_margin = float(settings.get(
+        "red_ball_scan_heading_margin_rad", 0.35))
+    candidate_depths = [float(value) for value in settings.get(
+        "scan_candidate_depths_m", [0.70, 0.85, 1.00, 1.15, 1.30, 1.45])]
+    maximum_y_offset = float(settings.get(
+        "scan_candidate_maximum_y_offset_m", 0.60))
+    y_offset_step = float(settings.get(
+        "scan_candidate_y_offset_step_m", 0.20))
+    floor_speed = float(settings.get("coverage_time_floor_speed_mps", 1.65))
+    minimum_robust_fraction = float(settings.get(
+        "minimum_robust_detection_fraction", 0.05))
+
+    for floor in sorted(layout["floors"], key=floor_index):
+        index = floor_index(floor)
+        elevation = float(floor["elevation"])
+        floor_rooms = list(floor.get("rooms", []))
+        floor_candidates = []
+        for room_index, room in enumerate(floor_rooms):
+            room_id = str(room["id"])
+            left = room_is_left(room)
+            direction = -1.0 if left else 1.0
+            bounds = room["bounds"]
+            near_wall_x = (float(bounds["x_max"]) if left
+                           else float(bounds["x_min"]))
+            centre_y = room_center_y(room)
+            entry = (0.0, centre_y)
+            offsets = []
+            offset = -maximum_y_offset
+            while offset <= maximum_y_offset + 1.0e-9:
+                offsets.append(round(offset, 9))
+                offset += y_offset_step
+            poses = []
+            for depth in candidate_depths:
+                x = near_wall_x + direction * depth
+                for y_offset in offsets:
+                    y = centre_y + y_offset
+                    if wall_clearance(x, y, room) < minimum:
+                        continue
+                    if furniture_clearance(x, y, room) < minimum:
+                        continue
+                    if not segment_clear(
+                            entry[0], entry[1], x, y, room, path_minimum):
+                        continue
+                    crossing_factor = abs(near_wall_x / x)
+                    if abs(y_offset) * crossing_factor > 0.70:
+                        continue
+                    poses.append((x, y))
+
+            grid = room_observation_grid(room, settings)
+            candidates_by_sign = {-1.0: [], 1.0: []}
+            evaluated_pairs = {-1.0: 0, 1.0: 0}
+            for scan_a in poses:
+                start_yaw = math.atan2(
+                    scan_a[1] - entry[1], scan_a[0] - entry[0])
+                for scan_b in poses:
+                    point_separation = math.hypot(
+                        scan_b[0] - scan_a[0], scan_b[1] - scan_a[1])
+                    if not separation <= point_separation <= maximum_separation:
+                        continue
+                    if not segment_clear(
+                            scan_a[0], scan_a[1], scan_b[0], scan_b[1],
+                            room, path_minimum):
+                        continue
+                    local_route = (
+                        math.hypot(scan_a[0] - entry[0],
+                                   scan_a[1] - entry[1]) +
+                        point_separation +
+                        math.hypot(entry[0] - scan_b[0],
+                                   entry[1] - scan_b[1]))
+                    if local_route > maximum_local_route:
+                        continue
+                    transition_yaw = math.atan2(
+                        scan_b[1] - scan_a[1],
+                        scan_b[0] - scan_a[0])
+                    exit_yaw = math.atan2(
+                        entry[1] - scan_b[1], entry[0] - scan_b[0])
+                    for turn_sign in (-1.0, 1.0):
+                        first_turn = directional_turn(
+                            start_yaw, transition_yaw, turn_sign)
+                        second_turn = directional_turn(
+                            transition_yaw, exit_yaw, turn_sign)
+                        combined_turn = first_turn + second_turn
+                        if not (scan_minimum_turn <= first_turn <= scan_maximum_turn and
+                                scan_minimum_turn <= second_turn <= scan_maximum_turn and
+                                combined_minimum_turn <= combined_turn <=
+                                combined_maximum_turn):
+                            continue
+                        definitions = [
+                            {"id": room_id + "_scan_a", "room_id": room_id,
+                             "pose": [scan_a[0], scan_a[1], elevation,
+                                      start_yaw],
+                             "scan_turn_rad": first_turn,
+                             "scan_yaw_rate": turn_sign * yaw_rate,
+                             "scan_settle_sec": scan_a_settle,
+                             "scan_pause_interval_rad": scan_pause_interval,
+                             "scan_pause_dwell_sec": scan_pause_dwell,
+                             "navigation_speed": scan_a_navigation_speed,
+                             "detection_minimum_range_m": detection_minimum_range,
+                             "detection_maximum_range_m": detection_maximum_range,
+                             "detection_heading_margin_rad": detection_heading_margin},
+                            {"id": room_id + "_scan_b", "room_id": room_id,
+                             "pose": [scan_b[0], scan_b[1], elevation,
+                                      transition_yaw],
+                             "scan_turn_rad": second_turn,
+                             "scan_yaw_rate": turn_sign * yaw_rate,
+                             "scan_settle_sec": scan_b_settle,
+                             "scan_pause_interval_rad": scan_pause_interval,
+                             "scan_pause_dwell_sec": scan_pause_dwell,
+                             "navigation_speed": scan_b_navigation_speed,
+                             "detection_minimum_range_m": detection_minimum_range,
+                             "detection_maximum_range_m": detection_maximum_range,
+                             "detection_heading_margin_rad": detection_heading_margin},
+                        ]
+                        coverage = scan_pair_coverage(
+                            room, definitions, settings, grid)
+                        evaluated_pairs[turn_sign] += 1
+                        if coverage["robust_detection_cell_count"] <= 0:
+                            continue
+                        clearance = min(
+                            wall_clearance(scan_a[0], scan_a[1], room),
+                            wall_clearance(scan_b[0], scan_b[1], room),
+                            furniture_clearance(scan_a[0], scan_a[1], room),
+                            furniture_clearance(scan_b[0], scan_b[1], room))
+                        speed_scale = float(settings.get(
+                            "coverage_time_speed_scale", 2.60))
+                        first_distance = math.hypot(
+                            scan_a[0] - entry[0], scan_a[1] - entry[1])
+                        exit_distance = math.hypot(
+                            entry[0] - scan_b[0], entry[1] - scan_b[1])
+                        observation_pause_count = (
+                            scan_observation_pause_count(
+                                first_turn, scan_pause_interval) +
+                            scan_observation_pause_count(
+                                second_turn, scan_pause_interval))
+                        observation_pause_time = (
+                            observation_pause_count * scan_pause_dwell)
+                        estimated_seconds = (
+                            first_distance / max(
+                                0.1, min(floor_speed, speed_scale *
+                                         scan_a_navigation_speed)) +
+                            point_separation / max(
+                                0.1, min(floor_speed, speed_scale *
+                                         scan_b_navigation_speed)) +
+                            exit_distance / max(0.1, floor_speed) +
+                            combined_turn / max(0.1, yaw_rate) +
+                            scan_a_settle + scan_b_settle +
+                            observation_pause_time)
+                        candidate = {
+                            "definitions": definitions,
+                            "coverage": coverage,
+                            "local_route_distance_m": local_route,
+                            "combined_turn_rad": combined_turn,
+                            "estimated_seconds": estimated_seconds,
+                            "observation_pause_count": observation_pause_count,
+                            "observation_pause_time_sec": observation_pause_time,
+                            "minimum_clearance_m": clearance,
+                            "turn_sign": turn_sign,
+                        }
+                        candidates_by_sign[turn_sign].append(candidate)
+
+            best_by_sign = {}
+            for turn_sign, candidates in candidates_by_sign.items():
+                robust_candidates = [
+                    item for item in candidates
+                    if item["coverage"]["robust_detection_fraction"] >=
+                    minimum_robust_fraction]
+                if not robust_candidates:
+                    continue
+                # Coverage is lexicographically primary inside the explicit
+                # route/turn budget.  Time and clearance only break equal-cell
+                # ties, so the selected pair is the maximum-coverage feasible
+                # pair rather than merely the shortest pair near the door.
+                best_by_sign[turn_sign] = max(
+                    robust_candidates,
+                    key=lambda item: (
+                        item["coverage"]["covered_cell_count"],
+                        item["coverage"]["robust_detection_cell_count"],
+                        -item["estimated_seconds"],
+                        item["minimum_clearance_m"]))
+                best_by_sign[turn_sign]["candidate_pair_count"] = (
+                    evaluated_pairs[turn_sign])
+            if not best_by_sign:
+                raise ValueError(
+                    "could not derive a coverage-safe scan pair for {}"
+                    .format(room_id))
+            floor_candidates.append({
+                "room_index": room_index,
+                "room": room,
+                "room_id": room_id,
+                "best_by_sign": best_by_sign,
+            })
+
+        # Four consecutive same-direction half turns proved capable of
+        # accumulating enough lateral attitude error to overturn the plane
+        # policy on the final room.  Solve all four room directions together:
+        # require two turns each way and prefer strict alternation, but retain
+        # a safe balanced solution when furniture blocks one side of a room.
+        selected_signs = [None] * len(floor_candidates)
+        if alternate_directions:
+            preferred = [
+                -1.0 if (index + room_index) % 2 == 0 else 1.0
+                for room_index in range(len(floor_candidates))]
+            patterns = []
+            for mask in range(1 << len(floor_candidates)):
+                signs = [
+                    1.0 if mask & (1 << room_index) else -1.0
+                    for room_index in range(len(floor_candidates))]
+                if sum(signs) != 0.0:
+                    continue
+                if not all(sign in context["best_by_sign"]
+                           for context, sign in zip(floor_candidates, signs)):
+                    continue
+                repeated = sum(
+                    first == second for first, second in zip(signs, signs[1:]))
+                preference_changes = sum(
+                    actual != wanted for actual, wanted in zip(signs, preferred))
+                selected = [
+                    context["best_by_sign"][sign]
+                    for context, sign in zip(floor_candidates, signs)]
+                minimum_coverage = min(
+                    item["coverage"]["coverage_fraction"] for item in selected)
+                total_coverage = sum(
+                    item["coverage"]["coverage_fraction"] for item in selected)
+                total_time = sum(item["estimated_seconds"] for item in selected)
+                patterns.append((repeated, -minimum_coverage, -total_coverage,
+                                 total_time, preference_changes, signs))
+            if not patterns:
+                raise ValueError(
+                    "could not balance scan turn directions on floor {}"
+                    .format(index))
+            selected_signs = min(patterns, key=lambda item: item[:5])[5]
+
+        for context, selected_sign in zip(floor_candidates, selected_signs):
+            room_index = context["room_index"]
+            room = context["room"]
+            room_id = context["room_id"]
+            if selected_sign is None:
+                selected = max(
+                    context["best_by_sign"].values(),
+                    key=lambda item: item["coverage"]["covered_cell_count"])
+            else:
+                selected = context["best_by_sign"][selected_sign]
+            second_settle = (last_room_settle
+                             if room_index == len(floor_rooms) - 1
+                             else scan_b_settle)
+            definitions = copy.deepcopy(selected["definitions"])
+            definitions[1]["scan_settle_sec"] = second_settle
+            coverage = copy.deepcopy(selected["coverage"])
+            coverage.update({
+                "candidate_pair_count": selected["candidate_pair_count"],
+                "local_route_distance_m": selected["local_route_distance_m"],
+                "combined_turn_rad": selected["combined_turn_rad"],
+                "estimated_pair_time_sec": (
+                    selected["estimated_seconds"] - scan_b_settle +
+                    second_settle),
+                "observation_pause_count": selected[
+                    "observation_pause_count"],
+                "observation_pause_time_sec": selected[
+                    "observation_pause_time_sec"],
+                "minimum_scan_clearance_m": selected["minimum_clearance_m"],
+                "optimization": "maximum_covered_cells_within_time_constraints",
+            })
+            room["scan_points"] = copy.deepcopy(definitions)
+            room["scan_coverage"] = coverage
+            points[room_id] = definitions
+    return points
+
+
+def room_local_geometry(room):
+    """Return a door-centred coordinate system derived from room geometry."""
+    bounds = room["bounds"]
+    left = room_is_left(room)
+    direction = -1.0 if left else 1.0
+    door_x = float(bounds["x_max"] if left else bounds["x_min"])
+    door_y = room_center_y(room)
+    return {
+        "door_x": door_x,
+        "door_y": door_y,
+        "inward_direction": direction,
+        "inward_yaw": math.pi if left else 0.0,
+    }
+
+
+def local_to_world(geometry, depth, lateral):
+    return (float(geometry["door_x"]) +
+            float(geometry["inward_direction"]) * float(depth),
+            float(geometry["door_y"]) + float(lateral))
+
+
+def world_to_local(geometry, x, y):
+    return (float(geometry["inward_direction"]) *
+            (float(x) - float(geometry["door_x"])),
+            float(y) - float(geometry["door_y"]))
+
+
+def furniture_local_envelope(item, geometry):
+    yaw = float(item["pose"][5]) if len(item["pose"]) > 5 else 0.0
+    extent_x, extent_y = oriented_extents(item["size"], yaw)
+    depth, lateral = world_to_local(
+        geometry, item["pose"][0], item["pose"][1])
+    return {
+        "id": str(item["id"]),
+        "depth_m": depth,
+        "lateral_m": lateral,
+        "depth_extent_m": extent_x,
+        "lateral_extent_m": extent_y,
+        "front_depth_m": depth - extent_x,
+        "back_depth_m": depth + extent_x,
+        "centreline_gap_m": abs(lateral) - extent_y,
+    }
+
+
+def large_doorway_obstacles(room, envelopes, settings):
+    """Return large furniture whose inflated footprint reaches the door axis."""
+    minimum_area = float(settings.get("large_obstacle_min_area_m2", 1.20))
+    minimum_dimension = float(settings.get(
+        "large_obstacle_min_dimension_m", 1.80))
+    inflation = float(settings.get("large_obstacle_path_inflation_m", 0.60))
+    minimum_depth = float(settings.get(
+        "large_obstacle_minimum_depth_m", 0.60))
+    maximum_depth = float(settings.get(
+        "large_obstacle_maximum_depth_m", 5.20))
+    furniture = {str(item["id"]): item for item in room.get("furniture", [])}
+    blockers = []
+    for envelope in envelopes:
+        item = furniture.get(str(envelope["id"]))
+        if item is None:
+            continue
+        width, length = [float(value) for value in item["size"][:2]]
+        large = (width * length >= minimum_area or
+                 max(width, length) >= minimum_dimension)
+        in_front = (float(envelope["back_depth_m"]) > minimum_depth and
+                    float(envelope["front_depth_m"]) < maximum_depth)
+        invades_axis = float(envelope["centreline_gap_m"]) <= inflation
+        if large and in_front and invades_axis:
+            blocker = copy.deepcopy(envelope)
+            blocker.update({
+                "kind": str(item.get("kind", "furniture")),
+                "footprint_area_m2": width * length,
+                "maximum_footprint_dimension_m": max(width, length),
+                "door_axis_inflation_m": inflation,
+            })
+            blockers.append(blocker)
+    return sorted(blockers, key=lambda item: (
+        item["front_depth_m"], item["centreline_gap_m"]))
+
+
+def fallback_obstacle_classification(envelopes, settings):
+    """Choose the legacy obstacle policy when no diagonal pair is feasible."""
+    centreline_half_width = float(settings.get(
+        "classification_centreline_half_width_m", 0.85))
+    shallow_front_limit = float(settings.get(
+        "classification_shallow_front_limit_m", 3.20))
+    shallow_side_influence = float(settings.get(
+        "classification_shallow_side_influence_m", 2.45))
+    relevant = [item for item in envelopes
+                if item["back_depth_m"] > 0.60 and
+                item["front_depth_m"] < 7.20]
+    centreline = [item for item in relevant
+                  if item["centreline_gap_m"] <= centreline_half_width]
+    if centreline:
+        obstacle = min(centreline, key=lambda item: item["front_depth_m"])
+    else:
+        shallow_side = [item for item in relevant
+                        if item["front_depth_m"] <= shallow_front_limit and
+                        item["centreline_gap_m"] <= shallow_side_influence]
+        obstacle = (min(shallow_side, key=lambda item: (
+            item["centreline_gap_m"], item["front_depth_m"]))
+            if shallow_side else
+            (min(relevant, key=lambda item: (
+                abs(item["lateral_m"]), item["front_depth_m"]))
+             if relevant else None))
+    if obstacle is None:
+        return "shallow_obstacle", None
+    room_type = ("shallow_obstacle" if
+                 obstacle["front_depth_m"] <= shallow_front_limit else
+                 "deep_obstacle")
+    return room_type, obstacle
+
+
+def classify_room_geometry(room, settings):
+    """Classify by large doorway blockers, while retaining all collision data."""
+    geometry = room_local_geometry(room)
+    envelopes = sorted(
+        (furniture_local_envelope(item, geometry)
+         for item in room.get("furniture", [])),
+        key=lambda item: (item["front_depth_m"],
+                          abs(item["lateral_m"])))
+    shallow_front_limit = float(settings.get(
+        "classification_shallow_front_limit_m", 3.20))
+    relevant = [item for item in envelopes
+                if item["back_depth_m"] > 0.60 and
+                item["front_depth_m"] < 7.20]
+    blockers = large_doorway_obstacles(room, envelopes, settings)
+    if blockers:
+        obstacle = blockers[0]
+        room_type = ("shallow_obstacle" if
+                     obstacle["front_depth_m"] <= shallow_front_limit else
+                     "deep_obstacle")
+    else:
+        obstacle = (min(relevant, key=lambda item: (
+            abs(item["lateral_m"]), item["front_depth_m"]))
+            if relevant else None)
+        room_type = "open"
+    policy = {
+        "open": "open_middle_deep_then_near_oblique",
+        "shallow_obstacle": "front_obstacle_side_bypass_oblique",
+        "deep_obstacle": "deep_obstacle_front_oblique_pair",
+    }[room_type]
+    return room_type, policy, geometry, obstacle, envelopes
+
+
+def point_is_safe(x, y, room, clearance):
+    return (wall_clearance(x, y, room) >= float(clearance) and
+            furniture_clearance(x, y, room) >= float(clearance))
+
+
+def nearest_safe_local_point(room, geometry, desired_depth, desired_lateral,
+                             clearance, predicate=None):
+    """Find a nearby physical point without silently collapsing its role."""
+    offsets = [0.0, 0.20, -0.20, 0.40, -0.40, 0.65, -0.65,
+               0.90, -0.90, 1.20, -1.20]
+    candidates = []
+    for depth_offset in offsets:
+        for lateral_offset in offsets:
+            depth = float(desired_depth) + depth_offset
+            lateral = float(desired_lateral) + lateral_offset
+            if depth < 0.75:
+                continue
+            if predicate is not None and not predicate(depth, lateral):
+                continue
+            x, y = local_to_world(geometry, depth, lateral)
+            if not point_is_safe(x, y, room, clearance):
+                continue
+            candidates.append((math.hypot(depth_offset, lateral_offset),
+                               x, y, depth, lateral))
+    if not candidates:
+        raise ValueError(
+            "no collision-safe point near local ({:.2f}, {:.2f}) in {}"
+            .format(desired_depth, desired_lateral, room["id"]))
+    _, x, y, depth, lateral = min(candidates)
+    return (x, y, depth, lateral)
+
+
+_GRID_PATH_SAFE_CACHE = {}
+
+
+def _grid_path(room, start, goal, clearance, resolution=0.35,
+               wall_reserve=0.0):
+    """A* inside one room, followed by line-of-sight path compression."""
+    import heapq
+
+    required_wall_clearance = float(clearance) + float(wall_reserve)
+    if segment_clear(start[0], start[1], goal[0], goal[1], room, clearance,
+                     required_wall_clearance):
+        return [tuple(start), tuple(goal)]
+    bounds = room["bounds"]
+    furniture_signature = tuple(
+        (str(item.get("id", "")),
+         tuple(round(float(value), 6) for value in item["pose"]),
+         tuple(round(float(value), 6) for value in item["size"]))
+        for item in room.get("furniture", []))
+    cache_key = (
+        str(room.get("id", "")), furniture_signature,
+        tuple(round(float(bounds[key]), 6) for key in
+              ("x_min", "x_max", "y_min", "y_max")),
+        round(float(clearance), 6), round(float(resolution), 6),
+        round(float(wall_reserve), 6))
+    cached = _GRID_PATH_SAFE_CACHE.get(cache_key)
+    if cached is None:
+        x0 = float(bounds["x_min"]) + required_wall_clearance
+        y0 = float(bounds["y_min"]) + required_wall_clearance
+        nx = int(math.floor(
+            (float(bounds["x_max"]) - required_wall_clearance - x0) /
+            resolution)) + 1
+        ny = int(math.floor(
+            (float(bounds["y_max"]) - required_wall_clearance - y0) /
+            resolution)) + 1
+    else:
+        x0, y0, nx, ny, safe = cached
+
+    def world(cell):
+        return x0 + cell[0] * resolution, y0 + cell[1] * resolution
+
+    if cached is None:
+        safe = set()
+        for ix in range(nx):
+            for iy in range(ny):
+                x, y = world((ix, iy))
+                if (wall_clearance(x, y, room) >= required_wall_clearance and
+                        furniture_clearance(x, y, room) >= clearance):
+                    safe.add((ix, iy))
+        _GRID_PATH_SAFE_CACHE[cache_key] = (x0, y0, nx, ny, safe)
+
+    def nearest_cell(point):
+        ranked = sorted(safe, key=lambda cell: math.hypot(
+                world(cell)[0] - point[0], world(cell)[1] - point[1]))
+        for cell in ranked:
+            cell_world = world(cell)
+            if segment_clear(
+                    point[0], point[1], cell_world[0], cell_world[1],
+                    room, clearance, required_wall_clearance):
+                return cell
+        raise ValueError("no free grid cells in {}".format(room["id"]))
+
+    first, last = nearest_cell(start), nearest_cell(goal)
+    queue = [(0.0, first)]
+    cost = {first: 0.0}
+    parent = {first: None}
+    while queue:
+        _, current = heapq.heappop(queue)
+        if current == last:
+            break
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1),
+                       (1, 1), (1, -1), (-1, 1), (-1, -1)):
+            neighbour = (current[0] + dx, current[1] + dy)
+            if neighbour not in safe:
+                continue
+            current_xy, neighbour_xy = world(current), world(neighbour)
+            if not segment_clear(
+                    current_xy[0], current_xy[1], neighbour_xy[0],
+                    neighbour_xy[1], room, clearance,
+                    required_wall_clearance):
+                continue
+            candidate = cost[current] + math.hypot(dx, dy) * resolution
+            if candidate >= cost.get(neighbour, float("inf")):
+                continue
+            cost[neighbour] = candidate
+            parent[neighbour] = current
+            heuristic = math.hypot(neighbour[0] - last[0],
+                                    neighbour[1] - last[1]) * resolution
+            heapq.heappush(queue, (candidate + heuristic, neighbour))
+    if last not in parent:
+        raise ValueError("no collision-safe room path in {}".format(room["id"]))
+    cells, current = [], last
+    while current is not None:
+        cells.append(current)
+        current = parent[current]
+    raw = [tuple(start)] + [world(cell) for cell in reversed(cells)] + [tuple(goal)]
+    # Build the visibility DAG over the collision-checked A* polyline.  A
+    # global dynamic programme is used instead of a greedy farthest jump:
+    # the farthest visible node can lead into more later bends than a nearer
+    # tangent node.  Minimise segment count first (controller turn/settle
+    # overhead), then geometric length, without changing any clearance test.
+    best = [(float("inf"), float("inf"), None) for _ in raw]
+    best[0] = (0, 0.0, None)
+    for right in range(1, len(raw)):
+        for left in range(right):
+            if not segment_clear(
+                    raw[left][0], raw[left][1], raw[right][0], raw[right][1],
+                    room, clearance, required_wall_clearance):
+                continue
+            previous_segments, previous_length, _ = best[left]
+            candidate = (
+                previous_segments + 1,
+                previous_length + math.hypot(
+                    raw[right][0] - raw[left][0],
+                    raw[right][1] - raw[left][1]),
+                left)
+            if candidate[:2] < best[right][:2]:
+                best[right] = candidate
+    if best[-1][2] is None:
+        raise ValueError("path compression failed in {}".format(room["id"]))
+    indices, current = [], len(raw) - 1
+    while current is not None:
+        indices.append(current)
+        current = best[current][2]
+    return [raw[index] for index in reversed(indices)]
+
+
+def _path_length(points):
+    return sum(math.hypot(right[0] - left[0], right[1] - left[1])
+               for left, right in zip(points, points[1:]))
+
+
+def _paths_minimum_furniture_clearance(paths, room):
+    minimum = float("inf")
+    for path in paths.values():
+        for start, end in zip(path, path[1:]):
+            distance = math.hypot(end[0] - start[0], end[1] - start[1])
+            steps = max(1, int(math.ceil(distance / 0.10)))
+            for step in range(steps + 1):
+                ratio = float(step) / steps
+                x = float(start[0]) + ratio * (float(end[0]) - float(start[0]))
+                y = float(start[1]) + ratio * (float(end[1]) - float(start[1]))
+                minimum = min(minimum, furniture_clearance(x, y, room))
+    return minimum
+
+
+def _range_samples(minimum, maximum, count=5):
+    """Return deterministic inclusive samples, including the range midpoint."""
+    minimum, maximum = float(minimum), float(maximum)
+    if maximum < minimum - 1.0e-9:
+        return []
+    if abs(maximum - minimum) <= 1.0e-9:
+        return [minimum]
+    count = max(2, int(count))
+    return [minimum + (maximum - minimum) * float(index) / (count - 1)
+            for index in range(count)]
+
+
+def derive_physical_viewpoints(layout, seed_by_floor, settings):
+    """Derive ENTRY/G3-deep/G4-near/RETURN/EXIT contracts from geometry."""
+    del seed_by_floor  # classification is entirely geometry-derived
+    clearance = float(settings.get(
+        "scan_point_minimum_furniture_clearance_m", 0.65))
+    path_clearance = float(settings.get(
+        "scan_path_minimum_furniture_clearance_m", 0.50))
+    planning_clearance = path_clearance + float(settings.get(
+        "scan_path_planning_reserve_m", 0.10))
+    wall_reserve = float(settings.get(
+        "scan_path_physical_wall_reserve_m", 0.20))
+    minimum_baseline = float(settings.get(
+        "physical_viewpoint_minimum_separation_m", 2.45))
+    fallback_minimum_baseline = float(settings.get(
+        "physical_viewpoint_fallback_minimum_separation_m", 2.30))
+    actual_minimum_baseline = float(settings.get(
+        "physical_viewpoint_actual_minimum_separation_m", 2.20))
+    fallback_actual_minimum_baseline = float(settings.get(
+        "physical_viewpoint_fallback_actual_minimum_separation_m", 2.10))
+    scan_turn = max(math.radians(210.0), float(settings.get(
+        "physical_viewpoint_scan_turn_rad", math.radians(215.0))))
+    yaw_rate = abs(float(settings.get("scan_yaw_rate_rad_s", 1.0)))
+    navigation_speed = float(settings.get(
+        "physical_viewpoint_navigation_speed", 0.70))
+    points = {}
+    for floor in sorted(layout["floors"], key=floor_index):
+        elevation = float(floor["elevation"])
+        for room_index, room in enumerate(floor.get("rooms", [])):
+            room_id = str(room["id"])
+            (room_type, policy, geometry, obstacle,
+             envelopes) = classify_room_geometry(room, settings)
+            entry = nearest_safe_local_point(
+                room, geometry, 0.90, 0.0, clearance)
+            bounds = room["bounds"]
+            room_depth = float(bounds["x_max"]) - float(bounds["x_min"])
+            room_width = float(bounds["y_max"]) - float(bounds["y_min"])
+            usable_depth = room_depth - clearance - wall_reserve
+            minimum_depth_delta = float(settings.get(
+                "room_view_minimum_depth_delta_m", 1.00))
+            minimum_lateral_delta = float(settings.get(
+                "room_view_minimum_lateral_delta_m", 0.80))
+            # Direct plane-RL arrival is accepted inside a 0.12 m disc.  Keep
+            # planned endpoints and pair deltas away from hard contract
+            # boundaries so a valid physical arrival does not immediately
+            # fail the stricter actual-coordinate audit.
+            arrival_margin = max(0.12, float(settings.get(
+                "room_view_arrival_robustness_margin_m", 0.14)))
+            angle_margin = max(0.0, float(settings.get(
+                "room_view_angle_robustness_margin_deg", 4.0)))
+            obstacle_clearance = float(settings.get(
+                "room_view_obstacle_clearance_m", 0.72))
+            if room_type == "shallow_obstacle":
+                base_candidate_limit = max(1, int(settings.get(
+                    "room_oblique_candidate_limit_per_side", 24)))
+                candidate_limit = max(base_candidate_limit, int(settings.get(
+                    "front_obstacle_candidate_limit_per_side", 96)))
+            elif room_type == "deep_obstacle":
+                base_candidate_limit = max(1, int(settings.get(
+                    "deep_obstacle_candidate_limit_per_side", 12)))
+                candidate_limit = base_candidate_limit
+            else:
+                base_candidate_limit = max(1, int(settings.get(
+                    "open_oblique_candidate_limit_per_side", 8)))
+                candidate_limit = max(
+                    base_candidate_limit,
+                    int(settings.get(
+                        "open_edge_candidate_limit_per_side", 48)))
+            path_resolution = float(settings.get(
+                "room_oblique_path_resolution_m", 0.55))
+            minimum_coverage = max(
+                float(settings.get(
+                    "minimum_room_scan_coverage_fraction", 0.33)),
+                float(settings.get(
+                    "minimum_open_diagonal_coverage_fraction", 0.50)))
+            minimum_robust = float(settings.get(
+                "minimum_robust_detection_fraction", 0.05))
+            minimum_dual_robust = float(settings.get(
+                "minimum_dual_view_robust_fraction", 0.12))
+            if room_type != "open":
+                # Obstacle-room routes are governed by their explicit
+                # front/behind and opposite-side contracts.  Sparse danger
+                # placement below still requires two uncertainty-safe views,
+                # so a low whole-room grid fraction cannot admit a weak target.
+                minimum_dual_robust = 0.0
+            primary_width_fraction = float(settings.get(
+                "open_view_central_width_fraction", 0.60))
+            levels = [
+                ("primary", primary_width_fraction,
+                 float(settings.get("room_view_line_angle_min_deg", 20.0)),
+                 float(settings.get("room_view_line_angle_max_deg", 70.0)),
+                 minimum_baseline, actual_minimum_baseline),
+                ("bounded_relaxation", float(settings.get(
+                    "room_view_fallback_central_width_fraction", 0.70)),
+                 float(settings.get(
+                    "room_view_fallback_line_angle_min_deg", 15.0)),
+                 float(settings.get(
+                    "room_view_fallback_line_angle_max_deg", 75.0)),
+                 fallback_minimum_baseline,
+                 fallback_actual_minimum_baseline),
+            ]
+            if room_type in ("open", "shallow_obstacle"):
+                boundary_angle_maximum = float(settings.get(
+                    "boundary_coverage_line_angle_max_deg", 78.0))
+                levels = [
+                    (
+                        name,
+                        width,
+                        angle_minimum,
+                        max(angle_maximum,
+                            boundary_angle_maximum),
+                        planned_baseline,
+                        actual_baseline,
+                    )
+                    for (
+                        name,
+                        width,
+                        angle_minimum,
+                        angle_maximum,
+                        planned_baseline,
+                        actual_baseline,
+                    ) in levels
+                ]
+            grid = room_observation_grid(room, settings)
+            scoring_stride = max(1, int(settings.get(
+                "dual_view_scoring_grid_stride", 4)))
+            scoring_grid = grid[::scoring_stride]
+            selected = None
+            selected_limits = None
+            for (fallback_level, width_fraction, angle_minimum, angle_maximum,
+                 level_minimum_baseline,
+                 level_actual_minimum_baseline) in levels:
+                central_half_width = min(
+                    0.5 * room_width * width_fraction,
+                    0.5 * room_width - clearance - wall_reserve)
+                robust_central_half_width = central_half_width - arrival_margin
+                if robust_central_half_width <= 0.0:
+                    continue
+                laterals = _range_samples(
+                    -robust_central_half_width,
+                    robust_central_half_width, 13)
+                if room_type == "open":
+                    near_minimum = max(
+                        float(settings.get("open_near_view_min_depth_m", 2.50)),
+                        usable_depth * float(settings.get(
+                            "open_near_view_depth_fraction_min", 0.35)))
+                    near_maximum = min(
+                        float(settings.get("open_near_view_max_depth_m", 4.00)),
+                        usable_depth * float(settings.get(
+                            "open_near_view_depth_fraction_max", 0.50)))
+                    deep_minimum = max(
+                        float(settings.get("open_deep_view_min_depth_m", 4.00)),
+                        usable_depth * float(settings.get(
+                            "open_deep_view_depth_fraction_min", 0.55)))
+                    deep_maximum = min(
+                        float(settings.get("open_deep_view_max_depth_m", 5.50)),
+                        usable_depth * float(settings.get(
+                            "open_deep_view_depth_fraction_max", 0.70)))
+                    deep_predicate = lambda depth, lateral: True
+                    near_predicate = lambda depth, lateral: True
+                    opposite_obstacle_sides = False
+                elif room_type == "deep_obstacle":
+                    if obstacle is None:
+                        raise ValueError(
+                            "{} has no deep obstacle geometry".format(room_id))
+                    front_limit = (float(obstacle["front_depth_m"]) -
+                                   obstacle_clearance)
+                    # For blockers just beyond the 3.2 m deep-obstacle
+                    # threshold, a fixed 1.20 m G4 lower bound can consume
+                    # the entire robust interval once the required 1.0 m
+                    # G3/G4 depth delta and both arrival margins are applied.
+                    # G4 is the door-side member of this pair; derive it from
+                    # the actually available obstacle-front region instead.
+                    near_minimum = max(0.90, 0.30 * front_limit)
+                    near_maximum = 0.55 * front_limit
+                    deep_minimum = max(2.10, 0.65 * front_limit)
+                    deep_maximum = front_limit
+                    deep_predicate = lambda depth, lateral: (
+                        depth <= float(obstacle["front_depth_m"]) -
+                        obstacle_clearance)
+                    near_predicate = deep_predicate
+                    opposite_obstacle_sides = False
+                else:
+                    if obstacle is None:
+                        raise ValueError(
+                            "{} has no front obstacle geometry".format(room_id))
+                    near_minimum = max(
+                        2.00, float(obstacle["front_depth_m"]) - 0.20)
+                    near_maximum = min(
+                        4.00, float(obstacle["back_depth_m"]) + 0.45,
+                        usable_depth - minimum_depth_delta)
+                    deep_minimum = max(
+                        4.00, float(obstacle["back_depth_m"]) +
+                        obstacle_clearance, near_minimum + minimum_depth_delta)
+                    # The front-obstacle contract only requires G3 to be on
+                    # the safe side behind the inflated obstacle.  A fixed
+                    # 6.25 m cap can invert the robust endpoint interval when
+                    # a long table ends near 5.4 m (after the 0.72 m obstacle
+                    # clearance and both arrival margins are applied), even
+                    # though the room still has ample collision-free depth.
+                    # Keep the endpoint inside the rear 15% reserve derived
+                    # from this room instead of imposing that unrelated cap.
+                    deep_maximum = 0.92 * usable_depth
+                    side_clearance = (float(obstacle["lateral_extent_m"]) +
+                                      obstacle_clearance)
+                    deep_predicate = lambda depth, lateral: (
+                        depth >= float(obstacle["back_depth_m"]) +
+                        obstacle_clearance and
+                        abs(lateral - float(obstacle["lateral_m"])) >=
+                        side_clearance)
+                    near_predicate = lambda depth, lateral: (
+                        abs(lateral - float(obstacle["lateral_m"])) >=
+                        side_clearance)
+                    opposite_obstacle_sides = True
+
+                deep_depths = _range_samples(
+                    deep_minimum + arrival_margin,
+                    deep_maximum - arrival_margin, 5)
+                near_depths = _range_samples(
+                    near_minimum + arrival_margin,
+                    near_maximum - arrival_margin, 5)
+                preliminary = {-1: [], 1: []}
+                for deep_depth in deep_depths:
+                    for deep_lateral in laterals:
+                        if not deep_predicate(deep_depth, deep_lateral):
+                            continue
+                        deep_x, deep_y = local_to_world(
+                            geometry, deep_depth, deep_lateral)
+                        if not point_is_safe(
+                                deep_x, deep_y, room, clearance):
+                            continue
+                        for near_depth in near_depths:
+                            depth_delta = deep_depth - near_depth
+                            if depth_delta < (
+                                    minimum_depth_delta + 2.0 * arrival_margin):
+                                continue
+                            for near_lateral in laterals:
+                                lateral_delta = abs(
+                                    deep_lateral - near_lateral)
+                                if lateral_delta < (
+                                        minimum_lateral_delta +
+                                        2.0 * arrival_margin):
+                                    continue
+                                point_separation = math.hypot(
+                                    depth_delta, lateral_delta)
+                                if point_separation < level_minimum_baseline:
+                                    continue
+                                if not near_predicate(near_depth, near_lateral):
+                                    continue
+                                if (opposite_obstacle_sides and
+                                        (deep_lateral - float(obstacle["lateral_m"])) *
+                                        (near_lateral - float(obstacle["lateral_m"])) >= 0.0):
+                                    continue
+                                angle_deg = math.degrees(math.atan2(
+                                    lateral_delta, depth_delta))
+                                if not (angle_minimum + angle_margin <=
+                                        angle_deg <=
+                                        angle_maximum - angle_margin):
+                                    continue
+                                near_x, near_y = local_to_world(
+                                    geometry, near_depth, near_lateral)
+                                if not point_is_safe(
+                                        near_x, near_y, room, clearance):
+                                    continue
+                                diagonal_sign = (-1 if
+                                    deep_lateral < near_lateral else 1)
+                                direct_route = (
+                                    math.hypot(deep_x - entry[0],
+                                               deep_y - entry[1]) +
+                                    math.hypot(near_x - deep_x,
+                                               near_y - deep_y) +
+                                    math.hypot(entry[0] - near_x,
+                                               entry[1] - near_y))
+                                centrality = abs(deep_lateral) + abs(near_lateral)
+                                preliminary[diagonal_sign].append((
+                                    direct_route, centrality,
+                                    (deep_x, deep_y, deep_depth, deep_lateral),
+                                    (near_x, near_y, near_depth, near_lateral),
+                                    angle_deg))
+
+                feasible = []
+                for diagonal_sign in (-1, 1):
+                    ranked_candidates = sorted(
+                        preliminary[diagonal_sign])
+                    shortest_candidates = ranked_candidates[
+                        :base_candidate_limit]
+                    remaining_candidates = ranked_candidates[
+                        base_candidate_limit:]
+
+                    edge_rankings = (
+                        sorted(
+                            remaining_candidates,
+                            key=lambda item: (
+                                -max(
+                                    float(item[2][3]),
+                                    float(item[3][3])),
+                                item[0],
+                                item[1],
+                            )),
+                        sorted(
+                            remaining_candidates,
+                            key=lambda item: (
+                                min(
+                                    float(item[2][3]),
+                                    float(item[3][3])),
+                                item[0],
+                                item[1],
+                            )),
+                        sorted(
+                            remaining_candidates,
+                            key=lambda item: (
+                                -abs(
+                                    float(item[2][3]) -
+                                    float(item[3][3])),
+                                item[0],
+                                item[1],
+                            )),
+                    )
+
+                    edge_candidates = []
+                    edge_candidate_ids = set()
+                    edge_limit = max(
+                        0,
+                        candidate_limit - base_candidate_limit)
+                    rank_index = 0
+
+                    while (
+                            len(edge_candidates) < edge_limit and
+                            any(
+                                rank_index < len(items)
+                                for items in edge_rankings)):
+                        for items in edge_rankings:
+                            if rank_index >= len(items):
+                                continue
+
+                            item = items[rank_index]
+                            item_id = (item[2], item[3])
+
+                            if item_id in edge_candidate_ids:
+                                continue
+
+                            edge_candidate_ids.add(item_id)
+                            edge_candidates.append(item)
+
+                            if len(edge_candidates) >= edge_limit:
+                                break
+
+                        rank_index += 1
+
+                    scoring_candidates = (
+                        shortest_candidates + edge_candidates)
+
+                    for candidate_rank, candidate in enumerate(
+                            scoring_candidates):
+                        (_direct, centrality, deep_point, near_point,
+                         angle_deg) = candidate
+                        deep_x, deep_y = deep_point[:2]
+                        near_x, near_y = near_point[:2]
+                        try:
+                            candidate_paths = {
+                                "entry_to_g3": _grid_path(
+                                    room, entry[:2], (deep_x, deep_y),
+                                    planning_clearance,
+                                    resolution=path_resolution,
+                                    wall_reserve=wall_reserve),
+                                "g3_to_g4": _grid_path(
+                                    room, (deep_x, deep_y), (near_x, near_y),
+                                    planning_clearance,
+                                    resolution=path_resolution,
+                                    wall_reserve=wall_reserve),
+                                "g4_to_return": _grid_path(
+                                    room, (near_x, near_y), entry[:2],
+                                    planning_clearance,
+                                    resolution=path_resolution,
+                                    wall_reserve=wall_reserve),
+                            }
+                        except ValueError:
+                            continue
+                        arrival_yaws = {}
+                        for role, path_name in (("G3", "entry_to_g3"),
+                                                ("G4", "g3_to_g4")):
+                            start, end = candidate_paths[path_name][-2:]
+                            arrival_yaws[role] = math.atan2(
+                                float(end[1]) - float(start[1]),
+                                float(end[0]) - float(start[0]))
+                        inward_yaw = float(geometry["inward_yaw"])
+                        first_sign = min((-1.0, 1.0), key=lambda first: sum(
+                            abs(normalize_angle(
+                                inward_yaw - (arrival_yaws[role] +
+                                              sign * 0.5 * scan_turn)))
+                            for role, sign in (("G3", first),
+                                               ("G4", -first))))
+                        provisional = []
+                        for role, point, turn_sign in (
+                                ("G3", deep_point, first_sign),
+                                ("G4", near_point, -first_sign)):
+                            provisional.append({
+                                "pose": [point[0], point[1], elevation,
+                                         arrival_yaws[role]],
+                                "scan_turn_rad": scan_turn,
+                                "scan_yaw_rate": turn_sign * yaw_rate,
+                                "detection_minimum_range_m": float(
+                                    settings.get(
+                                        "red_ball_scan_minimum_range_m", 0.75)),
+                                "detection_maximum_range_m": float(
+                                    settings.get(
+                                        "red_ball_scan_maximum_range_m", 7.0)),
+                                "detection_heading_margin_rad": float(
+                                    settings.get(
+                                        "red_ball_scan_heading_margin_rad", 0.22)),
+                            })
+                        candidate_coverage = scan_pair_coverage(
+                            room, provisional, settings, grid=scoring_grid)
+                        dual_robustness = dual_view_robustness(
+                            room, provisional, settings, grid=grid)
+                        boundary_los_score = (
+                            scan_pair_boundary_los_score(
+                                room, provisional, settings)
+                            if room_type in (
+                                "open", "shallow_obstacle")
+                            else 0.0
+                        )
+                        if (candidate_coverage["coverage_fraction"] <
+                                minimum_coverage or
+                                candidate_coverage[
+                                    "robust_detection_fraction"] <
+                                minimum_robust or
+                                dual_robustness[
+                                    "dual_view_robust_fraction"] <
+                                minimum_dual_robust):
+                            continue
+                        route_length = sum(_path_length(path)
+                                           for path in candidate_paths.values())
+                        minimum_clearance = _paths_minimum_furniture_clearance(
+                            candidate_paths, room)
+                        occluder_side_margin = float(settings.get(
+                            "open_small_occluder_side_margin_m", 0.35))
+                        opposite_occluder_sides = False
+                        if room_type == "open" and obstacle is not None:
+                            required_side_offset = (
+                                float(obstacle["lateral_extent_m"]) +
+                                occluder_side_margin)
+                            deep_offset = (float(deep_point[3]) -
+                                           float(obstacle["lateral_m"]))
+                            near_offset = (float(near_point[3]) -
+                                           float(obstacle["lateral_m"]))
+                            opposite_occluder_sides = bool(
+                                deep_offset * near_offset < 0.0 and
+                                abs(deep_offset) >= required_side_offset and
+                                abs(near_offset) >= required_side_offset)
+                        # Open rooms may contain widely separated targets.
+                        # Prefer truth-independent union coverage: a grid cell
+                        # clearly visible from either G3 or G4 is sufficient.
+                        # Scan count, turn, speed and dwell remain unchanged.
+                        if room_type in (
+                                "open", "shallow_obstacle"):
+                            score = (
+                                boundary_los_score,
+                                candidate_coverage["covered_cell_count"],
+                                candidate_coverage[
+                                    "robust_detection_cell_count"],
+                                dual_robustness[
+                                    "diverse_dual_view_cell_count"],
+                                float(dual_robustness[
+                                    "minimum_observed_dual_view_parallax_deg"]
+                                      or 0.0),
+                                int(opposite_occluder_sides),
+                                -route_length, minimum_clearance, -centrality)
+                        else:
+                            score = (
+                                dual_robustness[
+                                    "diverse_dual_view_cell_count"],
+                                float(dual_robustness[
+                                    "minimum_observed_dual_view_parallax_deg"]
+                                      or 0.0),
+                                candidate_coverage["covered_cell_count"],
+                                int(opposite_occluder_sides),
+                                -route_length, minimum_clearance, -centrality)
+                        search_tier = (0 if candidate_rank <
+                                       base_candidate_limit else 1)
+                        feasible.append((search_tier, score,
+                                         deep_point, near_point,
+                                         candidate_paths, angle_deg,
+                                         dual_robustness,
+                                         opposite_occluder_sides))
+                if feasible:
+                    # Preserve the established 24-candidate route whenever it
+                    # is feasible.  The extended front-obstacle search is a
+                    # bounded fallback only, not an alternate scorer that can
+                    # replace a stable route with a longer one.
+                    selected_search_tier = min(item[0] for item in feasible)
+                    # BOUNDARY_ROUTE_BUDGET_V3
+                    # Retain the geometry-only visibility scorer while bounding route growth.
+                    if room_type in ("open", "shallow_obstacle"):
+                        route_allowance_m = float(settings.get(
+                            "boundary_coverage_route_allowance_m",
+                            3.60 if room_type == "open" else 5.00))
+                        candidate_routes = [
+                            sum(_path_length(path) for path in item[4].values())
+                            for item in feasible]
+                        shortest_route = min(candidate_routes)
+                        tier_feasible = [
+                            item
+                            for item, route_length in zip(
+                                feasible, candidate_routes)
+                            if route_length <= (
+                                shortest_route + route_allowance_m + 1.0e-9)]
+                    else:
+                        tier_feasible = [
+                            item for item in feasible
+                            if item[0] == selected_search_tier]
+                    (_search_tier, _score, g3, g4, paths,
+                     _selected_angle, selected_dual_robustness,
+                     selected_opposite_occluder_sides) = max(
+                         tier_feasible, key=lambda item: item[1])
+                    selected = (g3, g4, paths)
+                    selected_limits = {
+                        "g3_depth_minimum": deep_minimum,
+                        "g3_depth_maximum": deep_maximum,
+                        "g4_depth_minimum": near_minimum,
+                        "g4_depth_maximum": near_maximum,
+                        "minimum_depth_delta": minimum_depth_delta,
+                        "minimum_lateral_delta": minimum_lateral_delta,
+                        "angle_minimum": angle_minimum,
+                        "angle_maximum": angle_maximum,
+                        "central_half_width_m": central_half_width,
+                        "central_width_fraction": width_fraction,
+                        "fallback_level": fallback_level,
+                        "planned_minimum_viewpoint_separation_m": (
+                            level_minimum_baseline),
+                        "actual_minimum_viewpoint_separation_m": (
+                            level_actual_minimum_baseline),
+                        "dual_view_robustness": copy.deepcopy(
+                            selected_dual_robustness),
+                        "opposite_small_occluder_sides": bool(
+                            selected_opposite_occluder_sides),
+                        "candidate_search_tier": selected_search_tier,
+                        "obstacle_clearance_m": obstacle_clearance,
+                        "obstacle_front_depth_m": (
+                            None if obstacle is None else
+                            float(obstacle["front_depth_m"])),
+                        "obstacle_back_depth_m": (
+                            None if obstacle is None else
+                            float(obstacle["back_depth_m"])),
+                        "obstacle_lateral_m": (
+                            None if obstacle is None else
+                            float(obstacle["lateral_m"])),
+                        "g3_must_be_behind_obstacle": (
+                            room_type == "shallow_obstacle"),
+                        "both_must_be_before_obstacle": (
+                            room_type == "deep_obstacle"),
+                        "opposite_obstacle_sides": opposite_obstacle_sides,
+                    }
+                    break
+            if selected is None:
+                raise ValueError(
+                    "{} has no safe {} candidate, including bounded fallback"
+                    .format(room_id, policy))
+            g3, g4, paths = selected
+
+            # BOUNDARY_CONTRACT_NORMALIZATION_V1
+            # The visibility planner may search up to 78 degrees, but every
+            # selected result must still be represented by one of the official
+            # contracts. Results above the primary 70-degree envelope are
+            # recorded as the existing bounded-relaxation contract. No pose,
+            # route, scan duration or detector setting is changed here.
+            if (
+                    room_type in ("open", "shallow_obstacle") and
+                    float(selected_limits["angle_maximum"]) > 75.0
+            ):
+                selected_limits["fallback_level"] = (
+                    "bounded_relaxation")
+                selected_limits["angle_minimum"] = max(
+                    15.0,
+                    float(selected_limits["angle_minimum"]))
+                selected_limits["angle_maximum"] = 75.0
+                selected_limits["central_width_fraction"] = min(
+                    0.70,
+                    float(selected_limits[
+                        "central_width_fraction"]))
+                selected_limits[
+                    "planned_minimum_viewpoint_separation_m"
+                ] = fallback_minimum_baseline
+                selected_limits[
+                    "actual_minimum_viewpoint_separation_m"
+                ] = fallback_actual_minimum_baseline
+
+            viewpoint_fallback_reason = (
+                None if selected_limits["fallback_level"] == "primary" else
+                "primary_oblique_pair_infeasible")
+            baseline = math.hypot(g4[0] - g3[0], g4[1] - g3[1])
+            planned_line_angle_deg = math.degrees(math.atan2(
+                abs(float(g4[3]) - float(g3[3])),
+                abs(float(g4[2]) - float(g3[2]))))
+            if baseline < selected_limits[
+                    "planned_minimum_viewpoint_separation_m"]:
+                raise ValueError(
+                    "{} physical viewpoint baseline {:.3f} < {:.3f}"
+                    .format(room_id, baseline, selected_limits[
+                        "planned_minimum_viewpoint_separation_m"]))
+            def arrival_heading(path):
+                start, end = path[-2], path[-1]
+                return math.atan2(float(end[1]) - float(start[1]),
+                                  float(end[0]) - float(start[0]))
+
+            arrival_yaws = {
+                "G3": arrival_heading(paths["entry_to_g3"]),
+                "G4": arrival_heading(paths["g3_to_g4"]),
+            }
+            # Preserve opposite G3/G4 scan directions, but choose which one
+            # turns clockwise so both swept sectors are centred as closely as
+            # possible on the room interior.  Starting at the path-arrival
+            # heading removes a redundant stop-and-pivot before every scan.
+            inward_yaw = float(geometry["inward_yaw"])
+            def alignment_cost(first):
+                return sum(abs(normalize_angle(
+                    inward_yaw - (arrival_yaws[role] +
+                                  sign * 0.5 * scan_turn)))
+                           for role, sign in (("G3", first),
+                                              ("G4", -first)))
+            first_sign = min((-1.0, 1.0), key=alignment_cost)
+            definitions = []
+            for role, point, turn_sign in (
+                    ("G3", g3, first_sign), ("G4", g4, -first_sign)):
+                start_yaw = normalize_angle(arrival_yaws[role])
+                obstacle_sign = (None if obstacle is None else
+                                 (-1 if point[3] < obstacle["lateral_m"] else 1))
+                definitions.append({
+                    "id": room_id + "_" + role.lower(),
+                    "room_id": room_id,
+                    "role": role,
+                    "room_type": room_type,
+                    "viewpoint_policy": policy,
+                    "viewpoint_semantic": (
+                        "deep" if role == "G3" else "near"),
+                    "pose": [point[0], point[1], elevation, start_yaw],
+                    "door_relative_depth_m": point[2],
+                    "door_relative_lateral_m": point[3],
+                    "obstacle_lateral_sign": obstacle_sign,
+                    "scan_turn_rad": scan_turn,
+                    "scan_yaw_rate": turn_sign * yaw_rate,
+                    "scan_start_heading_source": "final_path_segment",
+                    "scan_settle_sec": float(settings.get(
+                        "physical_viewpoint_scan_settle_sec", 0.25)),
+                    "scan_pause_interval_rad": float(settings.get(
+                        "scan_pause_interval_rad", 0.0)),
+                    "scan_pause_dwell_sec": float(settings.get(
+                        "scan_pause_dwell_sec", 0.0)),
+                    "navigation_speed": navigation_speed,
+                    "detection_minimum_range_m": float(settings.get(
+                        "red_ball_scan_minimum_range_m", 0.75)),
+                    "detection_maximum_range_m": float(settings.get(
+                        "red_ball_scan_maximum_range_m", 7.0)),
+                    "detection_heading_margin_rad": float(settings.get(
+                        "red_ball_scan_heading_margin_rad", 0.22)),
+                })
+            # The two scans remain opposite-direction sweeps, but the
+            # clockwise assignment is selected by measured room coverage.
+            # This matters for a central meeting table: the alignment-only
+            # choice can sweep both cameras toward the same occluded half.
+            # Conservatively search both opposite scan-direction
+            # assignments and bounded start-heading offsets. Viewpoint
+            # positions, paths, scan count, turn magnitude, yaw-rate
+            # magnitude, dwell and navigation speed remain unchanged.
+            heading_step_deg = max(1.0, float(settings.get(
+                "scan_heading_search_step_deg", 10.0)))
+            heading_limit_deg = max(0.0, float(settings.get(
+                "scan_heading_search_limit_deg", 90.0)))
+            heading_step_rad = math.radians(heading_step_deg)
+            maximum_steps = int(math.floor(
+                heading_limit_deg / heading_step_deg + 1.0e-9))
+            best_orientation = None
+
+            for flip in (False, True):
+                base_definitions = copy.deepcopy(definitions)
+                if flip:
+                    for definition in base_definitions:
+                        definition["scan_yaw_rate"] *= -1.0
+
+                for first_step in range(-maximum_steps,
+                                        maximum_steps + 1):
+                    for second_step in range(-maximum_steps,
+                                             maximum_steps + 1):
+                        candidate = copy.deepcopy(base_definitions)
+                        candidate[0]["pose"][3] = normalize_angle(
+                            float(candidate[0]["pose"][3]) +
+                            first_step * heading_step_rad)
+                        candidate[1]["pose"][3] = normalize_angle(
+                            float(candidate[1]["pose"][3]) +
+                            second_step * heading_step_rad)
+
+                        coverage = scan_pair_coverage(
+                            room, candidate, settings, grid=grid)
+                        edge_coverage = scan_pair_edge_coverage(
+                            room, candidate, settings, grid=grid)
+                        edge_sectors = edge_coverage.get(
+                            "edge_sector_coverage_fractions", {})
+
+                        score = (
+                            coverage["robust_detection_cell_count"],
+                            coverage["covered_cell_count"],
+                            edge_coverage.get(
+                                "minimum_edge_sector_coverage_fraction",
+                                0.0),
+                            sum(edge_sectors.values()),
+                            -abs(first_step) - abs(second_step),
+                            -int(flip),
+                        )
+                        if (best_orientation is None or
+                                score > best_orientation[0]):
+                            best_orientation = (score, candidate)
+
+            if best_orientation is None:
+                raise ValueError(
+                    "{} has no bounded scan-heading candidate".format(
+                        room_id))
+            definitions = best_orientation[1]
+            definitions, heading_repair = repair_weak_open_room_scan_heading(
+                room, definitions, settings, grid=grid,
+                room_type=room_type)
+            contract = {
+                "room_id": room_id,
+                "room_type": room_type,
+                "viewpoint_policy": policy,
+                "classification_source": (
+                    "large_doorway_blocker_then_safe_diagonal_search"),
+                "door": {
+                    "centre": [geometry["door_x"], geometry["door_y"], elevation],
+                    "inward_direction": geometry["inward_direction"],
+                    "inward_yaw": geometry["inward_yaw"],
+                },
+                "primary_obstacle": copy.deepcopy(obstacle),
+                "large_doorway_obstacles": large_doorway_obstacles(
+                    room, envelopes, settings),
+                "viewpoint_fallback_reason": viewpoint_fallback_reason,
+                "viewpoint_fallback_level": selected_limits["fallback_level"],
+                "obstacle_envelopes": copy.deepcopy(envelopes),
+                "planned_viewpoint_separation_m": baseline,
+                "planned_minimum_viewpoint_separation_m": selected_limits[
+                    "planned_minimum_viewpoint_separation_m"],
+                "planned_viewpoint_line_angle_deg": planned_line_angle_deg,
+                "actual_geometry_limits": copy.deepcopy(selected_limits),
+                "minimum_viewpoint_separation_m": selected_limits[
+                    "actual_minimum_viewpoint_separation_m"],
+                "minimum_scan_rotation_rad": math.radians(210.0),
+                "paths": copy.deepcopy(paths),
+                "planned_internal_route_m": sum(
+                    _path_length(path) for path in paths.values()),
+                "offline_boundary_furniture_audit_passed": True,
+                "path_planning_clearance_m": planning_clearance,
+                "path_physical_wall_reserve_m": wall_reserve,
+                "viewpoints": copy.deepcopy(definitions),
+                "scan_heading_repair": copy.deepcopy(heading_repair),
+            }
+            room["room_type"] = room_type
+            room["viewpoint_policy"] = policy
+            room["room_contract"] = contract
+            room["scan_points"] = copy.deepcopy(definitions)
+            coverage = scan_pair_coverage(
+                room, definitions, settings)
+            coverage.update(scan_pair_edge_coverage(
+                room, definitions, settings))
+            coverage.update(dual_view_robustness(
+                room, definitions, settings))
+            coverage.update({
+                "physical_viewpoint_separation_m": baseline,
+                "room_type": room_type,
+                "viewpoint_policy": policy,
+                "opposite_small_occluder_sides": selected_limits[
+                    "opposite_small_occluder_sides"],
+                "combined_turn_rad": 2.0 * scan_turn,
+                "estimated_pair_time_sec": (
+                    contract["planned_internal_route_m"] /
+                    max(0.1, navigation_speed * float(settings.get(
+                        "coverage_time_speed_scale", 2.60))) +
+                    2.0 * scan_turn / max(0.1, yaw_rate)),
+                "optimization": "room_type_physical_two_view_contract",
+            })
+            room["scan_coverage"] = coverage
+            points[room_id] = definitions
+    return points
+
+
+def visible_in_scan(x, y, scan):
+    sx, sy, _, yaw = [float(value) for value in scan["pose"]]
+    distance = math.hypot(float(x) - sx, float(y) - sy)
+    # Keep targets close enough to remain comfortably above the RGB contour
+    # area threshold and away from sweep endpoints long enough to produce at
+    # least three processed frames.
+    minimum_range = float(scan.get("detection_minimum_range_m", 1.00))
+    maximum_range = float(scan.get("detection_maximum_range_m", 6.00))
+    if distance < minimum_range or distance > maximum_range:
+        return False
+    bearing = math.atan2(float(y) - sy, float(x) - sx)
+    if float(scan["scan_yaw_rate"]) >= 0.0:
+        progress = (bearing - yaw) % (2.0 * math.pi)
+    else:
+        progress = (yaw - bearing) % (2.0 * math.pi)
+    turn = float(scan["scan_turn_rad"])
+    endpoint_margin = float(scan.get(
+        "detection_heading_margin_rad", min(0.35, 0.25 * turn)))
+    return endpoint_margin <= progress <= turn - endpoint_margin
+
+
+def danger_name(floor, index):
+    base = "danger_red_sphere_{:02d}".format(index)
+    return base if floor == 0 else "{}_floor_{}".format(base, floor)
+
+
+def place_red_balls(layout, scans, seed_by_floor, settings):
+    per_floor = int(settings.get("red_balls_per_floor", 6))
+    if per_floor < 4:
+        raise ValueError("red_balls_per_floor must be at least four")
+    radius = float(settings.get("red_ball_radius_m", 0.15))
+    wall_margin = float(settings.get("red_ball_wall_margin_m", 0.55))
+    obstacle_margin = float(settings.get("red_ball_furniture_clearance_m", 0.30))
+    separation = float(settings.get("red_ball_minimum_separation_m", 1.35))
+    los_clearance = float(settings.get(
+        "red_ball_line_of_sight_clearance_m", 0.22))
+    projected_gap = float(settings.get(
+        "red_ball_minimum_projected_gap_rad", 0.05235987755982989))
+    poses, truth = {}, []
+
+    for floor in sorted(layout["floors"], key=floor_index):
+        index = floor_index(floor)
+        elevation = float(floor["elevation"])
+        rng = random.Random(seed_by_floor[index] ^ 0x52454442)
+        rooms = list(floor.get("rooms", []))
+        if len(rooms) != 4:
+            raise ValueError("floor {} must contain four rooms".format(index))
+        extra_rooms = set(rng.sample(range(len(rooms)), per_floor - len(rooms)))
+        counts = [1 + int(room_index in extra_rooms)
+                  for room_index in range(len(rooms))]
+        floor_positions = []
+        ball_index = 0
+        for room_index, room in enumerate(rooms):
+            room_id = str(room["id"])
+            bounds = room["bounds"]
+            room_truth = []
+            for _ in range(counts[room_index]):
+                selected = None
+                for _attempt in range(4000):
+                    x = rng.uniform(float(bounds["x_min"]) + wall_margin,
+                                    float(bounds["x_max"]) - wall_margin)
+                    y = rng.uniform(float(bounds["y_min"]) + wall_margin,
+                                    float(bounds["y_max"]) - wall_margin)
+                    if furniture_clearance(x, y, room) < obstacle_margin:
+                        continue
+                    if any(math.hypot(x - old_x, y - old_y) < separation
+                           for old_x, old_y in floor_positions):
+                        continue
+                    # Balls are sampled only from the central swept sector,
+                    # not merely from the edge of the camera FOV.  This leaves
+                    # enough observation time for three independent 10 Hz RGB
+                    # confirmations even with approach-yaw uncertainty.
+                    visible_scans = [
+                        scan for scan in scans[room_id]
+                        if visible_in_scan(x, y, scan) and
+                        line_of_sight_clear(
+                            float(scan["pose"][0]),
+                            float(scan["pose"][1]), x, y, room,
+                            los_clearance)]
+                    if not visible_scans:
+                        continue
+                    # Two same-room balls that share a valid scan must keep
+                    # disjoint projected silhouettes in that scan's bearing
+                    # space, otherwise the RGB contour stage can fuse them
+                    # into one confirmed source.  Pairs assigned to
+                    # different, non-shared scans are allowed.
+                    if any(
+                        not projected_silhouettes_separated(
+                            scan, radius, x, y,
+                            float(prior["pose"][0]),
+                            float(prior["pose"][1]), projected_gap)
+                        for prior in room_truth
+                        for scan in visible_scans
+                        if str(scan["id"]) in {
+                            str(value) for value in prior["visible_scan_ids"]}):
+                        continue
+                    selected = (x, y, visible_scans)
+                    break
+                if selected is None:
+                    raise ValueError(
+                        "could not place a red ball in {} under the conservative "
+                        "line-of-sight and projected-separation placement "
+                        "constraints".format(room_id))
+                x, y, visible_scans = selected
+                model_name = danger_name(index, ball_index)
+                pose = [x, y, elevation + radius, 0.0, 0.0, 0.0]
+                record = {"id": model_name, "floor_index": index,
+                          "room_id": room_id, "pose": pose,
+                          "radius_m": radius,
+                          "visible_scan_ids": [
+                              str(scan["id"]) for scan in visible_scans]}
+                poses[model_name] = pose
+                truth.append(record)
+                room_truth.append(copy.deepcopy(record))
+                floor_positions.append((x, y))
+                ball_index += 1
+            room["red_balls"] = room_truth
+        if ball_index != per_floor:
+            raise ValueError("floor {} red-ball count is {}, expected {}".format(
+                index, ball_index, per_floor))
+    layout["danger_red_spheres"] = copy.deepcopy(truth)
+    return poses, truth
+
+
+def place_sparse_red_balls(layout, scans, seed_by_floor, settings,
+                           red_distractors=None):
+    """Place 3--6 total RGB-D targets across distinct random rooms."""
+    minimum_total = int(settings.get("red_ball_total_minimum", 3))
+    maximum_total = int(settings.get("red_ball_total_maximum", 6))
+    if not 3 <= minimum_total <= maximum_total <= 6:
+        raise ValueError("red-ball total range must stay within 3..6")
+    combined_seed = sum(
+        (index + 1) * int(seed_by_floor[index])
+        for index in sorted(seed_by_floor))
+    rng = random.Random(combined_seed ^ 0x52474450)
+    total = rng.randint(minimum_total, maximum_total)
+    radius = float(settings.get("red_ball_radius_m", 0.15))
+    wall_margin = float(settings.get("red_ball_wall_margin_m", 0.65))
+    obstacle_margin = float(settings.get(
+        "red_ball_furniture_clearance_m", 0.45))
+    path_margin = float(settings.get(
+        "red_ball_route_clearance_m", 0.55))
+    room_records = [
+        (floor, room)
+        for floor in sorted(layout["floors"], key=floor_index)
+        for room in floor.get("rooms", [])]
+    # Keep room choice random and deterministic, but skip a room rather than
+    # weakening the two-view camera contract when its current furniture layout
+    # has no uncertainty-safe target position.
+    candidate_rooms = list(room_records)
+    rng.shuffle(candidate_rooms)
+    poses, truth = {}, []
+    floor_counts = {index: 0 for index in seed_by_floor}
+    for _floor, room in room_records:
+        room["red_balls"] = []
+    for floor, room in candidate_rooms:
+        if len(truth) >= total:
+            break
+        room_id = str(room["id"])
+        index = floor_index(floor)
+        elevation = float(floor["elevation"])
+        bounds = room["bounds"]
+        contract_paths = room.get("room_contract", {}).get("paths", {})
+        route_segments = []
+        for path in contract_paths.values():
+            route_segments.extend(zip(path, path[1:]))
+        candidates = []
+        for _attempt in range(6000):
+            x = rng.uniform(float(bounds["x_min"]) + wall_margin,
+                            float(bounds["x_max"]) - wall_margin)
+            y = rng.uniform(float(bounds["y_min"]) + wall_margin,
+                            float(bounds["y_max"]) - wall_margin)
+            if furniture_clearance(x, y, room) < obstacle_margin:
+                continue
+            if any(segment_box_intersects(
+                    segment[0][0], segment[0][1], segment[1][0],
+                    segment[1][1],
+                    {"pose": [x, y, 0.0, 0.0, 0.0, 0.0],
+                     "size": [2.0 * path_margin, 2.0 * path_margin]},
+                    0.0) for segment in route_segments):
+                continue
+            room_scans = scans[room_id]
+            if len(room_scans) != 2:
+                raise ValueError("{} must have exactly two scans".format(
+                    room_id))
+            view_evidence = [robust_detection_view(
+                x, y, scan, room, settings) for scan in room_scans]
+            if any(item is None for item in view_evidence):
+                continue
+            target_z = elevation + radius
+            distractor_evidence = [red_distractor_projection_evidence(
+                x, y, target_z, scan, red_distractors, settings)
+                for scan in room_scans]
+            if any(item is None for item in distractor_evidence):
+                continue
+            for view, projection in zip(view_evidence,
+                                        distractor_evidence):
+                view.update(projection)
+            parallax_deg = dual_view_parallax_deg(
+                x, y, room_scans[0], room_scans[1])
+            if parallax_deg < float(settings.get(
+                    "minimum_dual_view_parallax_deg", 30.0)):
+                continue
+            minimum_range_margin = min(
+                item["range_margin_m"] for item in view_evidence)
+            minimum_angular_slack = min(
+                item["angular_slack_rad"] for item in view_evidence)
+            minimum_distractor_margin = min(
+                (item["minimum_red_distractor_edge_gap_rad"] -
+                 item["required_red_distractor_edge_gap_rad"]
+                 for item in view_evidence
+                 if item["minimum_red_distractor_edge_gap_rad"] is not None),
+                default=float("inf"))
+            candidates.append((
+                -minimum_range_margin,
+                -minimum_angular_slack,
+                -minimum_distractor_margin,
+                -parallax_deg,
+                -furniture_clearance(x, y, room),
+                rng.random(), x, y, room_scans, view_evidence,
+                parallax_deg))
+        if not candidates:
+            continue
+        (_, _, _, _, _, _, x, y, visible_scans, view_evidence,
+         parallax_deg) = min(candidates)
+        local_index = floor_counts[index]
+        floor_counts[index] += 1
+        model_name = danger_name(index, local_index)
+        pose = [x, y, elevation + radius, 0.0, 0.0, 0.0]
+        record = {
+            "id": model_name,
+            "floor_index": index,
+            "room_id": room_id,
+            "pose": pose,
+            "radius_m": radius,
+            "visible_scan_ids": [str(scan["id"]) for scan in visible_scans],
+            "placement_contract": (
+                "dual_view_uncertainty_safe_RGBD_without_runtime_truth"),
+            "dual_view_parallax_deg": parallax_deg,
+            "arrival_position_uncertainty_m": float(settings.get(
+                "red_ball_arrival_position_uncertainty_m", 0.12)),
+            "arrival_yaw_uncertainty_deg": float(settings.get(
+                "red_ball_arrival_yaw_uncertainty_deg", 8.0)),
+            "view_evidence": [dict(item) for item in view_evidence],
+        }
+        poses[model_name] = pose
+        truth.append(record)
+        room["red_balls"] = [copy.deepcopy(record)]
+    if len(truth) != total:
+        raise ValueError(
+            "only {} of {} random rooms have a dual-view uncertainty-safe "
+            "RGB-D target position".format(len(truth), total))
+    layout["danger_red_spheres"] = copy.deepcopy(truth)
+    return poses, truth
+
+
+def rewrite_route(mission, scans):
+    for floor in mission.get("floors", []):
+        rewritten = []
+        for waypoint in floor.get("waypoints", []):
+            note = str(waypoint.get("note", ""))
+            if not note.endswith("_center"):
+                rewritten.append(waypoint)
+                continue
+            room_id = note[:-len("_center")]
+            if room_id not in scans:
+                raise ValueError("missing scan points for {}".format(room_id))
+            try:
+                room_index = int(room_id.rsplit("_", 1)[1])
+            except (IndexError, ValueError):
+                room_index = 0
+            if room_index % 2 == 1:
+                # Do not cut diagonally through both partition walls between
+                # paired rooms.  Visiting the door centre adds almost no path
+                # length, gives the A1 full footprint clearance, and prevents
+                # the 44 s door-frame scrape observed in physical seed 0.
+                corridor = copy.deepcopy(waypoint)
+                corridor.update({"x": 0.0,
+                                 "y": float(waypoint["y"]),
+                                 "note": room_id + "_corridor_entry",
+                                 "speed": 0.55,
+                                 "align_yaw": False,
+                                 "tolerance": 0.30})
+                corridor.pop("scan", None)
+                rewritten.append(corridor)
+            for definition in scans[room_id]:
+                scan = copy.deepcopy(waypoint)
+                scan.update({"x": definition["pose"][0],
+                             "y": definition["pose"][1],
+                             "yaw": definition["pose"][3],
+                             "speed": definition["navigation_speed"],
+                             "note": definition["id"],
+                             "scan": True,
+                             "align_yaw": False,
+                             "scan_turn_rad": definition["scan_turn_rad"],
+                             "scan_yaw_rate": definition["scan_yaw_rate"],
+                             "scan_settle_sec": definition["scan_settle_sec"],
+                             "scan_pause_interval_rad": definition[
+                                 "scan_pause_interval_rad"],
+                             "scan_pause_dwell_sec": definition[
+                                 "scan_pause_dwell_sec"],
+                             "tolerance": min(float(scan.get("tolerance", 0.40)), 0.25)})
+                rewritten.append(scan)
+        floor["waypoints"] = rewritten
+
+
+def _room_route_waypoint(template, x, y, note, room, phase,
+                         speed, scan_definition=None):
+    waypoint = copy.deepcopy(template)
+    contract = room["room_contract"]
+    waypoint.update({
+        "x": float(x), "y": float(y), "note": str(note),
+        "speed": float(speed), "controller": "direct_plane_rl",
+        "room_id": str(room["id"]), "room_phase": str(phase),
+        "room_type": contract["room_type"],
+        "viewpoint_policy": contract["viewpoint_policy"],
+        "viewpoint_fallback_reason": contract.get(
+            "viewpoint_fallback_reason"),
+        "viewpoint_fallback_level": contract.get(
+            "viewpoint_fallback_level", "primary"),
+        "planned_viewpoint_line_angle_deg": contract.get(
+            "planned_viewpoint_line_angle_deg"),
+        "planned_minimum_viewpoint_separation_m": contract.get(
+            "planned_minimum_viewpoint_separation_m"),
+        "actual_geometry_limits": copy.deepcopy(
+            contract["actual_geometry_limits"]),
+        "planned_room_paths": copy.deepcopy(contract["paths"]),
+        "primary_obstacle": copy.deepcopy(contract["primary_obstacle"]),
+        "minimum_viewpoint_separation_m": contract[
+            "minimum_viewpoint_separation_m"],
+        "minimum_scan_rotation_rad": contract["minimum_scan_rotation_rad"],
+        "door_contract": copy.deepcopy(contract["door"]),
+        "runtime_3d_audit_required": True,
+        "tolerance": 0.28,
+    })
+    waypoint.pop("scan", None)
+    if scan_definition is not None:
+        waypoint.update({
+            "yaw": float(scan_definition["pose"][3]),
+            "align_yaw": True,
+            "heading_tolerance": 0.16,
+            "scan": True,
+            "viewpoint_role": scan_definition["role"],
+            "viewpoint_semantic": scan_definition.get(
+                "viewpoint_semantic"),
+            "door_relative_depth_m": scan_definition[
+                "door_relative_depth_m"],
+            "door_relative_lateral_m": scan_definition[
+                "door_relative_lateral_m"],
+            "obstacle_lateral_sign": scan_definition[
+                "obstacle_lateral_sign"],
+            "scan_turn_rad": scan_definition["scan_turn_rad"],
+            "scan_yaw_rate": scan_definition["scan_yaw_rate"],
+            "scan_settle_sec": scan_definition["scan_settle_sec"],
+            "scan_pause_interval_rad": scan_definition[
+                "scan_pause_interval_rad"],
+            "scan_pause_dwell_sec": scan_definition[
+                "scan_pause_dwell_sec"],
+            "tolerance": 0.12,
+            "geometry_correction_tolerance_m": 0.08,
+        })
+    else:
+        waypoint["align_yaw"] = False
+    return waypoint
+
+
+def rewrite_physical_room_route(mission, layout, scans, settings):
+    """Replace room centres with ENTRY/G3/G4/RETURN/EXIT chains."""
+    rooms = {
+        str(room["id"]): room
+        for floor in layout.get("floors", [])
+        for room in floor.get("rooms", [])}
+    route_speed = float(settings.get(
+        "physical_viewpoint_navigation_speed", 0.70))
+    transit_speed = float(settings.get(
+        "physical_viewpoint_transit_speed", 0.70))
+    door_crossing_speed = float(settings.get(
+        "room_door_crossing_speed", 0.42))
+    internal_bend_tolerance = min(0.12, max(0.05, float(settings.get(
+        "room_internal_path_bend_tolerance_m", 0.12))))
+    corridor_speed = float(settings.get(
+        "physical_corridor_cruise_speed", 2.25))
+    corridor_lateral_speed = float(settings.get(
+        "physical_corridor_maximum_lateral_speed_mps", 0.45))
+    plane_distance_gain = float(settings.get(
+        "physical_plane_distance_gain", 1.45))
+    room_pass_through_distance_gain = max(
+        plane_distance_gain,
+        float(settings.get(
+            "physical_room_pass_through_distance_gain",
+            plane_distance_gain)))
+    stair_side_speed = float(settings.get(
+        "physical_stair_side_opening_speed_mps", 1.85))
+    stair_side_lateral_speed = float(settings.get(
+        "physical_stair_side_opening_maximum_lateral_speed_mps", 0.35))
+    stair_handoff_yaw_rate = float(settings.get(
+        "physical_stair_handoff_maximum_yaw_rate_rad_s", 1.00))
+    stair_side_settle_sec = float(settings.get(
+        "physical_stair_side_opening_settle_sec", 0.20))
+    viewpoint_lateral_speed = float(settings.get(
+        "physical_viewpoint_maximum_lateral_speed_mps", 0.55))
+    viewpoint_yaw_rate = float(settings.get(
+        "physical_viewpoint_maximum_yaw_rate_rad_s", 1.50))
+    for floor in mission.get("floors", []):
+        rewritten = []
+        for waypoint in floor.get("waypoints", []):
+            note = str(waypoint.get("note", ""))
+            if not note.endswith("_center"):
+                if (note.endswith(("_corridor", "_corridor_return",
+                                   "_stair_approach",
+                                   "_descent_approach",
+                                   "_stair_side_opening",
+                                   "_descent_side_opening")) and
+                        str(waypoint.get("controller", "")) ==
+                        "direct_plane_rl"):
+                    waypoint["speed"] = corridor_speed
+                    waypoint["pass_through"] = not note.endswith("_handoff")
+                    # Long corridor legs must not be multiplied by the room
+                    # path speed scale.  Sustained 2.25 m/s together with a
+                    # lateral correction can accumulate roll in the learned
+                    # gait; the 2.25 m/s global ceiling plus a lower lateral
+                    # component preserves stability while room paths
+                    # retain their requested 0.90 * 2.60 effective speed.
+                    if note.endswith(("_corridor", "_corridor_return")):
+                        waypoint["speed_scale_exempt"] = True
+                        waypoint["direct_plane_max_lateral_speed_mps"] = (
+                            corridor_lateral_speed)
+                    elif note.endswith(("_stair_side_opening",
+                                        "_descent_side_opening")):
+                        # Stop and face the short handoff segment before
+                        # entering it.  Passing this bend at the global plane
+                        # limit can combine maximum lateral correction with a
+                        # large yaw command and tip the learned gait.
+                        waypoint["speed"] = stair_side_speed
+                        waypoint["speed_scale_exempt"] = True
+                        waypoint["pass_through"] = False
+                        waypoint["align_yaw"] = True
+                        waypoint["alignment_yaw_rate"] = (
+                            stair_handoff_yaw_rate)
+                        waypoint["direct_plane_max_lateral_speed_mps"] = (
+                            stair_side_lateral_speed)
+                        waypoint["post_reach_settle_sec"] = (
+                            stair_side_settle_sec)
+                if (note.endswith(("_stair_handoff",
+                                   "_descent_landing_handoff")) and
+                        str(waypoint.get("controller", "")) ==
+                        "direct_plane_rl"):
+                    # The final handoff is short and perpendicular to the
+                    # preceding approach.  Turn fully before translating so
+                    # the controller cannot issue the destabilising
+                    # forward+lateral+yaw combination seen in seed 44.
+                    waypoint["plane_forward_only"] = True
+                    waypoint["alignment_yaw_rate"] = (
+                        stair_handoff_yaw_rate)
+                rewritten.append(waypoint)
+                continue
+            room_id = note[:-len("_center")]
+            room = rooms.get(room_id)
+            if room is None or room_id not in scans:
+                raise ValueError("missing physical room contract for {}".format(
+                    room_id))
+            contract = room["room_contract"]
+            door = contract["door"]
+            direction = float(door["inward_direction"])
+            entry = tuple(contract["paths"]["entry_to_g3"][0])
+            outside_clearance = float(settings.get(
+                "room_door_outside_clearance_m", 0.65))
+            corridor = (float(door["centre"][0]) -
+                        direction * outside_clearance,
+                        float(door["centre"][1]))
+            entry_corridor = _room_route_waypoint(
+                waypoint, corridor[0], corridor[1], room_id + "_entry_corridor",
+                room, "ENTRY_APPROACH", transit_speed)
+            entry_corridor["pass_through"] = True
+            rewritten.append(entry_corridor)
+            entry_waypoint = _room_route_waypoint(
+                waypoint, entry[0], entry[1], room_id + "_entry",
+                room, "ENTRY", door_crossing_speed)
+            entry_waypoint["pass_through"] = True
+            entry_waypoint["speed_scale_exempt"] = True
+            rewritten.append(entry_waypoint)
+            roles = {item["role"]: item for item in scans[room_id]}
+            chains = (
+                ("entry_to_g3", "G3", roles["G3"]),
+                ("g3_to_g4", "G4", roles["G4"]),
+            )
+            for path_name, role, definition in chains:
+                path = contract["paths"][path_name]
+                for bend_index, point in enumerate(path[1:-1], 1):
+                    bend = _room_route_waypoint(
+                        waypoint, point[0], point[1],
+                        "{}_{}_path_{}".format(room_id, role.lower(), bend_index),
+                        room, role + "_PATH", transit_speed)
+                    # The following live 3-D audit starts from the robot's
+                    # actual bend arrival, not from the planned grid point.
+                    # Keep that start error inside the 0.10 m A* planning
+                    # reserve so a nominally clear next segment cannot be
+                    # pulled toward furniture by the former 0.28 m generic
+                    # pass-through tolerance.
+                    bend["tolerance"] = internal_bend_tolerance
+                    bend["pass_through"] = True
+                    rewritten.append(bend)
+                rewritten.append(_room_route_waypoint(
+                    waypoint, definition["pose"][0], definition["pose"][1],
+                    definition["id"], room, role, route_speed, definition))
+            exit_path = contract["paths"]["g4_to_return"]
+            for bend_index, point in enumerate(exit_path[1:], 1):
+                phase = "RETURN" if bend_index == len(exit_path) - 1 else "EXIT_PATH"
+                exit_inner = _room_route_waypoint(
+                    waypoint, point[0], point[1],
+                    "{}_exit_inner_{}".format(room_id, bend_index),
+                    room, phase, transit_speed)
+                exit_inner["tolerance"] = internal_bend_tolerance
+                exit_inner["pass_through"] = True
+                rewritten.append(exit_inner)
+            exit_waypoint = _room_route_waypoint(
+                waypoint, corridor[0], corridor[1], room_id + "_exit",
+                room, "EXIT", door_crossing_speed)
+            exit_waypoint.update({
+                "align_yaw": True,
+                "yaw": normalize_angle(float(door["inward_yaw"]) + math.pi),
+                "heading_tolerance": 0.16,
+                "tolerance": 0.18,
+                "alignment_yaw_rate": float(settings.get(
+                    "room_door_maximum_yaw_rate", 0.45)),
+                "pass_through": True,
+                "speed_scale_exempt": True,
+            })
+            rewritten.append(exit_waypoint)
+        for rewritten_waypoint in rewritten:
+            # Keep the same per-segment speed ceilings while shortening the
+            # long low-speed tail near ordinary plane waypoints.  This is a
+            # proportional approach gain, not a higher motion-speed limit.
+            if rewritten_waypoint.get("controller") == "direct_plane_rl":
+                rewritten_waypoint["direct_plane_distance_gain"] = (
+                    plane_distance_gain)
+                # Room ENTRY/RETURN/EXIT chain points are already marked as
+                # pass-through and are joined by freshly A*-audited segments.
+                # Let those intermediate legs reach their existing speed cap
+                # sooner, while preserving every speed, lateral/yaw, path,
+                # tolerance and scan limit.  G3/G4 observation stops and all
+                # corridor/stair waypoints deliberately retain the established
+                # conservative gain.
+                if (rewritten_waypoint.get("room_id") and
+                        rewritten_waypoint.get("pass_through") is True):
+                    rewritten_waypoint["direct_plane_distance_gain"] = (
+                        room_pass_through_distance_gain)
+            # Only the two long oblique observation legs need the reduced
+            # lateral envelope.  Applying it to doorway, A* bend and RETURN
+            # waypoints added ~20 s to seed 41 and exhausted the 600 s budget.
+            # G3/G4 targeting is where repeated +/-0.75 m/s lateral commands
+            # caused the learned plane gait to accumulate unrecoverable roll.
+            if (rewritten_waypoint.get("room_phase") in ("G3", "G4") and
+                    rewritten_waypoint.get("controller") ==
+                    "direct_plane_rl"):
+                rewritten_waypoint[
+                    "direct_plane_max_lateral_speed_mps"] = (
+                        viewpoint_lateral_speed)
+                rewritten_waypoint["alignment_yaw_rate"] = (
+                    viewpoint_yaw_rate)
+        floor["waypoints"] = rewritten
+
+
+def pose_text(values):
+    return " ".join("{:.9g}".format(float(value)) for value in values)
+
+
+def update_asset(path, furniture_poses, danger_poses, require_dangers,
+                 prune_unused_dangers=False):
+    tree = ET.parse(path)
+    root = tree.getroot()
+    # Sparse randomization may assign two targets to a floor whose prepared
+    # source world currently contains only one placeholder.  They share an
+    # identical geometry/material contract, so create any missing named
+    # instances from an existing red-sphere model before applying poses.  The
+    # previous hard failure made otherwise valid random seeds depend on the
+    # placeholder count/distribution in the archived source world.
+    if require_dangers:
+        danger_models = [
+            model for model in root.iter("model")
+            if str(model.get("name", "")).startswith(
+                "danger_red_sphere_")]
+        existing_names = {
+            str(model.get("name", "")) for model in danger_models}
+        missing_names = sorted(set(danger_poses) - existing_names)
+        if missing_names:
+            if not danger_models:
+                raise ValueError(
+                    "{}: no red-ball template model is available".format(
+                        path))
+            template = danger_models[0]
+            template_parent = next(
+                (parent for parent in root.iter()
+                 if template in list(parent)), None)
+            if template_parent is None:
+                raise ValueError(
+                    "{}: red-ball template has no XML parent".format(path))
+            for name in missing_names:
+                clone = copy.deepcopy(template)
+                clone.set("name", name)
+                pose = clone.find("pose")
+                if pose is None:
+                    raise ValueError(
+                        "{}: red-ball template has no pose".format(path))
+                pose.text = pose_text(danger_poses[name])
+                template_parent.append(clone)
+    seen_furniture, seen_dangers = set(), set()
+    for link in root.iter("link"):
+        name = str(link.get("name", ""))
+        if name not in furniture_poses:
+            continue
+        pose = link.find("pose")
+        if pose is None:
+            raise ValueError("{}: furniture {} has no pose".format(path, name))
+        pose.text = pose_text(furniture_poses[name])
+        seen_furniture.add(name)
+    for model in root.iter("model"):
+        name = str(model.get("name", ""))
+        if name not in danger_poses:
+            continue
+        pose = model.find("pose")
+        if pose is None:
+            raise ValueError("{}: red ball {} has no pose".format(path, name))
+        pose.text = pose_text(danger_poses[name])
+        seen_dangers.add(name)
+    removed_dangers = 0
+    if prune_unused_dangers:
+        for parent in root.iter():
+            for child in list(parent):
+                if (child.tag == "model" and
+                        str(child.get("name", "")).startswith(
+                            "danger_red_sphere_") and
+                        str(child.get("name", "")) not in danger_poses):
+                    parent.remove(child)
+                    removed_dangers += 1
+    missing_furniture = sorted(set(furniture_poses) - seen_furniture)
+    if missing_furniture:
+        raise ValueError("{}: missing furniture links {}".format(path, missing_furniture))
+    missing_dangers = sorted(set(danger_poses) - seen_dangers)
+    if require_dangers and missing_dangers:
+        raise ValueError("{}: missing red-ball models {}".format(path, missing_dangers))
+    atomic_xml(tree, path)
+    return {"sha256": sha256(path),
+            "furniture_links_updated": len(seen_furniture),
+            "red_ball_models_updated": len(seen_dangers),
+            "unused_red_ball_models_removed": removed_dangers}
+
+
+def preserve_official_scene_sources(layout, truth_payload):
+    """Keep positions emitted by the official competition generator."""
+    sources = truth_payload.get("danger_sources")
+    if not isinstance(sources, list) or not 3 <= len(sources) <= 6:
+        raise ValueError(
+            "official danger truth must contain 3--6 danger sources")
+
+    official_seed = truth_payload.get("seed")
+    rooms = {}
+    for floor in layout.get("floors", []):
+        index = floor_index(floor)
+        for room in floor.get("rooms", []):
+            rooms[str(room["id"])] = (index, room)
+            room["red_balls"] = []
+
+    poses = {}
+    truth = []
+
+    for ordinal, source in enumerate(sources):
+        model_name = str(source.get("model_name", ""))
+        room_id = str(source.get("room_id", ""))
+        position = source.get("position")
+        index = int(source.get("floor_index", -1))
+
+        if not model_name.startswith("danger_red_sphere_"):
+            raise ValueError(
+                "invalid official danger model name: {}".format(model_name))
+        if model_name in poses:
+            raise ValueError(
+                "duplicate official danger model: {}".format(model_name))
+        if room_id not in rooms:
+            raise ValueError(
+                "official danger references unknown room: {}".format(room_id))
+        if not isinstance(position, list) or len(position) != 3:
+            raise ValueError(
+                "{} has invalid official position".format(model_name))
+
+        expected_floor, room = rooms[room_id]
+        if index != expected_floor:
+            raise ValueError(
+                "{} floor index does not match room".format(model_name))
+
+        x, y, z = [float(value) for value in position]
+        bounds = room["bounds"]
+        if not (
+            float(bounds["x_min"]) <= x <= float(bounds["x_max"]) and
+            float(bounds["y_min"]) <= y <= float(bounds["y_max"])
+        ):
+            raise ValueError(
+                "{} official position is outside {}".format(
+                    model_name, room_id))
+
+        radius = float(source.get("radius", 0.15))
+        pose = [x, y, z, 0.0, 0.0, 0.0]
+        record = {
+            "id": model_name,
+            "model_name": model_name,
+            "official_truth_id": source.get("id", ordinal),
+            "official_scene_seed": official_seed,
+            "floor_index": index,
+            "room_id": room_id,
+            "position": [x, y, z],
+            "pose": pose,
+            "radius_m": radius,
+            "placement_contract": "official_generator_position",
+        }
+
+        poses[model_name] = pose
+        truth.append(record)
+        room["red_balls"].append(copy.deepcopy(record))
+
+    layout["danger_red_spheres"] = copy.deepcopy(truth)
+    return poses, truth
+
+
+def build_randomized_scene(source_layout, source_mission, seed_offset=0,
+                           red_distractors=None, official_truth=None):
+    """Return randomized layout/config payloads plus XML pose updates."""
+    layout = copy.deepcopy(source_layout)
+    mission = copy.deepcopy(source_mission)
+    floors = layout.get("floors", [])
+    if len(floors) != 3:
+        raise ValueError("three-floor scene requires exactly three floors")
+    seed_by_floor = build_floor_seeds(mission, floors, seed_offset)
+    settings = mission.setdefault("scene_randomization", {})
+    settings["effective_floor_seeds"] = [
+        seed_by_floor[index] for index in range(3)]
+    settings["seed_offset"] = int(seed_offset)
+
+    if official_truth is None:
+        furniture_poses = randomize_furniture(
+            layout, seed_by_floor, settings)
+    else:
+        # Furniture already came from the same official generator call as
+        # the danger sources. Moving it again would invalidate that scene.
+        furniture_poses = {}
+
+    scans = derive_physical_viewpoints(
+        layout, seed_by_floor, settings)
+
+    if official_truth is None:
+        danger_poses, red_truth = place_sparse_red_balls(
+            layout, scans, seed_by_floor, settings, red_distractors)
+    else:
+        danger_poses, red_truth = preserve_official_scene_sources(
+            layout, official_truth)
+    layout["red_distractors"] = copy.deepcopy(red_distractors or [])
+    rewrite_physical_room_route(mission, layout, scans, settings)
+
+    room_coverages = [
+        room["scan_coverage"]
+        for floor in layout.get("floors", [])
+        for room in floor.get("rooms", [])]
+    runtime_floor_route = sum(
+        sum(math.hypot(float(right["x"]) - float(left["x"]),
+                       float(right["y"]) - float(left["y"]))
+            for left, right in zip(
+                floor.get("waypoints", []), floor.get("waypoints", [])[1:]))
+        for floor in mission.get("floors", []))
+    minimum_coverage = min(
+        item["coverage_fraction"] for item in room_coverages)
+    required_coverage = float(settings.get(
+        "minimum_room_scan_coverage_fraction", 0.33))
+    if minimum_coverage < required_coverage:
+        raise ValueError(
+            "minimum optimized room coverage {:.3f} is below {:.3f}"
+            .format(minimum_coverage, required_coverage))
+    maximum_runtime_route = float(settings.get(
+        "maximum_runtime_floor_route_m", 360.0))
+    if runtime_floor_route > maximum_runtime_route:
+        raise ValueError(
+            "optimized floor route {:.2f} m exceeds {:.2f} m time budget"
+            .format(runtime_floor_route, maximum_runtime_route))
+    metadata = layout.setdefault("metadata", {})
+    metadata.update({"scene_randomized": True,
+                     "floor_seeds": [seed_by_floor[index] for index in range(3)],
+                     "seed_offset": int(seed_offset),
+                     "red_ball_count": len(red_truth),
+                     "scan_points_per_room": 2,
+                     "physical_two_view_contract": True,
+                     "minimum_viewpoint_scan_rotation_rad": math.radians(210.0),
+                     "room_type_counts": {
+                         room_type: sum(
+                             room.get("room_contract", {}).get("room_type") == room_type
+                             for floor in layout.get("floors", [])
+                             for room in floor.get("rooms", []))
+                         for room_type in ("open", "shallow_obstacle",
+                                           "deep_obstacle")},
+                     "minimum_room_scan_coverage_fraction": minimum_coverage,
+                     "minimum_robust_detection_fraction": min(
+                         item["robust_detection_fraction"]
+                         for item in room_coverages),
+                     "mean_room_scan_coverage_fraction": sum(
+                         item["coverage_fraction"] for item in room_coverages) /
+                         len(room_coverages),
+                     "estimated_room_scan_time_sec": sum(
+                         item["estimated_pair_time_sec"]
+                         for item in room_coverages),
+                     "runtime_floor_route_m": runtime_floor_route,
+                     "alternate_scan_turn_directions": bool(
+                         settings.get("alternate_scan_turn_directions", True))})
+    if official_truth is not None:
+        metadata.update({
+            "danger_position_source": "official_generator",
+            "furniture_position_source": "official_generator",
+            "official_scene_seed": official_truth.get("seed"),
+        })
+
+    layout.setdefault("target_points", {})["room_scans"] = {
+        definition["id"]: [definition["pose"][0], definition["pose"][1],
+                           definition["pose"][2], 0.0, 0.0,
+                           definition["pose"][3]]
+        for definitions in scans.values() for definition in definitions
+    }
+
+    red_config = mission.setdefault("red_ball_detection", {})
+    red_config.update({"minimum_confirmed_detections": len(red_truth),
+                       "maximum_confirmed_detections": len(red_truth),
+                       "expected_scene_red_balls": len(red_truth),
+                       "expected_red_balls_per_floor": None,
+                       "expected_total_range": [
+                           int(settings.get("red_ball_total_minimum", 3)),
+                           int(settings.get("red_ball_total_maximum", 6))],
+                       "require_all_scene_red_balls": True})
+    red_config.setdefault("matching_tolerance_m", 1.0)
+    return (layout, mission, furniture_poses, danger_poses, red_truth,
+            scans, seed_by_floor)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--world", required=True)
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--layout", required=True)
+    parser.add_argument("--mission-config", required=True)
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--seed-offset", type=int, default=0)
+    args = parser.parse_args()
+
+    source_layout = read_json(args.layout)
+    source_mission = read_json(args.mission_config)
+    red_distractors = read_red_distractors_from_world(args.world)
+
+    preserve_official = bool(
+        source_mission.get("scene_randomization", {}).get(
+            "preserve_official_source_positions", False))
+    official_truth = None
+
+    if preserve_official:
+        truth_path = os.path.join(
+            os.path.dirname(os.path.abspath(args.layout)),
+            "danger_truth.json")
+        if not os.path.isfile(truth_path):
+            raise ValueError(
+                "official danger truth is missing: {}".format(truth_path))
+        official_truth = read_json(truth_path)
+
+    (layout, mission, furniture_poses, danger_poses, red_truth,
+     scans, seed_by_floor) = build_randomized_scene(
+        source_layout, source_mission, args.seed_offset,
+        red_distractors, official_truth=official_truth)
+    # OFFICIAL_DISTRACTION_SOURCES_COMPAT_V1
+    # The official generator records every non-danger object under
+    # ``distraction_sources``.  ``red_distractors`` remains the red-box-only
+    # projection list and must not be used as the official total count.
+    if bool((mission.get("scene_randomization") or {}).get(
+            "preserve_official_source_positions", False)):
+        truth_candidates = [
+            os.path.join(os.path.dirname(os.path.abspath(args.layout)),
+                         "danger_truth.json"),
+            os.path.join(os.path.dirname(os.path.abspath(args.layout)),
+                         "referee_results", "danger_truth.json"),
+        ]
+        official_truth_path = next(
+            (path for path in truth_candidates if os.path.isfile(path)), None)
+        if official_truth_path is None:
+            raise ValueError(
+                "official danger_truth.json not found beside layout: {}".format(
+                    truth_candidates))
+
+        official_truth_payload = read_json(official_truth_path)
+        official_distractors = official_truth_payload.get(
+            "distraction_sources")
+        if not isinstance(official_distractors, list):
+            raise ValueError(
+                "official danger_truth.json is missing distraction_sources")
+        if not 4 <= len(official_distractors) <= 8:
+            raise ValueError(
+                "official generator produced {} distractors; expected 4--8"
+                .format(len(official_distractors)))
+
+        layout["official_distractors"] = copy.deepcopy(
+            official_distractors)
+        metadata = layout.setdefault("metadata", {})
+        metadata["official_distractor_count"] = len(
+            official_distractors)
+        metadata["official_distractor_truth_file"] = os.path.abspath(
+            official_truth_path)
+
+    output_layout = os.path.join(args.output_dir, "layout_metadata.json")
+    output_mission = os.path.join(args.output_dir, "mission_config.json")
+    mission["runtime"]["world_file"] = os.path.abspath(args.world)
+    mission["runtime"]["layout_metadata"] = os.path.abspath(output_layout)
+    mission["runtime"]["stair_model_sdf"] = os.path.abspath(args.model)
+    simenv_root = os.environ.get("SIMENV_ROOT")
+    if simenv_root:
+        for key in ("plane_policy", "stair_policy"):
+            configured = str(mission["runtime"].get(key, ""))
+            if (not os.path.isfile(configured) and
+                    configured.startswith("/workspace/SimEnv/")):
+                candidate = os.path.join(
+                    simenv_root, configured[len("/workspace/SimEnv/"):])
+                if os.path.isfile(candidate):
+                    mission["runtime"][key] = os.path.abspath(candidate)
+
+    assets = {"world": update_asset(
+                  args.world, furniture_poses, danger_poses, True,
+                  prune_unused_dangers=True),
+              "model": update_asset(args.model, furniture_poses, danger_poses, False)}
+    atomic_json(output_layout, layout)
+    atomic_json(output_mission, mission)
+    manifest = {
+        "schema": "simenv_three_floor_scene_randomization_v1",
+        "passed": True,
+        "source_layout": os.path.abspath(args.layout),
+        "source_mission_config": os.path.abspath(args.mission_config),
+        "output_layout": os.path.abspath(output_layout),
+        "output_mission_config": os.path.abspath(output_mission),
+        "floor_seeds": [seed_by_floor[index] for index in range(3)],
+        "seed_offset": int(args.seed_offset),
+        "furniture_pose_count": len(furniture_poses),
+        "red_ball_count": len(red_truth),
+        "red_distractor_count": len(red_distractors),
+        "scan_point_count": sum(len(value) for value in scans.values()),
+        "minimum_room_scan_coverage_fraction": layout["metadata"][
+            "minimum_room_scan_coverage_fraction"],
+        "mean_room_scan_coverage_fraction": layout["metadata"][
+            "mean_room_scan_coverage_fraction"],
+        "minimum_robust_detection_fraction": layout["metadata"][
+            "minimum_robust_detection_fraction"],
+        "runtime_floor_route_m": layout["metadata"]["runtime_floor_route_m"],
+        "estimated_room_scan_time_sec": layout["metadata"][
+            "estimated_room_scan_time_sec"],
+        "assets": assets,
+    }
+    manifest_path = os.path.join(args.output_dir, "scene_randomization.json")
+    atomic_json(manifest_path, manifest)
+    print(json.dumps(manifest, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()

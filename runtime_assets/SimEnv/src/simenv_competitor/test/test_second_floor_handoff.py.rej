@@ -1,0 +1,17 @@
+--- /dev/null
++++ /dev/null
+@@ -305,3 +305,14 @@
+         self.assertAlmostEqual(
+             transition.truth_flight_b_progress_anchor_at, 14.2)
+ 
++    def test_flight_b_retreat_progress_uses_opposite_truth_heading(self):
++        origin = (-2.40, 3.38, 4.87, -np.pi / 2.0)
++        self.assertAlmostEqual(
++            StairTransition._truth_flight_b_retreat_progress(
++                origin, (-2.40, 3.66, 4.80, 0.0), -np.pi / 2.0),
++            0.28, places=6)
++        self.assertAlmostEqual(
++            StairTransition._truth_flight_b_retreat_progress(
++                origin, (-2.10, 3.10, 4.90, 0.0), -np.pi / 2.0),
++            0.0, places=6)
++

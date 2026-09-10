@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""Pure image-geometry helpers for the RGB-D red-sphere detector."""
+
+import math
+
+
+def edge_clipped_partial_sphere_hint(
+        area, aspect, circularity, fill_ratio, x, width,
+        image_width, edge_margin):
+    """Return a direction-only hint for a sphere arc clipped by an image edge.
+
+    The hint is never published as a hazard observation. It only lets the
+    existing camera fan turn toward the clipped red arc and obtain an
+    ordinary strict RGB-D sphere measurement.
+    """
+    values = (area, aspect, circularity, fill_ratio, x, width,
+              image_width, edge_margin)
+    if not all(math.isfinite(float(value)) for value in values):
+        return False
+    area = float(area)
+    aspect = float(aspect)
+    circularity = float(circularity)
+    fill_ratio = float(fill_ratio)
+    x = int(x)
+    width = int(width)
+    image_width = int(image_width)
+    edge_margin = max(0, int(edge_margin))
+    clipped = (x <= edge_margin or
+               x + width >= image_width - edge_margin)
+    return bool(
+        clipped and area >= 100.0 and
+        0.24 <= aspect < 0.80 and
+        circularity >= 0.45 and
+        0.58 <= fill_ratio <= 0.83)

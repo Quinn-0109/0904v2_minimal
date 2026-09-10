@@ -1,0 +1,6 @@
+<launch>
+  <test test-name="mock_three_floor_ros_integration"
+        pkg="simenv_bridge"
+        type="mock_three_floor_ros_integration.py"
+        time-limit="240.0"/>
+</launch>

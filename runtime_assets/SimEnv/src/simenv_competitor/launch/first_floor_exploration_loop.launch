@@ -1,0 +1,95 @@
+<launch>
+  <!-- Direct startup: sensor warmup -> map/frontier readiness -> FUEL-lite. -->
+  <arg name="output_dir"/>
+  <arg name="maximum_duration" default="400.0"/>
+  <arg name="maximum_goals" default="40"/>
+  <arg name="rl_policy"
+       default="$(find unitree_guide)/../../logs/policy_act_inference_stair.pt"/>
+  <!-- Algorithm-debug spawn: fully inside the floor-0 lobby, 0.8 m beyond
+       the open entrance plane and facing into the building.  These args keep
+       the original outside spawn recoverable without changing mapping_test. -->
+  <arg name="robot_spawn_x" default="0.0"/>
+  <arg name="robot_spawn_y" default="0.8"/>
+  <arg name="robot_spawn_z" default="0.6"/>
+  <arg name="robot_spawn_yaw" default="1.5708"/>
+  <!-- Gazebo can pause briefly while loading the twelve effort controllers.
+       Keep a finite watchdog, but allow more than the generic 12 s default. -->
+  <arg name="controller_clock_stall_timeout" default="30.0"/>
+
+  <include file="$(find simenv_competitor)/launch/mapping_test.launch">
+    <arg name="gui" value="false"/>
+    <arg name="rviz" value="false"/>
+    <arg name="teleop" value="false"/>
+    <arg name="start_controller" value="true"/>
+    <arg name="enable_realsense" value="false"/>
+    <arg name="sensor_warmup_seconds" value="25.0"/>
+    <arg name="slam_startup_delay_seconds" value="8.0"/>
+    <arg name="controller_dt" value="0.004"/>
+    <arg name="controller_cpu_affinity" value=""/>
+    <arg name="controller_clock_stall_timeout"
+         value="$(arg controller_clock_stall_timeout)"/>
+    <arg name="rl_policy" value="$(arg rl_policy)"/>
+    <arg name="rl_device" value="cuda"/>
+    <arg name="robot_x" value="$(arg robot_spawn_x)"/>
+    <arg name="robot_y" value="$(arg robot_spawn_y)"/>
+    <arg name="robot_z" value="$(arg robot_spawn_z)"/>
+    <arg name="robot_yaw" value="$(arg robot_spawn_yaw)"/>
+  </include>
+
+  <!-- The public entrance is opened by mapping_test. The only other dynamic
+       door on floor 0 is opened here. Room entrances are static openings. -->
+  <node pkg="simenv_competitor" type="open_mapping_entrance.py"
+        name="open_first_floor_elevator" output="screen">
+    <param name="door_id" value="elevator_floor_0"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="fastlio_voxel_mapper"
+        name="first_floor_voxel_mapper" output="screen">
+    <param name="cloud_topic" value="/cloud_registered"/>
+    <param name="odom_topic" value="/Odometry"/>
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="resolution" value="0.15"/>
+    <param name="minimum_range" value="0.30"/>
+    <param name="maximum_range" value="30.0"/>
+    <param name="maximum_scan_points" value="12000"/>
+    <param name="save_every_updates" value="20"/>
+  </node>
+
+  <include file="$(find simenv_competitor)/launch/goal_executor.launch">
+    <arg name="output_dir" value="$(arg output_dir)/executor"/>
+    <arg name="start_rl_mode" value="true"/>
+    <arg name="shutdown_on_result" value="false"/>
+    <arg name="command_topic" value="/simenv/desired_cmd_vel"/>
+    <arg name="arm_rl_guard" value="true"/>
+    <arg name="enable_rl_guard" value="true"/>
+    <arg name="guard_pose_topic" value="/Odometry"/>
+    <arg name="goal_tolerance" value="0.50"/>
+  </include>
+
+  <node pkg="simenv_competitor" type="exploration_manager.py"
+        name="first_floor_exploration_manager" output="screen" required="true">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="map_file" value="$(arg output_dir)/voxel_map.bt"/>
+    <param name="statistics_file" value="$(arg output_dir)/map_statistics.json"/>
+    <param name="maximum_duration" value="$(arg maximum_duration)"/>
+    <param name="maximum_goals" value="$(arg maximum_goals)"/>
+    <param name="maximum_goal_distance" value="8.0"/>
+    <param name="maximum_consecutive_failures" value="3"/>
+    <param name="startup_timeout" value="120.0"/>
+    <param name="goal_timeout" value="180.0"/>
+    <param name="coverage_threshold" value="0.95"/>
+    <param name="information_gain_threshold" value="20.0"/>
+    <param name="stagnation_seconds" value="35.0"/>
+    <param name="exploration_ready_free_voxel_threshold" value="5000"/>
+    <param name="exploration_ready_frontier_cluster_min_size" value="8"/>
+    <param name="exploration_ready_timeout" value="60.0"/>
+    <param name="post_ready_dwell" value="10.0"/>
+    <param name="exploration_speed" value="0.28"/>
+  </node>
+
+  <!-- Passive Gazebo ground-truth safety audit only; never used for planning. -->
+  <node pkg="simenv_competitor" type="goal_stability_monitor.py"
+        name="first_floor_rl_stability_audit" output="screen">
+    <param name="output_file" value="$(arg output_dir)/motion_stability.json"/>
+  </node>
+</launch>

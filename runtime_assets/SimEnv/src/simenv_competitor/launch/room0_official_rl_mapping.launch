@@ -1,0 +1,40 @@
+<launch>
+  <!-- Official stair-policy locomotion with GT-guided Room0 SLAM diagnosis.
+       The supplied plane policy repeatedly tipped at 0.35 m/s in this world;
+       the stair policy remained upright under the identical straight test. -->
+  <arg name="output_dir"/>
+  <arg name="rl_policy"
+       default="$(find unitree_guide)/../../logs/policy_act_inference_stair.pt"/>
+  <arg name="route_waypoint_limit" default="0"/>
+  <arg name="mapping_controller_required" default="true"/>
+  <arg name="rl_guard_recovery_minimum_height" default="0.285"/>
+  <include file="$(find simenv_competitor)/launch/room0_mapping_check.launch">
+    <arg name="output_dir" value="$(arg output_dir)"/>
+    <arg name="motion_mode" value="official_rl"/>
+    <arg name="route_variant" value="coverage_loop"/>
+    <arg name="route_waypoint_limit" value="$(arg route_waypoint_limit)"/>
+    <arg name="mapping_controller_required" value="$(arg mapping_controller_required)"/>
+    <arg name="rl_guard_recovery_minimum_height"
+         value="$(arg rl_guard_recovery_minimum_height)"/>
+    <arg name="require_exit" value="false"/>
+    <arg name="mission_timeout" value="240.0"/>
+    <arg name="waypoint_timeout" value="90.0"/>
+    <arg name="settle_seconds" value="5.0"/>
+    <arg name="route_deviation_limit" value="1.0"/>
+    <arg name="scan_pause_seconds" value="0.5"/>
+    <arg name="max_stall_recoveries" value="6"/>
+    <arg name="enable_rl_guard" value="true"/>
+    <arg name="controller_dt" value="0.004"/>
+    <arg name="controller_cpu_affinity" value=""/>
+    <arg name="rl_policy" value="$(arg rl_policy)"/>
+    <!-- Empirical stable window for the supplied plane policy: 0.30 can
+         collapse to standing while 0.50 overshoots and tips the A1. -->
+    <arg name="rl_corridor_speed" value="0.35"/>
+    <arg name="rl_door_speed" value="0.30"/>
+    <arg name="rl_room_speed" value="0.32"/>
+    <arg name="rl_maximum_yaw" value="0.20"/>
+    <arg name="rl_arc_turning" value="true"/>
+    <arg name="rl_holonomic" value="true"/>
+    <arg name="rl_device" value="cuda"/>
+  </include>
+</launch>

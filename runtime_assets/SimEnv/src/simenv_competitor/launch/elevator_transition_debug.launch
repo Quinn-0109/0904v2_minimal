@@ -1,0 +1,40 @@
+<launch>
+  <!-- Standalone F1 elevator boarding test. No exploration/room logic runs. -->
+  <arg name="output_dir" default="$(find simenv_competitor)/../../results/elevator_transition_debug_run1"/>
+  <arg name="world_file" default="$(find simenv_competitor)/../../generated_building/elevator_two_floor_debug/competition_scene.world"/>
+  <arg name="door_config" default="$(find simenv_competitor)/../../generated_building/elevator_two_floor_debug/door_config.yaml"/>
+  <arg name="elevator_config" default="$(find simenv_competitor)/../../generated_building/elevator_two_floor_debug/elevator_config.yaml"/>
+  <arg name="gui" default="true"/>
+
+  <include file="$(find simenv_competitor)/launch/mapping_test.launch">
+    <arg name="world_file" value="$(arg world_file)"/>
+    <arg name="door_config" value="$(arg door_config)"/>
+    <arg name="elevator_config" value="$(arg elevator_config)"/>
+    <arg name="gui" value="$(arg gui)"/>
+    <arg name="rviz" value="false"/>
+    <arg name="teleop" value="false"/>
+    <arg name="enable_realsense" value="false"/>
+    <arg name="enable_mapping_visualizer" value="false"/>
+    <!-- x=1.0,y=2.6 faces the open first-floor elevator door at x=1.65. -->
+    <arg name="robot_x" value="1.0"/>
+    <arg name="robot_y" value="2.6"/>
+    <arg name="robot_z" value="0.6"/>
+    <arg name="robot_yaw" value="0.0"/>
+  </include>
+
+  <node pkg="simenv_competitor" type="controller_mode_bootstrap.py"
+        name="elevator_debug_rl_bootstrap" output="screen">
+    <param name="stand_after_seconds" value="1.0"/>
+    <param name="fixed_stand_max_duration_sec" value="15.0"/>
+    <param name="rl_repeat_seconds" value="55.0"/>
+  </node>
+  <node pkg="simenv_competitor" type="elevator_transition_manager.py"
+        name="elevator_transition_manager" output="screen">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="enter_speed_mps" value="1.20"/>
+    <param name="enter_seconds" value="4.0"/>
+    <param name="exit_speed_mps" value="-0.85"/>
+    <param name="exit_seconds" value="2.5"/>
+    <param name="debug_verify_gazebo_state" value="true"/>
+  </node>
+</launch>

@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+"""ROS-independent SCAN-lite Phase 1 waypoint safety and refinement.
+
+This deliberately remains a local post-processor for an existing A* route.
+It does not select goals and does not perform global search.
+"""
+
+from __future__ import annotations
+
+import math
+import time
+from dataclasses import dataclass, field
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
+
+Point = Tuple[float, float]
+
+
+def normalize_angle(value: float) -> float:
+    return math.atan2(math.sin(value), math.cos(value))
+
+
+def polyline_length(points: Sequence[Point]) -> float:
+    return sum(math.hypot(b[0] - a[0], b[1] - a[1])
+               for a, b in zip(points[:-1], points[1:]))
+
+
+def path_yaws(points: Sequence[Point], final_yaw: Optional[float] = None,
+              epsilon: float = 1e-6) -> List[float]:
+    """Induce body yaw from the local path tangent."""
+    if not points:
+        return []
+    yaws: List[float] = []
+    previous = normalize_angle(final_yaw or 0.0)
+    for index, point in enumerate(points):
+        if index + 1 < len(points):
+            dx = points[index + 1][0] - point[0]
+            dy = points[index + 1][1] - point[1]
+        elif index:
+            dx = point[0] - points[index - 1][0]
+            dy = point[1] - points[index - 1][1]
+        else:
+            dx = dy = 0.0
+        if math.hypot(dx, dy) > epsilon:
+            previous = math.atan2(dy, dx)
+        elif index + 1 == len(points) and final_yaw is not None:
+            previous = normalize_angle(final_yaw)
+        yaws.append(normalize_angle(previous))
+    return yaws
+
+
+def twin_cylinder_centers(x: float, y: float, yaw: float,
+                          front_offset: float,
+                          rear_offset: float) -> Tuple[Point, Point]:
+    c, s = math.cos(yaw), math.sin(yaw)
+    return ((x + front_offset * c, y + front_offset * s),
+            (x + rear_offset * c, y + rear_offset * s))
+
+
+@dataclass
+class FootprintCheck:
+    map_available: bool = True
+    occupied_collision: bool = False
+    unknown_queries: int = 0
+    occupied_queries: int = 0
+    minimum_obstacle_clearance: Optional[float] = None
+    front_center: Optional[Point] = None
+    rear_center: Optional[Point] = None
+    status: str = "ok"
+
+
+@dataclass
+class RefinerConfig:
+    # A1 trunk box 0.267 x 0.194 x 0.114 m. Offsets/radius conservatively
+    # cover each half-box; see docs/a1_collision_model_audit.md.
+    body_front_offset: float = 0.06675
+    body_rear_offset: float = -0.06675
+    body_collision_radius: float = 0.11772
+    body_min_height: float = -0.057
+    body_max_height: float = 0.057
+    body_safety_margin: float = 0.05
+    unknown_policy: str = "penalize"
+    refinement_search_radius: float = 0.60
+    refinement_search_step: float = 0.15
+    waypoint_collinearity_tolerance: float = 0.08
+    waypoint_max_direct_connect_distance: float = 1.20
+    waypoint_max_yaw_change: float = 0.45
+    enable_waypoint_simplification: bool = True
+    # A route start represents the live robot pose and cannot be translated
+    # like an ordinary waypoint without disconnecting execution from odometry.
+    # Callers with a trajectory-based escape can fail it immediately instead
+    # of spending hundreds of service queries looking for a replacement.
+    repair_start_waypoint: bool = True
+    segment_sample_spacing: float = 0.10
+    route_deviation_weight: float = 1.0
+    local_path_length_weight: float = 0.5
+    yaw_change_weight: float = 0.35
+    obstacle_clearance_weight: float = 0.20
+    unknown_space_weight: float = 0.50
+
+    def validate(self) -> None:
+        if self.unknown_policy not in ("reject", "penalize", "allow"):
+            raise ValueError("invalid unknown policy")
+        values = (self.body_collision_radius, self.refinement_search_radius,
+                  self.refinement_search_step, self.segment_sample_spacing)
+        if not all(math.isfinite(v) and v > 0.0 for v in values):
+            raise ValueError("invalid geometry")
+        if self.body_min_height >= self.body_max_height:
+            raise ValueError("invalid geometry")
+
+
+@dataclass
+class RefinementResult:
+    success: bool
+    reason: str
+    path: List[Point]
+    yaws: List[float]
+    debug: List[dict] = field(default_factory=list)
+    collision_checks: int = 0
+    colliding_original_waypoints: List[int] = field(default_factory=list)
+    repaired_waypoints: List[int] = field(default_factory=list)
+    unknown_queries: int = 0
+    occupied_queries: int = 0
+    minimum_obstacle_clearance: Optional[float] = None
+    duration_ms: float = 0.0
+
+
+Checker = Callable[[float, float, float], FootprintCheck]
+
+
+class PathRefiner:
+    def __init__(self, config: RefinerConfig, checker: Checker):
+        config.validate()
+        self.config = config
+        self.checker = checker
+        self._checks = 0
+        self._unknown = 0
+        self._occupied = 0
+        self._minimum_clearance: Optional[float] = None
+
+    def _check(self, point: Point, yaw: float) -> Tuple[bool, FootprintCheck, str]:
+        result = self.checker(float(point[0]), float(point[1]), normalize_angle(yaw))
+        self._checks += 1
+        self._unknown += int(result.unknown_queries)
+        self._occupied += int(result.occupied_queries)
+        if result.minimum_obstacle_clearance is not None:
+            self._minimum_clearance = (result.minimum_obstacle_clearance
+                if self._minimum_clearance is None else
+                min(self._minimum_clearance, result.minimum_obstacle_clearance))
+        if not result.map_available:
+            return False, result, "map_unavailable"
+        if result.occupied_collision:
+            return False, result, "footprint_collision"
+        if result.unknown_queries and self.config.unknown_policy == "reject":
+            return False, result, "unknown_space_rejected"
+        return True, result, "safe"
+
+    def _segment_safe(self, a: Point, b: Point) -> bool:
+        distance = math.hypot(b[0] - a[0], b[1] - a[1])
+        yaw = math.atan2(b[1] - a[1], b[0] - a[0]) if distance > 1e-8 else 0.0
+        count = max(1, int(math.ceil(distance / self.config.segment_sample_spacing)))
+        for index in range(count + 1):
+            ratio = index / float(count)
+            point = (a[0] + ratio * (b[0] - a[0]),
+                     a[1] + ratio * (b[1] - a[1]))
+            if not self._check(point, yaw)[0]:
+                return False
+        return True
+
+    def _candidate(self, points: List[Point], index: int) -> Optional[Point]:
+        original = points[index]
+        previous = points[index - 1] if index else original
+        following = points[index + 1] if index + 1 < len(points) else original
+        nominal_yaw = math.atan2(following[1] - previous[1],
+                                 following[0] - previous[0])
+        step = self.config.refinement_search_step
+        bound = int(math.floor(self.config.refinement_search_radius / step + 1e-9))
+        best: Optional[Tuple[float, Point]] = None
+        for iy in range(-bound, bound + 1):
+            for ix in range(-bound, bound + 1):
+                offset = math.hypot(ix * step, iy * step)
+                if offset <= 1e-9 or offset > self.config.refinement_search_radius + 1e-9:
+                    continue
+                candidate = (original[0] + ix * step, original[1] + iy * step)
+                yaw_in = (math.atan2(candidate[1] - previous[1], candidate[0] - previous[0])
+                          if candidate != previous else nominal_yaw)
+                safe, check, _ = self._check(candidate, yaw_in)
+                if not safe or not self._segment_safe(previous, candidate):
+                    continue
+                if following != original and not self._segment_safe(candidate, following):
+                    continue
+                yaw_out = (math.atan2(following[1] - candidate[1],
+                                      following[0] - candidate[0])
+                           if following != candidate else yaw_in)
+                yaw_cost = abs(normalize_angle(yaw_out - yaw_in))
+                if yaw_cost > self.config.waypoint_max_yaw_change:
+                    continue
+                length_delta = (math.hypot(candidate[0] - previous[0], candidate[1] - previous[1]) +
+                                math.hypot(following[0] - candidate[0], following[1] - candidate[1]))
+                clearance = check.minimum_obstacle_clearance
+                clearance_cost = 0.0 if clearance is None else 1.0 / max(clearance, 1e-3)
+                unknown_cost = float(check.unknown_queries) if self.config.unknown_policy == "penalize" else 0.0
+                score = (self.config.route_deviation_weight * offset +
+                         self.config.local_path_length_weight * length_delta +
+                         self.config.yaw_change_weight * yaw_cost +
+                         self.config.obstacle_clearance_weight * clearance_cost +
+                         self.config.unknown_space_weight * unknown_cost)
+                if best is None or (score, candidate) < best:
+                    best = score, candidate
+        return None if best is None else best[1]
+
+    def _simplify(self, points: List[Point]) -> List[Point]:
+        if not self.config.enable_waypoint_simplification or len(points) < 3:
+            return points
+        result = [points[0]]
+        index = 0
+        while index < len(points) - 1:
+            selected = index + 1
+            for candidate in range(len(points) - 1, index + 1, -1):
+                distance = math.hypot(points[candidate][0] - points[index][0],
+                                      points[candidate][1] - points[index][1])
+                if distance > self.config.waypoint_max_direct_connect_distance:
+                    continue
+                direct_yaw = math.atan2(points[candidate][1] - points[index][1],
+                                        points[candidate][0] - points[index][0])
+                intermediate = points[index + 1:candidate]
+                deviation = 0.0
+                if intermediate:
+                    dx, dy = points[candidate][0] - points[index][0], points[candidate][1] - points[index][1]
+                    denom = max(math.hypot(dx, dy), 1e-9)
+                    deviation = max(abs(dy * (p[0] - points[index][0]) -
+                                        dx * (p[1] - points[index][1])) / denom
+                                    for p in intermediate)
+                original_yaws = path_yaws(points[index:candidate + 1])
+                yaw_change = max((abs(normalize_angle(y - direct_yaw)) for y in original_yaws), default=0.0)
+                if (deviation <= self.config.waypoint_collinearity_tolerance and
+                        yaw_change <= self.config.waypoint_max_yaw_change and
+                        self._segment_safe(points[index], points[candidate])):
+                    selected = candidate
+                    break
+            result.append(points[selected])
+            index = selected
+        return result
+
+    def refine(self, path: Sequence[Point], final_yaw: Optional[float] = None) -> RefinementResult:
+        started = time.perf_counter()
+        if not path:
+            return RefinementResult(False, "original_path_empty", [], [],
+                                    duration_ms=(time.perf_counter() - started) * 1000.0)
+        points = [(float(p[0]), float(p[1])) for p in path]
+        original_yaws = path_yaws(points, final_yaw)
+        colliding, repaired, debug = [], [], []
+        for index, (point, yaw) in enumerate(zip(list(points), original_yaws)):
+            safe, check, reason = self._check(point, yaw)
+            debug.append({"waypoint_id": index, "original_position": list(point),
+                          "reference_yaw": yaw, "front_cylinder_center": check.front_center,
+                          "rear_cylinder_center": check.rear_center,
+                          "occupied_collision": check.occupied_collision,
+                          "unknown_overlap": check.unknown_queries,
+                          "obstacle_clearance": check.minimum_obstacle_clearance,
+                          "accepted": safe, "reason": reason})
+            if safe:
+                continue
+            colliding.append(index)
+            if reason == "map_unavailable":
+                return self._result(False, reason, points, final_yaw, colliding, repaired, debug, started)
+            if index == 0 and not self.config.repair_start_waypoint:
+                return self._result(False, "start_footprint_collision", points,
+                                    final_yaw, colliding, repaired, debug,
+                                    started)
+            replacement = self._candidate(points, index)
+            if replacement is None:
+                failure = reason if reason == "unknown_space_rejected" else "no_local_replacement"
+                return self._result(False, failure, points, final_yaw, colliding, repaired, debug, started)
+            points[index] = replacement
+            repaired.append(index)
+            debug[-1].update({"refined_position": list(replacement), "accepted": True,
+                              "reason": "local_replacement"})
+        points = self._simplify(points)
+        # Final whole-path audit prevents simplification or repair from silently
+        # introducing an unsafe segment.
+        for a, b in zip(points[:-1], points[1:]):
+            if not self._segment_safe(a, b):
+                return self._result(False, "disconnected_refined_segment", points,
+                                    final_yaw, colliding, repaired, debug, started)
+        return self._result(True, "refined" if repaired else "path_safe", points,
+                            final_yaw, colliding, repaired, debug, started)
+
+    def _result(self, success: bool, reason: str, points: List[Point],
+                final_yaw: Optional[float], colliding: List[int], repaired: List[int],
+                debug: List[dict], started: float) -> RefinementResult:
+        return RefinementResult(
+            success, reason, list(points), path_yaws(points, final_yaw), debug,
+            self._checks, colliding, repaired, self._unknown, self._occupied,
+            self._minimum_clearance, (time.perf_counter() - started) * 1000.0)

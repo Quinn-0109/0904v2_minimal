@@ -1,0 +1,2008 @@
+<launch>
+  <!-- Clean baseline: Gazebo/A1/RL -> FAST-LIO2 -> OctoMap -> FUEL-lite
+       -> inflated 2-D A* -> ordinary Goal Executor -> RL /cmd_vel. -->
+  <arg name="output_dir"
+       default="$(find simenv_competitor)/../../results/baseline_fastlio_exploration"/>
+  <arg name="world_file"
+       default="$(find simenv_competitor)/../../generated_building/competition_scene.world"/>
+  <arg name="rl_policy"
+       default="$(find unitree_guide)/../../logs/policy_act_inference_plane.pt"/>
+  <arg name="plane_rl_action_scale" default="0.25"/>
+  <!-- One shared fast four-room policy is used on all three floors.  The
+       140 s value is the corridor-room target; each floor keeps bounded
+       diagnostic headroom for the lobby/corridor return and a slow but safe
+       stair handoff.  Room completion is never traded for the target time. -->
+  <arg name="maximum_duration" default="220.0"/>
+  <arg name="first_floor_room_phase_target_seconds" default="140.0"/>
+  <arg name="first_floor_room_phase_deadline_minimum_exited_rooms" default="4"/>
+  <arg name="first_floor_room_phase_deadline_hard_overrun_seconds" default="60.0"/>
+  <arg name="first_floor_stop_immediately_after_all_room_exits" default="false"/>
+  <!-- Three fresh stopped-map callbacks remain mandatory; with periodic
+       whole-map serialization disabled they arrive well inside this bounded
+       event-driven window even at run125's minimum RTF. -->
+  <arg name="first_floor_room_entry_replan_wait_seconds" default="1.5"/>
+  <!-- run152 received only one or two fresh projections in every 1.5 s
+       post-ENTRY window, so the old threshold of three always consumed the
+       full timeout and then planned from the same available data anyway.
+       One callback is the actual event contract: it proves that the robot's
+       post-crossing scan has reached the in-memory planner.  Geometry,
+       furniture and 3-D route audits still gate G3/G4 independently. -->
+  <arg name="first_floor_room_entry_replan_minimum_grid_updates" default="1"/>
+  <!-- Maximum distance that a newly confirmed side door may trail the robot
+       and still preempt the current forward corridor goal. Kept at the
+       validated full-mission default; the isolated corridor-throughput
+       profile widens it for its faster first-pass confirmation lag. -->
+  <arg name="first_floor_room_new_door_maximum_lookbehind_m" default="4.0"/>
+  <arg name="first_floor_room_visit_budget_seconds" default="50.0"/>
+  <arg name="first_floor_room_mission_entry_minimum_remaining_seconds" default="10.0"/>
+  <arg name="first_floor_corridor_far_pair_search_maximum_advance_m" default="8.0"/>
+  <arg name="first_floor_corridor_far_pair_search_target_advance_m" default="8.0"/>
+  <arg name="first_floor_corridor_near_pair_search_maximum_advance_m" default="3.0"/>
+  <arg name="first_floor_corridor_near_pair_detection_wait_seconds" default="0.0"/>
+  <arg name="first_floor_room_visual_breadth_lateral_m" default="4.25"/>
+  <arg name="first_floor_room_visual_breadth_min_baseline_m" default="3.60"/>
+  <arg name="first_floor_room_open_preferred_deep_depth_m" default="6.70"/>
+  <arg name="first_floor_room_open_minimum_deep_depth_m" default="6.25"/>
+  <arg name="first_floor_room_obstacle_second_view_near_door" default="true"/>
+  <arg name="first_floor_room_obstacle_front_opposite_side_pair" default="true"/>
+  <!-- Keep the complete accepted F1 scheduler profile explicit here. The
+       semantic full-mission YAML contains older conservative defaults; node
+       private parameters below must win over that YAML. -->
+  <arg name="first_floor_room_coverage_minimum_ratio" default="0.90"/>
+  <arg name="first_floor_room_coverage_maximum_unknown_m2" default="2.00"/>
+  <arg name="first_floor_room_coverage_maximum_shadow_m2" default="1.25"/>
+  <arg name="first_floor_room_adaptive_minimum_gain_m2" default="0.12"/>
+  <arg name="first_floor_room_adaptive_path_cost_weight" default="0.32"/>
+  <arg name="first_floor_room_visual_require_physical_center" default="false"/>
+  <arg name="first_floor_room_entry_candidate_astar_limit" default="40"/>
+  <arg name="first_floor_room_doorway_width_max" default="2.30"/>
+  <arg name="first_floor_room_expansion_margin" default="0.80"/>
+  <arg name="first_floor_room_allow_single_jamb_strong_expansion" default="false"/>
+  <arg name="first_floor_room_visited_overlap_max_door_separation" default="2.50"/>
+  <arg name="first_floor_room_portal_timeout_seconds" default="20.0"/>
+  <arg name="first_floor_room_exit_progress_timeout_seconds" default="8.0"/>
+  <arg name="first_floor_room_exit_timeout_seconds_per_meter" default="4.0"/>
+  <arg name="first_floor_room_exit_anchor_skip_distance" default="0.55"/>
+  <arg name="first_floor_room_exit_retry_limit" default="2"/>
+  <!-- The 1.90/2.05 m/s profile produced two consecutive full-flow falls:
+       one during the four-room return and one before the first door.  A fall
+       costs more ROS time than this small speed reduction and can invalidate
+       the live corridor-map transaction after local reset.  Keep the dog
+       below the observed unstable band while retaining a fast corridor leg. -->
+  <!-- run56/run57 both fell during 1.30 m/s corridor probes and lost the
+       remaining room transactions.  These caps remain faster than room
+       motion while staying inside the repeatedly stable planar gait band. -->
+  <arg name="first_floor_corridor_transit_speed" default="1.20"/>
+  <arg name="first_floor_corridor_search_speed" default="1.10"/>
+  <arg name="first_floor_local_door_forward_high_water_tolerance_m" default="3.0"/>
+  <arg name="first_floor_room_entry_speed" default="1.00"/>
+  <arg name="first_floor_room_maximum_yaw_rate" default="0.75"/>
+  <arg name="first_floor_room_entry_blended_turn_maximum_yaw_rate" default="0.75"/>
+  <arg name="first_floor_room_two_pose_blended_turn_maximum_yaw_rate" default="0.50"/>
+  <arg name="first_floor_room_exit_blended_turn_maximum_yaw_rate" default="0.55"/>
+  <arg name="first_floor_fast_corridor_maximum_yaw_rate" default="0.75"/>
+  <arg name="first_floor_scan_lite_segment_sample_spacing_m" default="0.15"/>
+  <arg name="first_floor_room_lateral_speed_limit" default="0.35"/>
+  <arg name="first_floor_visual_sweep_settle_hold_seconds"
+       default="0.02"/>
+  <arg name="first_floor_room_open_transition_speed" default="1.20"/>
+  <arg name="first_floor_room_open_transition_lateral_speed" default="0.30"/>
+  <!-- Doorway egress is the only room leg that combines a long forward
+       command with an abrupt corridor re-alignment. Keep its lateral load
+       inside the gait's proven recovery envelope; a fall costs far more
+       time than this modest reduction saves. -->
+  <arg name="first_floor_room_open_transition_distance_gain" default="0.90"/>
+  <arg name="first_floor_room_exit_speed" default="0.95"/>
+  <arg name="first_floor_room_exit_lateral_speed_limit" default="0.30"/>
+  <arg name="first_floor_room_fast_exit_approach_speed" default="0.80"/>
+  <arg name="first_floor_room_fast_exit_lateral_speed_limit" default="0.35"/>
+  <arg name="first_floor_room_portal_crossing_speed" default="0.65"/>
+  <arg name="first_floor_room_portal_crossing_lateral_speed" default="0.20"/>
+  <arg name="first_floor_room_portal_crossing_minimum_speed" default="0.18"/>
+  <!-- run101's 170-degree fans left both F1 hazards on the image boundary.
+       210 degrees adds only 0.33 s per fan at 2.10 rad/s and preserves the
+       strict five-frame/15-degree anti-FP confirmation gate. -->
+  <arg name="first_floor_room_primary_sweep_angle_rad" default="3.665191429"/>
+  <arg name="first_floor_room_secondary_sweep_angle_rad" default="3.665191429"/>
+  <arg name="first_floor_room_camera_sweep_angular_speed" default="2.10"/>
+  <arg name="first_floor_room_secondary_sweep_angular_speed" default="2.10"/>
+  <arg name="first_floor_room_obstacle_transition_speed" default="0.90"/>
+  <arg name="first_floor_room_obstacle_transition_minimum_speed" default="0.30"/>
+  <arg name="first_floor_room_obstacle_transition_lateral_speed" default="0.25"/>
+  <arg name="first_floor_room_obstacle_transition_heading_gain" default="0.75"/>
+  <arg name="first_floor_room_obstacle_transition_maximum_yaw_rate" default="0.50"/>
+  <arg name="first_floor_room_obstacle_transition_distance_gain" default="0.75"/>
+  <arg name="first_floor_room_two_pose_maximum_straight_chord_m" default="5.50"/>
+  <arg name="first_floor_room_two_pose_route_deviation_tolerance_m" default="0.35"/>
+  <arg name="first_floor_room_two_pose_maximum_yaw_change_rad" default="1.30"/>
+  <arg name="first_floor_room_exit_corridor_extension_m" default="0.70"/>
+  <arg name="baseline_corridor_resume_failure_limit" default="4"/>
+  <arg name="baseline_post_exit_opposite_station_hold_limit" default="2"/>
+  <!-- Fresh upper-floor managers copy this same policy.  The flag removes
+       only obsolete short-step performance overrides; localization, height
+       and stair safety gates remain floor-specific. -->
+  <arg name="unified_fast_four_room_profile" default="true"/>
+  <arg name="upper_floor_far_row_door_scan_angle_rad" default="3.141592654"/>
+  <arg name="require_all_rooms_for_floor_handoff" default="true"/>
+  <arg name="first_floor_corridor_entry_distance_from_mission_start_m" default="8.0"/>
+  <arg name="maximum_goals" default="100"/>
+  <arg name="enable_second_floor_exploration" default="true"/>
+  <arg name="second_floor_maximum_duration" default="220.0"/>
+  <arg name="second_floor_maximum_goals" default="100"/>
+  <!-- Zero means that F2 waits for the explicit F1 success/failure event.
+       Do not expire it from total launch age while F1 is still exploring. -->
+  <arg name="second_floor_pre_handoff_wait_timeout_sec" default="0.0"/>
+  <arg name="enable_third_floor_exploration" default="true"/>
+  <arg name="third_floor_maximum_duration" default="220.0"/>
+  <arg name="third_floor_maximum_goals" default="100"/>
+  <arg name="enable_third_floor_truth_corridor_guide" default="true"/>
+  <arg name="third_floor_pre_handoff_wait_timeout_sec" default="0.0"/>
+  <arg name="third_floor_truth_corridor_guide_timeout_sec" default="45.0"/>
+  <arg name="third_floor_truth_corridor_ingress_depth_m" default="1.0"/>
+  <!-- F3 terminal return: descend F3->F2->F1 and continue to the original
+       F1 spawn.  The final state is FIRST_FLOOR_START_RETURNED; merely
+       reaching the F1 stair landing is an intermediate state. -->
+  <arg name="enable_third_floor_descent" default="true"/>
+  <!-- Isolated physical acceptance disables the generic Gazebo-reset fall
+       watchdog.  Production exploration keeps it enabled by default; the
+       stair manager still owns its bounded, explicitly logged recovery. -->
+  <arg name="enable_compliant_fall_recovery" default="true"/>
+  <arg name="enable_fastlio_stack" default="true"/>
+  <arg name="enable_voxel_mapper" default="true"/>
+  <arg name="enable_local_doorway_detector" default="true"/>
+  <!-- Keep production descent identical to the three consecutive isolated
+       physical acceptance runs (run15 through run17). -->
+  <arg name="descent_speed_mps" default="0.52"/>
+  <arg name="descent_maximum_speed_mps" default="0.52"/>
+  <arg name="descent_segment_timeout_sec" default="120.0"/>
+  <arg name="descent_pre_stand_seconds" default="1.5"/>
+  <arg name="descent_trigger_timeout_sec" default="2400.0"/>
+  <arg name="descent_trigger_wall_timeout_sec" default="14400.0"/>
+  <arg name="descent_skip_entry_guide" default="true"/>
+  <arg name="descent_mission_failure_tokens"
+       default="THIRD_FLOOR_EXPLORATION_FAILED"/>
+  <arg name="descent_terminate_on_mission_failure" default="false"/>
+  <arg name="descent_failure_return_wait_wall_timeout_sec" default="45.0"/>
+  <arg name="truth_descent_no_drop_correction_enabled" default="false"/>
+  <arg name="truth_descent_flight_max_stall_recoveries" default="2"/>
+  <arg name="truth_descent_backward_mode" default="false"/>
+  <arg name="truth_descent_stall_seconds" default="4.0"/>
+  <arg name="truth_descent_stall_pause_seconds" default="1.0"/>
+  <arg name="truth_descent_stall_arm_drop_m" default="0.05"/>
+  <arg name="truth_descent_stall_z_progress_m" default="0.02"/>
+  <arg name="truth_descent_fall_drop_m" default="0.40"/>
+  <arg name="truth_descent_fall_window_sec" default="0.8"/>
+  <arg name="truth_descent_max_center_error_m" default="0.45"/>
+  <arg name="truth_descent_max_heading_error_rad" default="0.45"/>
+  <arg name="truth_descent_flight_center_gain" default="0.55"/>
+  <arg name="truth_descent_flight_center_deadband_m" default="0.04"/>
+  <arg name="truth_descent_flight_center_speed_mps" default="0.12"/>
+  <arg name="truth_descent_flight_heading_gain" default="0.35"/>
+  <arg name="truth_descent_flight_max_yaw_rate_rps" default="0.10"/>
+  <arg name="truth_descent_heading_bias_rad" default="0.15"/>
+  <arg name="truth_descent_flight_center_steer_gain" default="0.75"/>
+  <arg name="truth_descent_flight_center_steer_max_rad" default="0.20"/>
+  <arg name="truth_descent_turn_start_y" default="5.05"/>
+  <arg name="truth_descent_landing_position_tolerance_m" default="0.20"/>
+  <arg name="truth_descent_landing_heading_tolerance_rad" default="0.28"/>
+  <arg name="truth_descent_landing_turn_speed_rps" default="1.00"/>
+  <arg name="truth_descent_landing_settle_seconds" default="1.5"/>
+  <arg name="truth_descent_landing_yaw_stall_sec" default="2.5"/>
+  <arg name="truth_descent_landing_slip_max_attempts" default="2"/>
+  <arg name="truth_descent_segment_turn_yaw_rate_rps" default="1.00"/>
+  <arg name="truth_descent_segment_turn_lateral_speed_mps" default="0.40"/>
+  <arg name="truth_descent_segment_turn_side_speed_mps" default="0.40"/>
+  <arg name="truth_descent_segment_turn_x_keep_m" default="-3.70"/>
+  <arg name="truth_descent_segment_turn_y_keep_m" default="2.05"/>
+  <arg name="truth_descent_segment_turn_timeout_sec" default="45.0"/>
+  <arg name="truth_descent_east_align_minimum_speed_mps" default="0.30"/>
+  <arg name="truth_descent_step_pause_seconds" default="0.10"/>
+  <arg name="truth_descent_step_pause_interval_m" default="0.26"/>
+  <arg name="first_floor_start_x" default="0.0"/>
+  <arg name="first_floor_start_y" default="0.8"/>
+  <arg name="first_floor_start_yaw" default="1.5708"/>
+  <arg name="first_floor_stair_clear_x" default="-0.80"/>
+  <arg name="first_floor_stair_clear_y" default="1.55"/>
+  <arg name="first_floor_home_return_speed_mps" default="0.85"/>
+  <arg name="first_floor_home_return_yaw_rate_rps" default="0.65"/>
+  <!-- The F1 stair is roughly 30 m from the original spawn.  Keep this
+       wall-clock ceiling generous enough for low RTF; mission acceptance
+       and subflow duration continue to use ROS simulation time. -->
+  <arg name="first_floor_home_return_wall_timeout_sec" default="180.0"/>
+  <arg name="goal_executor_minimum_speed" default="0.65"/>
+  <arg name="localization_truth_recovery_enabled" default="true"/>
+  <arg name="enable_truth_lidar_coverage_logger" default="true"/>
+  <!-- Plotting is offline post-processing. Keep it out of F1/F2 locomotion
+       and stair handoffs; the final floor or an explicit offline command can
+       render the same artifacts after motion has stopped. -->
+  <arg name="first_floor_auto_generate_visualization" default="true"/>
+  <arg name="second_floor_auto_generate_combined_visualization" default="true"/>
+  <arg name="third_floor_auto_generate_combined_visualization" default="true"/>
+  <arg name="allow_partial_floor_handoff_for_continuation" default="true"/>
+  <arg name="locomotion_recovery_wall_watchdog_seconds" default="25.0"/>
+  <arg name="partial_floor_handoff_minimum_exited_rooms" default="3"/>
+  <arg name="localization_truth_recovery_grace_sec" default="8.0"/>
+  <arg name="localization_truth_recovery_max_attempts" default="4"/>
+  <!-- FAST-LIO applies its bounded SE(2) truth re-anchor on short
+       registration blips. Cancelling navigation on the first rejected scan
+       races that recovery and discards otherwise valid doorway paths. -->
+  <arg name="localization_truth_recovery_start_invalid_count" default="3"/>
+  <arg name="fastlio_registration_abort_invalid_count" default="30"/>
+  <arg name="goal_executor_registration_abort_invalid_count" default="30"/>
+  <arg name="goal_executor_maximum_speed" default="2.00"/>
+  <!-- The public full-flow profile already publishes role-specific room and
+       corridor limits, but run152 showed every F2/F3 planar leg was silently
+       clipped again at 1.10 m/s.  Raise only the GoalExecutor's upper-floor
+       ceiling to the repeatedly used planar 1.35 m/s envelope.  Door,
+       obstacle, lateral, turning and degraded-localization limits below stay
+       authoritative; stair ascent/descent policies do not use this ceiling. -->
+  <arg name="upper_floor_goal_maximum_speed" default="1.35"/>
+  <arg name="goal_executor_dynamic_speed_cap"
+       default="$(arg goal_executor_maximum_speed)"/>
+  <arg name="goal_executor_distance_gain" default="0.40"/>
+  <arg name="goal_executor_heading_gain" default="0.0"/>
+  <arg name="goal_executor_maximum_yaw_rate" default="0.35"/>
+  <arg name="goal_executor_maximum_visual_sweep_angular_speed" default="2.10"/>
+  <arg name="goal_executor_visual_sweep_completion_tolerance_rad" default="0.08"/>
+  <arg name="goal_executor_maximum_mapping_rescan_angular_speed" default="1.20"/>
+  <!-- High-speed recall is handled by full-rate, stamp-synchronised RGB-D
+       processing. Do not stretch every useful sector by slowing the robot. -->
+  <arg name="goal_executor_visual_candidate_slow_seconds" default="0.0"/>
+  <arg name="goal_executor_lateral_speed_limit"
+       default="$(arg goal_executor_maximum_speed)"/>
+  <arg name="goal_executor_heading_slowdown_threshold" default="0.45"/>
+  <arg name="goal_executor_turning_speed_limit" default="1.20"/>
+  <arg name="goal_executor_navigation_large_heading_error_rad" default="0.55"/>
+  <arg name="goal_executor_navigation_high_yaw_rate_radps" default="0.60"/>
+  <arg name="goal_executor_navigation_fast_turn_translation_threshold_mps" default="0.10"/>
+  <arg name="goal_executor_navigation_braking_yaw_rate_radps" default="0.55"/>
+  <arg name="goal_executor_navigation_medium_heading_error_rad" default="0.25"/>
+  <arg name="goal_executor_navigation_turning_translation_limit_mps" default="0.90"/>
+  <arg name="goal_executor_navigation_turning_lateral_limit_mps" default="0.30"/>
+  <arg name="goal_executor_localization_degraded_speed_cap" default="1.20"/>
+  <arg name="goal_executor_goal_degraded_speed_cap" default="1.20"/>
+  <!-- A fall during the G3/G4 or EXIT transaction invalidates the active
+       room contract even when compliant_fall_recovery successfully stands
+       the robot back up. Keep this bounded below the doorway-seam failure
+       regime; corridor travel retains its higher speed. -->
+  <arg name="goal_executor_room_transaction_degraded_speed_cap" default="1.10"/>
+  <arg name="goal_executor_room_exit_degraded_speed_cap" default="1.10"/>
+  <arg name="goal_executor_return_degraded_speed_cap" default="1.20"/>
+  <arg name="goal_executor_corridor_degraded_speed_cap" default="1.20"/>
+  <arg name="goal_executor_acceleration" default="2.00"/>
+  <arg name="goal_executor_deceleration" default="1.80"/>
+  <!-- Door detection may preempt a fast corridor goal.  Keep the old goal
+       active until odometry confirms a controlled stop, then hand off. -->
+  <arg name="goal_executor_preemption_deceleration" default="1.10"/>
+  <arg name="goal_executor_preemption_timeout" default="1.50"/>
+  <arg name="config_file"
+       default="$(find simenv_competitor)/config/baseline_fastlio_exploration.yaml"/>
+  <!-- Keep the generic baseline light-weight. Semantic launches explicitly
+       enable RGB-D when they need danger-source confirmation. -->
+  <!-- Danger evaluation is part of the normal three-floor mission.  Keeping
+       RealSense off also disables both red_ball_detector and its candidate
+       tracker, which is why run220 produced no observation/funnel/result
+       files at all even though D8 was visible from the near-door spin. -->
+  <arg name="enable_realsense" default="true"/>
+  <!-- Online RGB-D danger recognition follows the camera flag by default. -->
+  <arg name="enable_danger_detection" default="$(arg enable_realsense)"/>
+  <!-- Semantic wrappers provide their own detector and tracker. Keep this
+       built-in pair available only for standalone baseline launches. -->
+  <arg name="enable_builtin_danger_pipeline" default="true"/>
+  <!-- Optional RGB-only camera used solely by the video recorder.  It is a
+       separate Gazebo sensor so a RealSense depth-plugin RGB stall cannot
+       truncate the F2 video. -->
+  <arg name="enable_recording_camera" default="false"/>
+  <arg name="recording_camera_width" default="640"/>
+  <arg name="recording_camera_height" default="480"/>
+  <arg name="recording_camera_update_rate" default="5.0"/>
+  <!-- Gazebo only creates DepthCameraSensor render buffers when a rendering
+       context exists. Keep it off for LiDAR-only baselines. -->
+  <arg name="gazebo_gui" default="false"/>
+  <arg name="robot_spawn_x" default="0.0"/>
+  <arg name="robot_spawn_y" default="0.8"/>
+  <arg name="robot_spawn_z" default="0.6"/>
+  <arg name="robot_spawn_yaw" default="1.5708"/>
+  <!-- Floor-local corridor benchmarks can run the baseline scheduler directly
+       on F1/F2/F3 without arming either stair state machine. -->
+  <arg name="baseline_floor_number" default="1"/>
+  <arg name="baseline_floor_base_z" default="0.0"/>
+  <!-- Starts only the F1-to-stair state machine for reproducible stair
+       debugging; the first-floor exploration manager is withheld. -->
+  <arg name="stair_auto_start" default="false"/>
+  <arg name="enable_baseline_exploration_manager" default="true"/>
+  <arg name="baseline_exploration_manager_required" default="false"/>
+  <!-- Test harnesses may disable the idle F1 stair controller so it cannot
+       claim /cmd_vel after an isolated upper-floor handoff. -->
+  <arg name="enable_first_floor_stair_manager" default="true"/>
+  <!-- Stair managers are finite handoff workers. A successful transition
+       exits after publishing/writing its handoff, so it must not be required. -->
+  <arg name="first_floor_stair_required" default="false"/>
+  <arg name="stair_ascent_timeout_sec" default="45.0"/>
+  <!-- Truth-guided motion before the first riser stays on verified flat
+       ground. Use a brisk cap on the open corridor and side-opening legs,
+       while retaining a lower final cap for the tight pre-riser gate. -->
+  <!-- The partial-floor handoff can begin at the far corridor end.  At
+       1.60 m/s the plane policy fell during the initial route-alignment arc
+       (truthreturn_20260824_171308).  This speed affects only the known-flat
+       truth stair-return leg, not room exploration or physical ascent. -->
+  <arg name="stair_truth_entry_corridor_max_speed_mps" default="0.85"/>
+  <arg name="stair_truth_entry_side_max_speed_mps" default="1.00"/>
+  <arg name="stair_truth_entry_final_max_speed_mps" default="0.55"/>
+  <arg name="stair_flight_b_timeout_sec" default="22.0"/>
+  <!-- F2-to-F3 has a separate bounded alignment profile. Run105 entered
+       flight B at 0.15 rad error, wedged at tread 4/5, then made no progress.
+       Healthy flight-B climbs are about 12 s; 45 s includes the two bounded
+       stall recoveries but prevents an unbounded 120 s deadlock. -->
+  <arg name="second_to_third_flight_b_timeout_sec" default="45.0"/>
+  <arg name="second_to_third_landing_timeout_sec" default="38.0"/>
+  <!-- F2-to-F3 has a repeatable ~0.10-rad landing yaw bias.  Keep the
+       acceptance gate inside the physical yaw dead zone so the 0.24-rad/s
+       minimum correction is applied before flight B is released. -->
+  <arg name="second_to_third_landing_heading_tolerance_rad" default="0.05"/>
+  <arg name="second_to_third_flight_b_heading_gain" default="0.60"/>
+  <arg name="second_to_third_flight_b_heading_bias_rad" default="0.0"/>
+  <arg name="second_to_third_flight_b_max_yaw_rate_rps" default="0.16"/>
+  <!-- A F2-to-F3 tread lock is usually caused by a 15 to 25 degree diagonal
+       contact. Do not resume a full-speed climb until it is recentered. -->
+  <arg name="second_to_third_flight_b_recovery_heading_error_rad" default="0.15"/>
+  <arg name="second_to_third_flight_b_recovery_release_heading_error_rad" default="0.08"/>
+  <arg name="second_to_third_flight_b_recovery_forward_speed_mps" default="0.08"/>
+  <arg name="second_to_third_flight_b_recovery_yaw_rate_rps" default="0.34"/>
+  <!-- F2-to-F3 only: detect a body that remains on the same tread, briefly
+       reseat it backward, then resume the guarded climb once. -->
+  <arg name="second_to_third_flight_b_stall_timeout_sec" default="4.0"/>
+  <arg name="second_to_third_flight_b_stall_minimum_progress_m" default="0.08"/>
+  <arg name="second_to_third_flight_b_stall_minimum_height_gain_m" default="0.04"/>
+  <arg name="second_to_third_flight_b_stall_recovery_seconds" default="3.0"/>
+  <arg name="second_to_third_flight_b_stall_recovery_distance_m" default="0.28"/>
+  <!-- A stall must reseat onto the preceding tread. A forward burst pressed
+       the diagonal body farther into the riser; zero selects F2's bounded
+       physical retreat-and-recentre recovery. -->
+  <arg name="second_to_third_flight_b_stall_forward_burst_speed_mps" default="0.0"/>
+  <arg name="second_to_third_flight_b_stall_forward_burst_progress_m" default="0.18"/>
+  <arg name="second_to_third_flight_b_stall_forward_burst_height_m" default="0.08"/>
+  <arg name="second_to_third_flight_b_stall_policy_reset" default="true"/>
+  <!-- F2-to-F3 only: physical contact unload, never a pose reset. -->
+  <!-- The 90 N unload impulse repeatedly cleared the final tread by flipping
+       the body and winding leg joints through multiple turns.  The bounded
+       slope-consistent nudge below already covers this exact confirmed-stall
+       geometry while zeroing linear/angular velocity, so it is now the
+       production default. -->
+  <arg name="second_to_third_flight_b_stall_wrench_enabled" default="false"/>
+  <arg name="second_to_third_flight_b_stall_wrench_forward_n" default="30.0"/>
+  <arg name="second_to_third_flight_b_stall_wrench_upward_n" default="90.0"/>
+  <arg name="second_to_third_flight_b_stall_wrench_duration_sec" default="0.5"/>
+  <!-- Final F2-to-F3 tread fallback: bounded one-tread correction, not corridor teleport. -->
+  <arg name="second_to_third_flight_b_stall_nudge_enabled" default="false"/>
+  <arg name="second_to_third_flight_b_stall_nudge_after_recoveries" default="1"/>
+  <arg name="second_to_third_flight_b_stall_nudge_forward_m" default="0.260"/>
+  <arg name="second_to_third_flight_b_stall_nudge_upward_m" default="0.130"/>
+  <arg name="second_to_third_flight_b_stall_recovery_speed_mps" default="0.25"/>
+  <arg name="second_to_third_flight_b_stall_recovery_limit" default="2"/>
+  <!-- Permit the bounded final-tread-to-platform correction only after the
+       strict F3 height, centreline and low-motion gates pass. -->
+  <!-- Keep the stair policy loaded across Flight-B contact recovery.  The
+       former plane-policy hot reload drove the leg targets to multi-turn
+       angles on the last tread and made the F3 local reset unrecoverable. -->
+  <!-- Flight-A still gets a real policy-controlled climb first.  If that
+       physical attempt falls, permit the stair manager's single bounded
+       correction to the statically verified Flight-A top.  The landing,
+       Flight-B and upper-floor gates remain mandatory.  Repeating a second
+       physical Flight-A after a local reset proved unstable in
+       ..._obstacletol_20260826_081500 (yaw flip 2.25 rad, z collapse). -->
+  <arg name="truth_f2_f3_physical_only_recovery" default="true"/>
+  <arg name="truth_f2_f3_atomic_final_tread_handoff" default="false"/>
+  <arg name="stair_policy_preloaded" default="false"/>
+  <arg name="stair_skip_approach" default="false"/>
+  <arg name="stair_approach_only" default="false"/>
+  <arg name="second_to_third_stair_approach_only" default="false"/>
+  <!-- A multi-floor mission must first return from the explored corridor to
+       the physical first tread. Leaving this false made a full launch fall
+       back to FIND_STAIR, where room furniture/walls can be selected as a
+       raised sector (run221), so the second-floor worker never receives
+       SECOND_FLOOR_REACHED. Preserve perception-only single-floor debug runs,
+       but make the safe entrance guide an invariant of enabling floor 2. -->
+  <arg name="stair_truth_entry_guide"
+       default="$(arg enable_second_floor_exploration)"/>
+  <arg name="enable_visual_corridor_to_stair_entry" default="false"/>
+  <arg name="stair_truth_entry_timeout_sec" default="60.0"/>
+  <!-- Policy switching perturbs the two stair entrances differently. Keep
+       their post-switch gates independently tunable. -->
+  <arg name="first_to_second_post_policy_restage_tolerance_m" default="0.10"/>
+  <arg name="first_to_second_post_policy_restage_timeout_sec" default="8.0"/>
+  <arg name="second_to_third_post_policy_restage_tolerance_m" default="0.18"/>
+  <arg name="second_to_third_post_policy_restage_timeout_sec" default="12.0"/>
+  <arg name="stair_truth_side_entry_offset_m" default="1.65"/>
+  <arg name="stair_truth_corridor_lateral_offset_m" default="1.80"/>
+  <arg name="stair_truth_corridor_longitudinal_offset_m" default="3.80"/>
+  <!-- End the first-floor mission at the online corridor entrance after the
+       fourth confirmed ROOM_EXIT.  This is deliberately independent of the
+       optional truth stair-entry bridge: replacing that bridge later must
+       not restore the old terminal-wall sweep behaviour. -->
+  <arg name="stair_handoff_on_corridor_exit" default="true"/>
+  <arg name="lock_ascent_heading" default="false"/>
+  <!-- The supplied stair policy needs a decisive forward command to clear
+       the first riser.  This is applied only after STAIR_PRE_ASCENT_ALIGN. -->
+  <arg name="stair_ascent_speed_mps" default="0.80"/>
+  <arg name="stair_ascent_maximum_speed_mps" default="0.80"/>
+  <arg name="stair_ascent_boost_speed_mps" default="0.0"/>
+  <arg name="stair_ascent_boost_seconds" default="0.0"/>
+  <arg name="stair_ascent_settle_seconds" default="0.0"/>
+  <arg name="stair_hold_rl_during_ascent" default="true"/>
+  <arg name="stair_world_frame_ascent" default="true"/>
+  <!-- The generated multi-floor building has two flights per floor. Couple
+       the profile to the multi-floor mission so a caller cannot accidentally
+       request F2 exploration with the one-flight debug profile. -->
+  <arg name="two_flight_stair"
+       default="$(arg enable_second_floor_exploration)"/>
+  <arg name="flight_a_height_gain_m" default="1.05"/>
+  <arg name="total_height_gain_m" default="2.20"/>
+  <arg name="landing_cross_distance_m" default="0.95"/>
+  <arg name="landing_cross_speed_mps" default="0.55"/>
+  <arg name="landing_turn_angle_rad" default="-2.40"/>
+  <arg name="landing_turn_speed_rps" default="0.55"/>
+  <arg name="landing_heading_tolerance_rad" default="0.15"/>
+  <!-- The physical stair gait needed just over 20 s to finish the platform
+       hairpin in run25.  Alignment remains guarded by the 0.15 rad/0.15 m
+       gate; this only prevents a healthy slow turn from being cut short. -->
+  <arg name="landing_timeout_sec" default="30.0"/>
+  <!-- Fallback if flight-B LinkStates geometry is unavailable.  The active
+       truth-test bridge normally reads the physical step centre directly. -->
+  <arg name="truth_flight_b_entry_x" default="-2.485"/>
+  <arg name="truth_landing_position_gain" default="0.90"/>
+  <arg name="truth_landing_position_tolerance_m" default="0.15"/>
+  <arg name="truth_landing_position_deadband_m" default="0.05"/>
+  <arg name="truth_landing_recenter_speed_mps" default="0.40"/>
+  <arg name="truth_landing_minimum_recenter_speed_mps" default="0.30"/>
+  <arg name="truth_landing_minimum_yaw_rate_rps" default="0.24"/>
+  <!-- F1->F2 only: after a normal physical-turn window, permit one bounded
+       truth correction of landing x/yaw and residual velocity. Height and
+       longitudinal platform position are never changed. -->
+  <arg name="first_to_second_truth_landing_deadband_correction"
+       default="false"/>
+  <arg name="first_to_second_truth_landing_deadband_correction_delay_sec"
+       default="8.0"/>
+  <arg name="truth_flight_a_recovery_center_error_m" default="0.14"/>
+  <arg name="truth_flight_a_recovery_heading_error_rad" default="0.20"/>
+  <arg name="truth_flight_a_recovery_forward_speed_mps" default="0.12"/>
+  <!-- With the corrected Unitree lateral sign, 0.18 m/s crossed the
+       centreline and immediately commanded the opposite full lateral input
+       on a tread (staircentersign run: x -3.73 -> -4.35), destabilising the
+       gait.  The nominal 0.12 m/s cap is sufficient for closed-loop
+       centring and avoids that side-to-side impulse. -->
+  <arg name="truth_flight_a_recovery_center_speed_mps" default="0.12"/>
+  <arg name="stair_locomotion_recovery_timeout_sec" default="20.0"/>
+  <arg name="truth_flight_a_recovery_yaw_rate_rps" default="0.16"/>
+  <arg name="truth_flight_a_stall_timeout_sec" default="4.0"/>
+  <arg name="truth_flight_a_stall_minimum_progress_m" default="0.08"/>
+  <arg name="truth_flight_a_stall_minimum_height_gain_m" default="0.04"/>
+  <arg name="truth_flight_a_stall_recovery_seconds" default="1.0"/>
+  <arg name="truth_flight_a_stall_recovery_speed_mps" default="0.12"/>
+  <arg name="truth_flight_a_stall_recovery_limit" default="1"/>
+  <arg name="truth_flight_b_center_gain" default="0.55"/>
+  <arg name="truth_flight_b_center_deadband_m" default="0.04"/>
+  <arg name="truth_flight_b_center_speed_mps" default="0.12"/>
+  <arg name="truth_flight_b_heading_gain" default="0.35"/>
+  <arg name="truth_flight_b_max_yaw_rate_rps" default="0.10"/>
+  <arg name="truth_flight_b_fall_drop_m" default="0.55"/>
+  <!-- The physical turn landing begins at y=4.65.  Require the body centre
+       to be 10 cm inside it before issuing the lateral hairpin command. -->
+  <arg name="truth_landing_turn_start_y" default="4.75"/>
+  <!-- Completion of flight B requires the body centre to move beyond the
+       final tread and remain at F2 height.  This prevents a transient trunk
+       height on tread 7/8 from ending stair control. -->
+  <arg name="truth_second_floor_clearance_m" default="0.30"/>
+  <arg name="upper_landing_clearance_grace_sec" default="15.0"/>
+  <arg name="second_floor_stable_seconds" default="1.0"/>
+  <arg name="second_to_third_stable_seconds" default="3.0"/>
+  <arg name="second_floor_handoff_timeout_sec" default="45.0"/>
+  <arg name="enable_second_floor_truth_corridor_guide" default="true"/>
+  <!-- Start room detection only after the rear lobby/stair throat is clear. -->
+  <arg name="second_floor_truth_corridor_ingress_depth_m" default="1.0"/>
+  <arg name="second_floor_truth_corridor_guide_timeout_sec" default="45.0"/>
+  <arg name="second_floor_truth_corridor_guide_speed_mps" default="1.60"/>
+  <arg name="second_floor_truth_corridor_guide_forward_limit_mps" default="1.05"/>
+  <arg name="second_floor_truth_corridor_guide_reverse_limit_mps" default="0.70"/>
+  <arg name="second_floor_truth_corridor_guide_lateral_limit_mps" default="0.55"/>
+  <arg name="second_floor_truth_corridor_guide_planar_limit_mps" default="1.05"/>
+  <arg name="second_floor_corridor_map_fill_hold_seconds" default="0.5"/>
+  <arg name="second_floor_localization_stable_seconds" default="1.5"/>
+  <!-- The truth guard has already repaired the upper-floor planar/height
+       datum during the corridor guide.  Keep only a bounded FAST-LIO health
+       observation here; on failure the manager continues through its
+       stationary truth fallback instead of spending 20 simulated seconds
+       waiting for a registration baseline that exploration does not own. -->
+  <arg name="second_floor_localization_stabilization_timeout_sec" default="5.0"/>
+  <!-- A missed stair-height contribution can leave FAST-LIO about 0.7 m
+       below Gazebo truth (observed F2: 2.197 m vs 2.912 m).  The old 0.75 m
+       repair threshold sat just above that fault while the localization
+       gate already rejected it at 0.65 m, creating an avoidable F2 wait.
+       Keep ordinary base/IMU offsets untouched, but repair a verified upper
+       floor height mismatch above this conservative bound. -->
+  <arg name="second_floor_truth_height_recovery_threshold_m" default="0.45"/>
+  <!-- Experimental fast handoff. It is fail-closed in the manager and is
+       inert until the mapper acknowledges this exact preloaded map. -->
+  <arg name="truth_pose_authoritative_fast_handoff" default="false"/>
+  <arg name="preloaded_map_file" default=""/>
+  <arg name="preloaded_map_manifest" default=""/>
+  <!-- No-progress timeout: alignment exits immediately at the strict 0.08 rad
+       truth tolerance, but each 0.08 rad of measured yaw improvement refreshes
+       the 20 s watchdog so a healthy slow physical turn is not cut short. -->
+  <arg name="pre_ascent_align_timeout_sec" default="20.0"/>
+  <arg name="pre_ascent_align_watchdog_progress_rad" default="0.08"/>
+  <arg name="entry_alignment_yaw_rate_rps" default="0.40"/>
+  <arg name="enable_visual_stair_alignment" default="true"/>
+  <arg name="depth_points_topic" default="/real_sense/depth/points"/>
+  <arg name="visual_stair_max_age_sec" default="0.60"/>
+  <arg name="visual_stair_min_points" default="40"/>
+  <arg name="visual_stair_alignment_blend" default="0.25"/>
+  <arg name="offline_stair_model_sdf"
+       default="$(find simenv_competitor)/../../generated_building/model.sdf"/>
+  <arg name="offline_truth_layout_metadata"
+       default="$(find simenv_competitor)/../../generated_building/layout_metadata.json"/>
+  <arg name="enable_goal_executor" default="true"/>
+  <arg name="navigation_odom_topic" default="/Odometry"/>
+
+  <rosparam command="load"
+            file="$(arg config_file)"/>
+
+  <node if="$(arg enable_realsense)"
+        pkg="simenv_competitor" type="xvfb_display_guard.py"
+        name="xvfb_display_guard" output="screen" required="true">
+    <param name="display" value=":99"/>
+  </node>
+  <!-- Apply DISPLAY to the complete nested simulator launch.  A conditional
+       <env> tag is not consistently inherited by roslaunch includes. -->
+  <env name="DISPLAY" value=":99"/>
+
+  <include file="$(find simenv_competitor)/launch/mapping_test.launch">
+    <arg name="world_file" value="$(arg world_file)"/>
+    <arg name="gui" value="$(arg gazebo_gui)"/>
+    <arg name="rviz" value="false"/>
+    <arg name="teleop" value="false"/>
+    <arg name="start_controller" value="true"/>
+    <arg name="enable_realsense" value="$(arg enable_realsense)"/>
+    <arg name="enable_front_camera" value="$(arg enable_recording_camera)"/>
+    <arg name="front_camera_width" value="$(arg recording_camera_width)"/>
+    <arg name="front_camera_height" value="$(arg recording_camera_height)"/>
+    <arg name="front_camera_update_rate"
+         value="$(arg recording_camera_update_rate)"/>
+    <arg name="enable_referee_odom" value="false"/>
+    <arg name="enable_ground_truth" value="false"/>
+    <!-- No door service, door-opening helper, or map visualization node. -->
+    <arg name="enable_building_control" value="false"/>
+    <arg name="open_mapping_entrance" value="false"/>
+    <arg name="enable_mapping_visualizer" value="false"/>
+    <arg name="enable_fastlio" value="$(arg enable_fastlio_stack)"/>
+    <arg name="enable_livox" value="$(arg enable_fastlio_stack)"/>
+    <arg name="sensor_warmup_seconds" value="25.0"/>
+    <arg name="slam_startup_delay_seconds" value="8.0"/>
+    <arg name="controller_dt" value="0.004"/>
+    <arg name="controller_cpu_affinity" value=""/>
+    <arg name="controller_clock_stall_timeout" value="30.0"/>
+    <arg name="rl_policy" value="$(arg rl_policy)"/>
+    <arg name="rl_device" value="cuda"/>
+    <arg name="rl_plane_action_scale" value="$(arg plane_rl_action_scale)"/>
+    <arg name="robot_x" value="$(arg robot_spawn_x)"/>
+    <arg name="robot_y" value="$(arg robot_spawn_y)"/>
+    <arg name="robot_z" value="$(arg robot_spawn_z)"/>
+    <arg name="robot_yaw" value="$(arg robot_spawn_yaw)"/>
+  </include>
+
+  <!-- Passive room-only semantic perception; neither node owns cmd_vel. -->
+  <node if="$(eval arg('enable_danger_detection') and arg('enable_builtin_danger_pipeline'))"
+        pkg="simenv_competitor" type="red_ball_detector.py"
+        name="red_ball_detector" output="screen" required="false">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="room_only_gate" value="true"/>
+    <!-- Detection geometry is evaluated in the generated world's truth
+         frame.  Feeding F1 FAST-LIO odometry here made the same two physical
+         balls appear at a rotated/translated map pose after corridor drift
+         (run124: TP1/FP1/FN1), while F2/F3 already used truth-anchored motion
+         and scored TP2/FP0/FN0.  The task explicitly uses truth localization;
+         keep RGB-D shape/depth classification physical but transform accepted
+         rays with the time-synchronised Gazebo truth odometry relay on every
+         floor. -->
+    <param name="odom_topic" value="/simenv/second_floor_truth_odometry"/>
+    <param name="rgb_topic" value="/real_sense/rgb/image_raw"/>
+    <param name="depth_topic" value="/real_sense/depth/image_raw"/>
+    <param name="camera_info_topic" value="/real_sense/rgb/camera_info"/>
+    <!-- The RealSense source publishes at 10 Hz. A detector cap of 8 Hz
+         actually admitted every other 0.1 s frame, leaving only one strict
+         observation when a distant sphere crossed the image in run31. -->
+    <param name="processing_rate_hz" value="12.0"/>
+    <param name="opencv_threads" value="1"/>
+    <param name="maximum_depth_sync_error_sec" value="0.035"/>
+    <param name="max_depth" value="8.0"/>
+    <param name="maximum_valid_depth_fraction" value="0.99"/>
+    <param name="maximum_ball_diameter_m" value="0.40"/>
+    <param name="edge_hint_margin_px" value="20"/>
+    <param name="maximum_pose_jump_m" value="0.75"/>
+    <param name="pose_jump_hold_seconds" value="1.0"/>
+    <param name="fallback_maximum_depth_mad_m" value="0.18"/>
+    <param name="oblique_minimum_depth_convexity_m" value="0.018"/>
+    <!-- fix15 D6 was visible in many clean frames but the low-poly sphere
+         rendered with fill between 0.855 and 0.934 and was rejected before RGB-D
+         geometry. Admit high-fill candidates to the existing signed surface
+         convexity and metric-diameter gates. Red cuboid faces are planar and
+         cannot use the far-profile fallback above fill 0.90. -->
+    <param name="oblique_ball_min_fill_ratio" value="0.70"/>
+    <param name="oblique_ball_max_fill_ratio" value="0.96"/>
+    <!-- The distant red-box false positive in the F1 regression measured
+         0.333 to 0.339 m in the permissive oblique branch.  Real low-poly
+         danger spheres in the same branch measured <=0.306 m; keep margin
+         for depth noise while rejecting that planar-box envelope. -->
+    <param name="oblique_maximum_ball_diameter_m" value="0.32"/>
+  </node>
+
+  <node if="$(eval arg('enable_danger_detection') and arg('enable_builtin_danger_pipeline'))"
+        pkg="simenv_competitor" type="hazard_candidate_tracker.py"
+        name="hazard_candidate_tracker" output="screen" required="false">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="result_file" value="$(arg output_dir)/detected_danger.json"/>
+    <param name="confirmed_file" value="$(arg output_dir)/confirmed_hazards.json"/>
+    <param name="diagnostic_file"
+           value="$(arg output_dir)/danger_detection_diagnostics.json"/>
+    <param name="position_frame" value="gazebo_world"/>
+    <param name="cluster_radius_m" value="1.05"/>
+    <param name="cross_room_duplicate_radius_m" value="0.60"/>
+    <param name="cross_room_duplicate_max_vertical_m" value="0.80"/>
+    <!-- Keep consecutive strict views of one ball associated despite the
+         bounded pose drift observed during a room spin. Ordinary unrelated
+         observations still use cluster_radius_m. -->
+    <param name="continuity_cluster_radius_m" value="1.75"/>
+    <param name="continuity_cluster_seconds" value="2.0"/>
+    <param name="minimum_observations" value="3"/>
+    <param name="minimum_view_baseline_m" value="0.12"/>
+    <param name="minimum_view_yaw_diversity_deg" value="8.0"/>
+    <param name="strict_pair_minimum_confidence" value="0.90"/>
+    <param name="strict_pair_minimum_yaw_diversity_deg" value="3.0"/>
+    <param name="strict_pair_minimum_diameter_m" value="0.24"/>
+    <param name="strict_pair_maximum_diameter_m" value="0.34"/>
+    <param name="strict_pair_maximum_span_sec" value="0.75"/>
+    <param name="enable_verify_goal" value="false"/>
+  </node>
+
+  <!-- In-room sweeps can still tip the dog on a doorway seam. This passive
+       watchdog detects the fall, attempts the bounded physical stand/RL
+       sequence and otherwise fails closed; it never owns cmd_vel normally. -->
+  <node if="$(arg enable_compliant_fall_recovery)"
+        pkg="simenv_competitor" type="compliant_fall_recovery.py"
+        name="compliant_fall_recovery" output="screen" required="false">
+    <param name="roll_limit" value="0.65"/>
+    <param name="pitch_limit" value="0.65"/>
+    <param name="z_limit" value="0.25"/>
+    <param name="upright_z" value="0.55"/>
+    <param name="confirm_count" value="3"/>
+    <param name="recover_cooldown" value="10.0"/>
+    <param name="start_grace_seconds" value="25.0"/>
+    <!-- Strict full-flow runs may not rewrite Gazebo model state. A fall is
+         handled by the bounded physical FixedStand/RL sequence below; if it
+         cannot recover, fail closed with evidence instead of teleporting. -->
+    <param name="use_gazebo_reset" value="false"/>
+    <!-- FixedStand + RL takeover measured 12.5 s in the F1 corridor fall;
+         allow the truth-stability samples to complete before the one retry. -->
+    <param name="recovery_maximum_duration_sec" value="14.0"/>
+    <param name="recovery_retry_limit" value="1"/>
+    <!-- Keep the last upright flat-floor pose fresh while the robot is
+         moving. The former 0.12 m/s settled-only anchor remained at the F2
+         handoff pose during a continuous corridor/door approach, so one fall
+         teleported the robot several metres backward and invalidated the
+         active room path. Tilt and supported-height gates remain mandatory. -->
+    <param name="healthy_anchor_speed_limit_mps" value="1.35"/>
+    <param name="healthy_anchor_yaw_rate_limit_rps" value="2.20"/>
+    <param name="first_floor_base_z" value="$(arg baseline_floor_base_z)"/>
+  </node>
+
+  <node if="$(arg enable_voxel_mapper)"
+        pkg="simenv_competitor" type="fastlio_voxel_mapper"
+        name="baseline_voxel_mapper" output="screen" required="true">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <!-- The rolling projection is the live planner input. Serializing the
+         complete, ever-growing OctoMap every 20 scans blocked its callback
+         thread repeatedly (run125 printed 200k+ node writes between ordinary
+         room goals), which produced stale scan/odom pairs and made bounded
+         map waits expire. Persist once for startup evidence and thereafter
+         only on the existing explicit floor/finalize milestones. -->
+    <param name="initial_save_updates" value="20"/>
+    <param name="save_every_updates" value="0"/>
+    <!-- Floor maps are switched only by the corresponding upper-floor
+         manager after stair handoff; never preload F2 into the F1 mapper. -->
+    <param name="initial_map_file" value=""/>
+    <!-- Upper-floor navigation keeps the ordinary FAST-LIO odometry contract,
+         but permits the existing bounded truth-anchor recovery to correct a
+         measured planar drift.  This is not a raw truth pose teleport: the
+         FAST-LIO guard applies capped, timestamped corrections only after the
+         floor context and truth stream are valid. -->
+    <param name="second_floor_truth_motion_guard/enabled" value="true"/>
+    <param name="second_floor_truth_motion_guard/absolute_height_recovery_threshold_m"
+           value="$(arg second_floor_truth_height_recovery_threshold_m)"/>
+    <param name="truth_recovery/continuous_planar_localization" value="true"/>
+  </node>
+
+  <include if="$(arg enable_goal_executor)"
+           file="$(find simenv_competitor)/launch/goal_executor.launch">
+    <arg name="output_dir" value="$(arg output_dir)"/>
+    <arg name="start_rl_mode" value="true"/>
+    <arg name="shutdown_on_result" value="false"/>
+    <arg name="command_topic" value="/cmd_vel"/>
+    <arg name="odom_topic" value="$(arg navigation_odom_topic)"/>
+    <!-- Floor-local F2/F3 runs use absolute camera_init z after the bounded
+         truth-height repair. Translate the same strict F1 safety envelope to
+         the selected floor instead of accepting a transient local z=0 pose. -->
+    <arg name="minimum_pose_z"
+         value="$(eval float(arg(&quot;baseline_floor_base_z&quot;)) - 0.80)"/>
+    <arg name="maximum_pose_z"
+         value="$(eval float(arg(&quot;baseline_floor_base_z&quot;)) + 1.20)"/>
+    <arg name="enable_takeover_monitor" value="false"/>
+    <arg name="enable_rl_guard" value="false"/>
+    <arg name="arm_rl_guard" value="false"/>
+    <!-- Avoid the low-speed final 15 cm crawl at every short portal and room
+         waypoint.  A* / SCAN-lite has already validated free space around
+         the target; 22 cm remains inside the room scheduler's crossing and
+         exit confirmation margins. -->
+    <arg name="goal_tolerance" value="0.28"/>
+    <arg name="minimum_speed" value="$(arg goal_executor_minimum_speed)"/>
+    <arg name="maximum_speed" value="$(arg goal_executor_maximum_speed)"/>
+    <arg name="upper_floor_maximum_speed" value="$(arg upper_floor_goal_maximum_speed)"/>
+    <arg name="dynamic_speed_cap"
+         value="$(arg goal_executor_dynamic_speed_cap)"/>
+    <arg name="distance_gain" value="$(arg goal_executor_distance_gain)"/>
+    <arg name="heading_gain" value="$(arg goal_executor_heading_gain)"/>
+    <arg name="maximum_yaw_rate"
+         value="$(arg goal_executor_maximum_yaw_rate)"/>
+    <arg name="maximum_visual_sweep_angular_speed"
+         value="$(arg goal_executor_maximum_visual_sweep_angular_speed)"/>
+    <arg name="visual_sweep_completion_tolerance_rad"
+         value="$(arg goal_executor_visual_sweep_completion_tolerance_rad)"/>
+    <arg name="maximum_mapping_rescan_angular_speed"
+         value="$(arg goal_executor_maximum_mapping_rescan_angular_speed)"/>
+    <arg name="visual_candidate_slow_seconds"
+         value="$(arg goal_executor_visual_candidate_slow_seconds)"/>
+    <arg name="lateral_speed_limit"
+         value="$(arg goal_executor_lateral_speed_limit)"/>
+    <arg name="heading_slowdown_threshold"
+         value="$(arg goal_executor_heading_slowdown_threshold)"/>
+    <arg name="turning_speed_limit"
+         value="$(arg goal_executor_turning_speed_limit)"/>
+    <arg name="navigation_large_heading_error_rad"
+         value="$(arg goal_executor_navigation_large_heading_error_rad)"/>
+    <arg name="navigation_high_yaw_rate_radps"
+         value="$(arg goal_executor_navigation_high_yaw_rate_radps)"/>
+    <arg name="navigation_fast_turn_translation_threshold_mps"
+         value="$(arg goal_executor_navigation_fast_turn_translation_threshold_mps)"/>
+    <arg name="navigation_braking_yaw_rate_radps"
+         value="$(arg goal_executor_navigation_braking_yaw_rate_radps)"/>
+    <arg name="navigation_medium_heading_error_rad"
+         value="$(arg goal_executor_navigation_medium_heading_error_rad)"/>
+    <arg name="navigation_turning_translation_limit_mps"
+         value="$(arg goal_executor_navigation_turning_translation_limit_mps)"/>
+    <arg name="navigation_turning_lateral_limit_mps"
+         value="$(arg goal_executor_navigation_turning_lateral_limit_mps)"/>
+    <arg name="localization_degraded_speed_cap"
+         value="$(arg goal_executor_localization_degraded_speed_cap)"/>
+    <arg name="goal_degraded_speed_cap"
+         value="$(arg goal_executor_goal_degraded_speed_cap)"/>
+    <arg name="acceleration" value="$(arg goal_executor_acceleration)"/>
+    <arg name="deceleration" value="$(arg goal_executor_deceleration)"/>
+    <arg name="preemption_deceleration"
+         value="$(arg goal_executor_preemption_deceleration)"/>
+    <arg name="preemption_timeout"
+         value="$(arg goal_executor_preemption_timeout)"/>
+    <arg name="registration_abort_invalid_count"
+         value="$(arg goal_executor_registration_abort_invalid_count)"/>
+    <arg name="log_file" value="goal_execution_history.json"/>
+  </include>
+
+  <!-- Standalone F1/stair tests disable the ordinary goal executor.  Keep a
+       minimal RL handoff in that mode so the stair manager can actually move
+       after FAST-LIO becomes ready. -->
+  <node if="$(arg stair_auto_start)"
+        pkg="simenv_competitor" type="controller_mode_bootstrap.py"
+        name="stair_auto_rl_bootstrap" output="screen">
+    <param name="stand_after_seconds" value="1.0"/>
+    <param name="fixed_stand_max_duration_sec" value="20.0"/>
+    <param name="rl_repeat_seconds" value="90.0"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="baseline_exploration_manager.py"
+        name="baseline_exploration_manager" output="screen"
+        required="$(arg baseline_exploration_manager_required)"
+        if="$(eval arg('enable_baseline_exploration_manager') and not arg('stair_auto_start'))">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="auto_generate_visualization"
+           value="$(arg first_floor_auto_generate_visualization)"/>
+    <param name="floor_number" value="$(arg baseline_floor_number)"/>
+    <param name="goal_executor_room_transaction_degraded_speed_cap"
+           value="$(arg goal_executor_room_transaction_degraded_speed_cap)"/>
+    <param name="goal_executor_room_exit_degraded_speed_cap"
+           value="$(arg goal_executor_room_exit_degraded_speed_cap)"/>
+    <param name="goal_executor_return_degraded_speed_cap"
+           value="$(arg goal_executor_return_degraded_speed_cap)"/>
+    <param name="goal_executor_corridor_degraded_speed_cap"
+           value="$(arg goal_executor_corridor_degraded_speed_cap)"/>
+    <param name="map_file" value="$(arg output_dir)/voxel_map.bt"/>
+    <param name="statistics_file" value="$(arg output_dir)/map_statistics.json"/>
+    <!-- Keep the strict four-room gate independent from the bounded partial
+         safety-return switch.  A partial floor may still produce explicit
+         failure evidence and return safely, but it must never turn a lobby
+         position message into a normal stair ownership transfer. -->
+    <param name="require_all_rooms_for_floor_handoff"
+           value="$(arg require_all_rooms_for_floor_handoff)"/>
+    <param name="allow_partial_floor_handoff"
+           value="$(arg allow_partial_floor_handoff_for_continuation)"/>
+    <param name="locomotion_recovery_wall_watchdog_seconds"
+           value="$(arg locomotion_recovery_wall_watchdog_seconds)"/>
+    <param name="partial_floor_handoff_minimum_exited_rooms"
+           value="$(arg partial_floor_handoff_minimum_exited_rooms)"/>
+    <!-- Flow-continuity fallback only.  If bounded no-frontier recovery is
+         exhausted after one genuinely completed ENTRY/G3/G4/EXIT room,
+         return by truth to the stair instead of ending the whole launch.
+         This remains an explicit partial floor and never counts as 4/4. -->
+    <param name="emergency_partial_floor_handoff_minimum_exited_rooms"
+           value="1"/>
+    <param name="corridor_entry_distance_from_mission_start_m"
+           value="$(arg first_floor_corridor_entry_distance_from_mission_start_m)"/>
+    <param name="upper_floor_far_row_door_scan_angle_rad"
+           value="$(arg upper_floor_far_row_door_scan_angle_rad)"/>
+    <param name="maximum_duration" value="$(arg maximum_duration)"/>
+    <param name="room_target_count" value="4"/>
+    <param name="stair_return_grace_seconds" value="90.0"/>
+    <param name="maximum_goals" value="$(arg maximum_goals)"/>
+    <param name="enable_lightweight_room_scheduler" value="true"/>
+    <param name="enable_waypoint_simplification" value="false"/>
+    <!-- A stale local aperture must not consume 25 s twice before corridor
+         resume. Verified F1 entries complete in about 13 s. -->
+    <param name="room_goal_timeout_seconds" value="18.0"/>
+    <!-- G3/G4 are camera poses, not door-clearance anchors. Accept only their
+         final point within 0.50 m; all intermediate bends and portal points
+         retain the 0.28 m navigation tolerance. -->
+    <param name="navigation_goal_tolerance_m" value="0.28"/>
+    <!-- Keep the physical camera centres separated after locomotion stops.
+         A 0.50 m early stop reduced a planned 2.25 m G3/G4 baseline to
+         1.47 m in fix16 and correctly triggered duplicate-view rejection. -->
+    <param name="room_viewpoint_goal_tolerance_m" value="0.32"/>
+    <!-- F1 throughput profile: 250 s from the corridor entrance leaves
+         ~50 s of the last-room return, so the four-room pass fits. -->
+    <param name="room_phase_target_seconds"
+           value="$(arg first_floor_room_phase_target_seconds)"/>
+    <param name="room_phase_deadline_minimum_exited_rooms"
+           value="$(arg first_floor_room_phase_deadline_minimum_exited_rooms)"/>
+    <param name="room_phase_deadline_hard_overrun_seconds"
+           value="$(arg first_floor_room_phase_deadline_hard_overrun_seconds)"/>
+    <param name="corridor_resume_failure_limit"
+           value="$(arg baseline_corridor_resume_failure_limit)"/>
+    <param name="post_exit_opposite_station_hold_limit"
+           value="$(arg baseline_post_exit_opposite_station_hold_limit)"/>
+    <param name="stop_immediately_after_all_room_exits"
+           value="$(arg first_floor_stop_immediately_after_all_room_exits)"/>
+    <param name="room_entry_replan_wait_seconds"
+           value="$(arg first_floor_room_entry_replan_wait_seconds)"/>
+    <param name="room_entry_replan_minimum_grid_updates"
+           value="$(arg first_floor_room_entry_replan_minimum_grid_updates)"/>
+    <!-- Door-takeover timing: the dog passes a door at up to 1.4 m/s while
+         the local detector needs two confirmation frames, so by confirmation
+         time it can be >1 m past the aperture.  The 1.0 m default lookbehind
+         rejected every real door during a fast corridor pass (run 850s F1
+         entered 0/4 rooms).  A 2.5 m lookbehind keeps real doors actionable
+         and the tightened corridor speeds below supply the detector frames. -->
+    <param name="room_new_door_maximum_lookbehind"
+           value="$(arg first_floor_room_new_door_maximum_lookbehind_m)"/>
+    <!-- The forward high-water gate also rejects takeover after any mid-run
+         pause (drawdown grows beyond 1 m).  Widen the tolerance to 2 m. -->
+    <param name="local_door_forward_high_water_tolerance_m"
+           value="$(arg first_floor_local_door_forward_high_water_tolerance_m)"/>
+    <!-- No upper-floor mission means no stair-time reserve. In the full
+         200 s profile keeps a 32 s return reserve after four verified room
+         exits. The reserve cannot abandon an unexplored room pair. -->
+    <param name="corridor_partial_return_reserve_seconds"
+           value="$(eval 32.0 if arg('enable_second_floor_exploration') else 0.0)"/>
+    <param name="enforce_room_phase_target_deadline" value="true"/>
+    <!-- Two physical camera centres remain mandatory. Both poses use the
+         validated 170-degree fan. Combined with the camera FOV and the
+         cached local planner and faster verified transits, cap each visit at
+         36 s so optional recovery cannot consume the far-room/return budget. -->
+    <param name="room_visit_budget_seconds"
+           value="$(arg first_floor_room_visit_budget_seconds)"/>
+    <param name="room_mission_entry_minimum_remaining_seconds"
+           value="$(arg first_floor_room_mission_entry_minimum_remaining_seconds)"/>
+    <param name="room_entry_timeout_seconds" value="22.0"/> <param name="room_entry_retry_limit" value="2"/> <param name="room_entry_preflight_max_path_m" value="5.50"/> <param name="room_entry_preflight_max_detour_ratio" value="2.00"/>
+    <param name="room_entry_progress_timeout_seconds" value="5.0"/>
+    <param name="room_budget_starts_after_entry" value="true"/>
+    <param name="room_exit_reserve_seconds" value="5.0"/> <param name="room_direct_verified_exit" value="true"/>
+    <!-- Timed profile: execute exactly two occupancy-planned physical viewpoints.
+         G1 is only their geometric reference; LiDAR or early red-ball evidence
+         cannot cancel the second translated camera observation. -->
+    <param name="room_adaptive_minimal_viewpoints" value="true"/>
+    <param name="room_adaptive_maximum_viewpoints" value="2"/>
+    <param name="room_adaptive_prefer_central_first" value="true"/>
+    <param name="room_adaptive_minimum_gain_m2" value="$(arg first_floor_room_adaptive_minimum_gain_m2)"/>
+    <param name="room_adaptive_path_cost_weight" value="$(arg first_floor_room_adaptive_path_cost_weight)"/>
+    <param name="room_coverage_minimum_ratio" value="$(arg first_floor_room_coverage_minimum_ratio)"/>
+    <param name="room_coverage_maximum_unknown_m2" value="$(arg first_floor_room_coverage_maximum_unknown_m2)"/>
+    <param name="room_coverage_maximum_shadow_m2" value="$(arg first_floor_room_coverage_maximum_shadow_m2)"/>
+    <param name="room_visual_require_physical_center" value="$(arg first_floor_room_visual_require_physical_center)"/>
+    <param name="room_visual_deepening_enabled" value="true"/>
+    <param name="room_visual_deepening_budget" value="4"/>
+    <param name="room_visual_deepening_min_completed_rooms" value="0"/>
+    <param name="room_visual_breadth_lateral_m"
+           value="$(arg first_floor_room_visual_breadth_lateral_m)"/>
+    <param name="room_visual_breadth_min_baseline_m"
+           value="$(arg first_floor_room_visual_breadth_min_baseline_m)"/>
+    <param name="room_obstacle_second_view_near_door"
+           value="$(arg first_floor_room_obstacle_second_view_near_door)"/>
+    <param name="room_obstacle_front_opposite_side_pair"
+           value="$(arg first_floor_room_obstacle_front_opposite_side_pair)"/>
+    <!-- Enter rooms well past the doorway so the deep G1/G2 viewpoints can
+         cover the whole room; a door-only pass misses far corners. -->
+    <param name="room_entry_depth" value="1.50"/>
+    <!-- A paired doorway may need several seconds of rotation/map growth
+         before both jambs become actionable. Keep only that just-exited
+         station locked; normal corridor doors retain their existing gates. -->
+    <param name="room_exit_opposite_door_revisit_time_s" value="40.0"/>
+    <param name="room_doorway_width_min" value="0.58"/>
+    <param name="room_prefer_direct_anchored_entry" value="true"/>
+    <!-- A physical F1 side door lies on a corridor wall, not inside the
+         stable centre band.  fix219 two false portals were only 0.302 m
+         and 0.394 m from the online centreline, while the narrowest real
+         opposite door was 0.605 m away.  This truth-free geometry gate keeps
+         0.10 m margin for online-map variation and prevents those corridor
+         gaps from consuming repeated room-entry attempts. -->
+    <!-- speed_fix_4 measured the real opposite aperture at 0.497 m. Keep
+         rejecting the observed 0.30 to 0.39 m corridor artefacts while allowing
+         the physical pair under small lateral localization drift. -->
+    <!-- Door centres sit naturally inside the corridor centre band
+         (room 4 measured 0.141 m lateral in run15).  Keep this gate as a
+         pure anti-false-positive filter: only reject apertures essentially
+         ON the centreline (run15 room-4 candidate 0.141 m was wrongly
+         rejected at 0.15, aborting the whole floor). -->
+    <param name="room_door_minimum_centerline_lateral_m" value="0.10"/>
+    <param name="room_post_entry_path_clearance" value="0.20"/>
+    <param name="room_doorway_width_max" value="$(arg first_floor_room_doorway_width_max)"/>
+    <param name="room_expansion_margin" value="$(arg first_floor_room_expansion_margin)"/>
+    <param name="room_allow_single_jamb_strong_expansion" value="$(arg first_floor_room_allow_single_jamb_strong_expansion)"/>
+    <param name="room_visited_overlap_max_door_separation" value="$(arg first_floor_room_visited_overlap_max_door_separation)"/>
+    <param name="room_entry_candidate_astar_limit" value="$(arg first_floor_room_entry_candidate_astar_limit)"/>
+    <param name="room_portal_timeout_seconds" value="$(arg first_floor_room_portal_timeout_seconds)"/>
+    <param name="room_exit_progress_timeout_seconds" value="$(arg first_floor_room_exit_progress_timeout_seconds)"/>
+    <param name="room_exit_timeout_seconds_per_meter" value="$(arg first_floor_room_exit_timeout_seconds_per_meter)"/>
+    <param name="room_exit_anchor_skip_distance" value="$(arg first_floor_room_exit_anchor_skip_distance)"/>
+    <param name="room_exit_retry_limit" value="$(arg first_floor_room_exit_retry_limit)"/>
+    <param name="room_side_goal_depth" value="2.00"/>
+    <param name="room_maximum_side_lateral" value="5.00"/>
+    <param name="room_maximum_center_depth" value="2.20"/>
+    <!-- Two camera poses retain opposite-side parallax but stop short of
+         the far-wall detour. The bounded fans and strict multi-view
+         hazard gate remain unchanged. -->
+    <param name="room_maximum_side_depth" value="2.80"/>
+    <param name="room_depth_probe_range" value="7.50"/>
+    <param name="room_open_preferred_deep_depth_m"
+           value="$(arg first_floor_room_open_preferred_deep_depth_m)"/>
+    <param name="room_open_minimum_deep_depth_m"
+           value="$(arg first_floor_room_open_minimum_deep_depth_m)"/>
+    <!-- Execute a bounded fan at each of the two translated
+         camera centres.  Enabling full_spin_per_view silently overrides both
+         configured 170-degree angles with 360 degrees in the manager; run99
+         therefore spent about 3 s of redundant rotation per room without
+         adding a physical viewpoint or improving TP/FN. -->
+    <param name="room_camera_full_spin_per_view" value="false"/>
+    <param name="visual_sweep_settle_hold_seconds"
+           value="$(arg first_floor_visual_sweep_settle_hold_seconds)"/>
+    <!-- The first and translated second points each perform their configured
+         210-degree sweep from different arrival headings. -->
+    <param name="room_visual_two_pose_full_sweep_enabled" value="true"/>
+    <param name="room_minimum_goal_separation" value="1.80"/>
+    <!-- Both observations rotate 210 degrees at 2.10 rad/s. Full-rate,
+         timestamp-synchronised RGB-D processing preserves detection recall
+         while the two headings provide complementary coverage. -->
+    <param name="room_camera_sweep_angle_rad"
+           value="$(arg first_floor_room_primary_sweep_angle_rad)"/>
+    <param name="room_camera_sweep_angular_speed"
+           value="$(arg first_floor_room_camera_sweep_angular_speed)"/>
+    <param name="room_camera_secondary_sweep_angular_speed"
+           value="$(arg first_floor_room_secondary_sweep_angular_speed)"/>
+    <param name="room_camera_sweep_max_per_room" value="2"/>
+    <!-- Primary pose fan angle; pose two has its own angle below. -->
+    <param name="room_visual_full_sweep_angle_rad"
+           value="$(arg first_floor_room_primary_sweep_angle_rad)"/>
+    <!-- Pose one supplies the broad primary fan. Pose two is the near-door
+         blind-zone supplement from a translated camera centre. The validated
+         profile uses 210 + 210 degree body fans together with the camera FOV,
+         not two complete turns. -->
+    <param name="room_visual_secondary_sweep_angle_rad"
+           value="$(arg first_floor_room_secondary_sweep_angle_rad)"/>
+    <!-- Keep online A* bends, but remove dense collinear braking points only
+         after each replacement chord passes the live 3-D footprint audit. -->
+    <param name="room_two_pose_waypoint_simplification" value="true"/>
+    <param name="room_two_pose_scan_lite_enabled" value="true"/>
+    <param name="scan_lite_segment_sample_spacing_m"
+           value="$(arg first_floor_scan_lite_segment_sample_spacing_m)"/>
+    <param name="room_two_pose_maximum_straight_chord_m"
+           value="$(arg first_floor_room_two_pose_maximum_straight_chord_m)"/>
+    <param name="room_two_pose_collinearity_tolerance_m"
+           value="$(arg first_floor_room_two_pose_route_deviation_tolerance_m)"/>
+    <param name="room_two_pose_maximum_yaw_change_rad"
+           value="$(arg first_floor_room_two_pose_maximum_yaw_change_rad)"/>
+    <!-- Keep at least three 2 Hz doorway frames while crossing the aperture.
+         1.40 m/s transit / 1.15 m/s search balances the 350 s-per-floor
+         budget against the speed_fix_15 turnover (2.00 m/s combined with the
+         1.90 rad/s spin fell inside room 02). -->
+    <param name="corridor_transit_speed"
+           value="$(arg first_floor_corridor_transit_speed)"/>
+    <param name="corridor_search_speed"
+           value="$(arg first_floor_corridor_search_speed)"/>
+    <!-- If the rolling 2-D frontier ends in the corridor midsection, make
+         short forward steps only after every 3-D body footprint is observed
+         and collision-free. This prevents run13's repeated stationary rescans
+         at x=20.7 m without introducing a blind long corridor chord. -->
+    <param name="enable_corridor_monotonic_forward_probe" value="true"/>
+    <param name="corridor_monotonic_probe_after" value="2"/>
+    <param name="corridor_monotonic_probe_distance_m" value="0.60"/>
+    <param name="corridor_monotonic_probe_sample_spacing_m" value="0.10"/>
+    <param name="corridor_monotonic_probe_max_unknown_queries" value="8"/>
+    <param name="corridor_monotonic_probe_limit" value="24"/>
+    <!-- A complete generic mapping refresh now fits both watchdogs:
+         2pi / 1.20 = 5.24 s, below the 8 s manager limit. -->
+    <param name="local_rescan_angle_rad" value="6.283185307"/>
+    <param name="local_rescan_angular_speed" value="1.20"/>
+    <param name="local_rescan_maximum_seconds" value="8.0"/>
+    <param name="local_rescan_cooldown_seconds" value="8.0"/>
+    <param name="room_door_takeover_distance" value="3.0"/>
+    <param name="room_entry_speed" value="$(arg first_floor_room_entry_speed)"/>
+    <param name="room_open_transition_speed"
+           value="$(arg first_floor_room_open_transition_speed)"/>
+    <param name="room_open_transition_lateral_speed"
+           value="$(arg first_floor_room_open_transition_lateral_speed)"/>
+    <param name="room_portal_crossing_speed"
+           value="$(arg first_floor_room_portal_crossing_speed)"/>
+    <param name="room_portal_crossing_lateral_speed"
+           value="$(arg first_floor_room_portal_crossing_lateral_speed)"/>
+    <param name="room_portal_crossing_minimum_speed"
+           value="$(arg first_floor_room_portal_crossing_minimum_speed)"/>
+    <param name="narrow_door_entry_speed" value="1.20"/>
+    <param name="narrow_door_lateral_speed_limit" value="0.45"/>
+    <!-- Prefer turning toward a room waypoint and using the strong forward
+         gait.  speed_fix_10 combined ~1.0 m/s forward with 0.95 m/s lateral
+         on G4 and physically rolled the A1 over at t=176 s. -->
+    <param name="room_heading_gain" value="1.10"/>
+    <param name="corridor_heading_gain" value="0.0"/>
+    <!-- Normal flat-corridor goals first turn out of the doorway normal, then
+         cruise forward. Stair handoff sources retain their separate limits. -->
+    <param name="fast_corridor_heading_gain" value="0.70"/>
+    <param name="fast_corridor_maximum_yaw_rate"
+           value="$(arg first_floor_fast_corridor_maximum_yaw_rate)"/>
+    <param name="fast_corridor_goal_distance_gain" value="1.00"/>
+    <param name="fast_corridor_lateral_speed_limit" value="1.00"/>
+    <!-- If a room row has an unexplored door on the opposite corridor side,
+         enter it instead of only sweeping one line of rooms. -->
+    <param name="enable_corridor_side_coverage_priority" value="true"/>
+    <param name="paired_opposite_recenter_pending_timeout_sec" value="20.0"/>
+    <param name="room_maximum_yaw_rate" value="$(arg first_floor_room_maximum_yaw_rate)"/>
+    <param name="room_entry_blended_turn_maximum_yaw_rate"
+           value="$(arg first_floor_room_entry_blended_turn_maximum_yaw_rate)"/>
+    <param name="room_two_pose_blended_turn_maximum_yaw_rate"
+           value="$(arg first_floor_room_two_pose_blended_turn_maximum_yaw_rate)"/>
+    <param name="room_exit_blended_turn_maximum_yaw_rate"
+           value="$(arg first_floor_room_exit_blended_turn_maximum_yaw_rate)"/>
+    <param name="corridor_maximum_yaw_rate"
+           value="$(arg goal_executor_maximum_yaw_rate)"/>
+    <param name="room_goal_distance_gain" value="1.25"/>
+    <param name="room_open_transition_distance_gain"
+           value="$(arg first_floor_room_open_transition_distance_gain)"/>
+    <!-- The obstacle deep-to-near G4 leg contains a real A* bend. Keep the
+         straight room legs fast, but bound combined translation/yaw only on
+         this transition; run corridor_rooms_140s_4 fell at 1.23 m/s forward,
+         0.55 m/s lateral and 0.45 rad/s yaw. -->
+    <param name="room_obstacle_transition_speed"
+           value="$(arg first_floor_room_obstacle_transition_speed)"/>
+    <param name="room_obstacle_transition_minimum_speed"
+           value="$(arg first_floor_room_obstacle_transition_minimum_speed)"/>
+    <param name="room_obstacle_transition_lateral_speed"
+           value="$(arg first_floor_room_obstacle_transition_lateral_speed)"/>
+    <param name="room_obstacle_transition_heading_gain"
+           value="$(arg first_floor_room_obstacle_transition_heading_gain)"/>
+    <param name="room_obstacle_transition_maximum_yaw_rate"
+           value="$(arg first_floor_room_obstacle_transition_maximum_yaw_rate)"/>
+    <param name="room_obstacle_transition_distance_gain"
+           value="$(arg first_floor_room_obstacle_transition_distance_gain)"/>
+    <param name="corridor_goal_distance_gain" value="0.40"/>
+    <param name="room_lateral_speed_limit" value="$(arg first_floor_room_lateral_speed_limit)"/>
+    <param name="room_exit_speed"
+           value="$(arg first_floor_room_exit_speed)"/>
+    <param name="room_exit_lateral_speed_limit"
+           value="$(arg first_floor_room_exit_lateral_speed_limit)"/>
+    <!-- Only the occupancy- and SCAN-verified straight leg from the final room
+         view to the inside door centreline uses the flat-ground speed ceiling.
+         The short jamb crossing immediately restores ROOM_EXIT_SAFE limits. -->
+    <param name="room_fast_exit_approach_speed"
+           value="$(arg first_floor_room_fast_exit_approach_speed)"/>
+    <param name="room_fast_exit_lateral_speed_limit"
+           value="$(arg first_floor_room_fast_exit_lateral_speed_limit)"/>
+    <!-- The long terminal return remains on physically traversed corridor
+         samples, while 14.0 m chords retain multiple traversed safety anchors while avoiding
+         repeated braking on the verified open centreline. -->
+    <param name="stair_return_breadcrumb_spacing" value="14.00"/>
+    <!-- A completed floor must return through the already traversed corridor
+         before the stair controller takes ownership.  2.20 m/s made the
+         long breadcrumb return outrun the body stabilizer (and caused the
+         post-4th-EXIT falls seen in standtimeoutfix).  Keep this handoff
+         deliberately slower; the stair transition has its own bounded
+         speed profile after the lobby handoff. -->
+    <param name="stair_return_speed" value="1.35"/>
+    <param name="stair_return_lateral_speed_limit" value="0.65"/>
+    <param name="stair_return_maximum_yaw_rate" value="0.58"/>
+    <!-- F3's long, previously traversed centreline return is physically
+         distinct from room EXIT and the final stair-lip alignment. -->
+    <param name="third_floor_stair_return_corridor_speed_mps" value="1.45"/>
+    <param name="third_floor_stair_return_lip_speed_mps" value="0.80"/>
+    <param name="room_exit_station_corridor_tolerance_m" value="1.40"/>
+    <!-- run81 completed the first doorway pair, then a single 7 m centreline
+         chord passed the far doorway pair before its safe entry candidates
+         could be rebuilt. Split only that F1 search phase into 3 m chunks;
+         upper-floor managers keep their validated corridor policy. -->
+    <param name="corridor_far_pair_search_maximum_advance_m"
+           value="$(arg first_floor_corridor_far_pair_search_maximum_advance_m)"/>
+    <param name="corridor_far_pair_search_target_advance_m"
+           value="$(arg first_floor_corridor_far_pair_search_target_advance_m)"/>
+    <param name="corridor_near_pair_search_maximum_advance_m"
+           value="$(arg first_floor_corridor_near_pair_search_maximum_advance_m)"/>
+    <param name="corridor_near_pair_detection_wait_seconds"
+           value="$(arg first_floor_corridor_near_pair_detection_wait_seconds)"/>
+    <param name="corridor_far_pair_search_after_exits" value="2"/>
+    <!-- The online corridor origin is sometimes latched just beyond the near
+         room pair. During a missing-room retrace accept those real doors down
+         to -2.25 m, while the observed lobby artifacts at about -3.2 m remain
+         rejected. -->
+    <param name="return_room_retrace_minimum_corridor_station_m" value="-2.25"/>
+    <!-- Used only to align simulator truth in the post-run figure. The online
+         room scheduler never reads layout metadata or ground-truth topics. -->
+    <param name="robot_spawn_x" value="$(arg robot_spawn_x)"/>
+    <param name="robot_spawn_y" value="$(arg robot_spawn_y)"/>
+    <param name="robot_spawn_yaw" value="$(arg robot_spawn_yaw)"/>
+    <param name="offline_truth_sensor_forward_offset" value="0.20"/>
+    <param name="offline_truth_layout_metadata"
+           value="$(arg offline_truth_layout_metadata)"/>
+    <param name="offline_stair_model_sdf" value="$(arg offline_stair_model_sdf)"/>
+    <param name="stair_handoff_on_corridor_exit"
+           value="$(arg stair_handoff_on_corridor_exit)"/>
+    <!-- Floor-1 door takeover is asynchronous with the fast corridor goal.
+         Rebuild ENTRY after controlled preemption and reverse only the path
+         prefix actually reached, so a partial entry cannot send EXIT deeper
+         into the room. This private-node flag is absent from F2/F3. -->
+    <param name="room_entry_trace_observed_progress_only" value="true"/>
+    <!-- run67 reached an EXIT goal for the fourth detected room while its
+         endpoint was still about 2.7 m inside the physical far room.  After
+         the first real exit establishes the F1 centreline, require later EXIT
+         endpoints to return to that band before committing ROOM_EXITED.
+         F2/F3 explicitly override this process-local setting to preserve
+         their validated behaviour. -->
+    <param name="room_exit_require_station_corridor_confirmation" value="true"/>
+    <!-- run76's real far-room EXIT stopped 0.78 to 0.85 m from the immutable
+         line because of accumulated LIO curvature plus executor tolerance.
+         1.0 m accepts it while run67's false EXIT remains 2.63 m outside. -->
+    <param name="room_exit_station_corridor_tolerance_m" value="1.0"/>
+    <!-- run87 physically reversed the observed ENTRY trace back onto the F1
+         centreline, but the re-estimated local door plane lagged by 0.095 m
+         and rejected that real exit. Accept only an endpoint-matched reverse
+         of the just-executed ENTRY trace. The independent station-band guard
+         above remains mandatory, so the run67 interior false exit still
+         cannot be committed. -->
+    <param name="room_accept_reversed_entry_trace_exit" value="true"/>
+    <param name="room_reversed_entry_trace_corridor_extension_m"
+           value="$(arg first_floor_room_exit_corridor_extension_m)"/>
+    <param name="room_reversed_entry_trace_exit_tolerance_m" value="0.30"/>
+    <!-- On the terminal-to-entrance reverse pass, retry any registered portal
+         that still lacks a physical EXIT when it comes back within local
+         planning range. Fresh detector candidates may also preempt the return. -->
+    <param name="enable_known_unvisited_door_retry" value="true"/>
+    <param name="known_unvisited_door_retry_distance_m" value="6.5"/>
+    <param name="terminal_return_blocked_by_known_unvisited_door"
+           value="true"/>
+    <param name="localization_truth_recovery_enabled"
+           value="$(arg localization_truth_recovery_enabled)"/>
+    <param name="localization_truth_recovery_grace_sec"
+           value="$(arg localization_truth_recovery_grace_sec)"/>
+    <param name="localization_truth_recovery_max_attempts"
+           value="$(arg localization_truth_recovery_max_attempts)"/>
+    <param name="localization_truth_recovery_start_invalid_count"
+           value="$(arg localization_truth_recovery_start_invalid_count)"/>
+    <param name="fastlio_registration_abort_invalid_count"
+           value="$(arg fastlio_registration_abort_invalid_count)"/>
+  </node>
+  <!-- Layout-free RGB-D stair entry. Each mission remains idle until its
+       floor exploration manager publishes the ownership handoff token. -->
+  <node if="$(arg enable_visual_corridor_to_stair_entry)"
+        pkg="simenv_competitor" type="stair_visual_depth_detector.py"
+        name="stair_visual_depth_detector" output="screen"
+        launch-prefix="/usr/bin/python3"/>
+  <include if="$(arg enable_visual_corridor_to_stair_entry)"
+           file="$(find simenv_competitor)/launch/stair_visual_entry_instance.launch">
+    <arg name="enabled" value="true"/>
+    <arg name="node_name" value="first_floor_stair_visual_entry"/>
+    <arg name="output_dir" value="$(arg output_dir)/stair_entry/f1_to_f2"/>
+    <arg name="trigger_topic" value="/simenv/baseline_state"/>
+    <arg name="trigger_token" value="STAIR_LOBBY_HANDOFF"/>
+    <arg name="state_topic" value="/simenv/stair_visual_entry_state_f1"/>
+    <arg name="ready_token" value="FIRST_TO_SECOND_STAIR_ENTRY_READY"/>
+  </include>
+  <include if="$(eval arg('enable_visual_corridor_to_stair_entry') and arg('enable_third_floor_exploration'))"
+           file="$(find simenv_competitor)/launch/stair_visual_entry_instance.launch">
+    <arg name="enabled" value="true"/>
+    <arg name="node_name" value="second_floor_stair_visual_entry"/>
+    <arg name="output_dir" value="$(arg output_dir)/stair_entry/f2_to_f3"/>
+    <arg name="trigger_topic" value="/simenv/second_floor_state"/>
+    <arg name="trigger_token" value="SECOND_FLOOR_EXPLORATION_COMPLETE"/>
+    <arg name="state_topic" value="/simenv/stair_visual_entry_state_f2"/>
+    <arg name="ready_token" value="SECOND_TO_THIRD_STAIR_ENTRY_READY"/>
+  </include>
+  <node if="$(arg enable_first_floor_stair_manager)"
+        pkg="simenv_competitor" type="stair_transition_manager.py"
+        name="stair_transition_manager" output="screen"
+        required="$(arg first_floor_stair_required)">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="odom_topic" value="$(arg navigation_odom_topic)"/>
+    <param name="ground_truth_topic" value="/simenv/gazebo_model_states_20hz"/>
+    <param name="truth_odometry_topic" value="/simenv/second_floor_truth_odometry"/>
+    <param name="stair_policy" value="$(find unitree_guide)/../../logs/policy_act_inference_stair.pt"/>
+    <param name="ascent_timeout_sec" value="$(arg stair_ascent_timeout_sec)"/>
+    <param name="flight_b_timeout_sec"
+           value="$(arg stair_flight_b_timeout_sec)"/>
+    <param name="auto_start" value="$(arg stair_auto_start)"/>
+    <param name="policy_preloaded" value="$(arg stair_policy_preloaded)"/>
+    <param name="skip_approach" value="$(arg stair_skip_approach)"/>
+    <param name="approach_only" value="$(arg stair_approach_only)"/>
+    <param name="auto_generate_final_visualization" value="true"/>
+    <param name="truth_entry_guide" value="$(arg stair_truth_entry_guide)"/>
+    <param name="external_entry_guide" value="$(arg enable_visual_corridor_to_stair_entry)"/>
+    <param name="external_entry_state_topic" value="/simenv/stair_visual_entry_state_f1"/>
+    <param name="external_entry_ready_token" value="FIRST_TO_SECOND_STAIR_ENTRY_READY"/>
+    <param name="enable_truth_return_gate" value="false"/>
+    <param name="truth_entry_timeout_sec"
+           value="$(arg stair_truth_entry_timeout_sec)"/>
+    <param name="truth_entry_corridor_max_speed_mps"
+           value="$(arg stair_truth_entry_corridor_max_speed_mps)"/>
+    <param name="truth_entry_side_max_speed_mps"
+           value="$(arg stair_truth_entry_side_max_speed_mps)"/>
+    <param name="truth_entry_final_max_speed_mps"
+           value="$(arg stair_truth_entry_final_max_speed_mps)"/>
+    <param name="truth_post_policy_restage_tolerance_m"
+           value="$(arg first_to_second_post_policy_restage_tolerance_m)"/>
+    <param name="truth_post_policy_restage_timeout_sec"
+           value="$(arg first_to_second_post_policy_restage_timeout_sec)"/>
+    <param name="truth_side_entry_offset_m"
+           value="$(arg stair_truth_side_entry_offset_m)"/>
+    <param name="truth_corridor_lateral_offset_m"
+           value="$(arg stair_truth_corridor_lateral_offset_m)"/>
+    <param name="truth_corridor_longitudinal_offset_m"
+           value="$(arg stair_truth_corridor_longitudinal_offset_m)"/>
+    <!-- Keep truth takeover inside the stair lobby; floor-1 breadcrumbs must
+         first leave any room and retrace the corridor without crossing walls. -->
+    <param name="truth_return_gate_radius_m" value="5.40"/>
+    <param name="lock_ascent_heading" value="$(arg lock_ascent_heading)"/>
+    <param name="ascent_speed_mps" value="$(arg stair_ascent_speed_mps)"/>
+    <param name="ascent_maximum_speed_mps"
+           value="$(arg stair_ascent_maximum_speed_mps)"/>
+    <param name="ascent_boost_speed_mps" value="$(arg stair_ascent_boost_speed_mps)"/>
+    <param name="ascent_boost_seconds" value="$(arg stair_ascent_boost_seconds)"/>
+    <param name="ascent_settle_seconds" value="$(arg stair_ascent_settle_seconds)"/>
+    <param name="hold_rl_during_ascent" value="$(arg stair_hold_rl_during_ascent)"/>
+    <param name="world_frame_ascent" value="$(arg stair_world_frame_ascent)"/>
+    <param name="two_flight_stair" value="$(arg two_flight_stair)"/>
+    <param name="flight_a_height_gain_m" value="$(arg flight_a_height_gain_m)"/>
+    <param name="total_height_gain_m" value="$(arg total_height_gain_m)"/>
+    <param name="landing_cross_distance_m" value="$(arg landing_cross_distance_m)"/>
+    <param name="landing_cross_speed_mps" value="$(arg landing_cross_speed_mps)"/>
+    <param name="landing_turn_angle_rad" value="$(arg landing_turn_angle_rad)"/>
+    <param name="landing_turn_speed_rps" value="$(arg landing_turn_speed_rps)"/>
+    <param name="landing_heading_tolerance_rad" value="$(arg landing_heading_tolerance_rad)"/>
+    <param name="landing_timeout_sec" value="$(arg landing_timeout_sec)"/>
+    <param name="truth_flight_b_entry_x" value="$(arg truth_flight_b_entry_x)"/>
+    <param name="truth_landing_position_gain"
+           value="$(arg truth_landing_position_gain)"/>
+    <param name="truth_landing_position_tolerance_m"
+           value="$(arg truth_landing_position_tolerance_m)"/>
+    <param name="truth_landing_position_deadband_m"
+           value="$(arg truth_landing_position_deadband_m)"/>
+    <param name="truth_landing_recenter_speed_mps"
+           value="$(arg truth_landing_recenter_speed_mps)"/>
+    <param name="truth_landing_minimum_recenter_speed_mps"
+           value="$(arg truth_landing_minimum_recenter_speed_mps)"/>
+    <param name="truth_landing_minimum_yaw_rate_rps"
+           value="$(arg truth_landing_minimum_yaw_rate_rps)"/>
+    <param name="truth_landing_deadband_pose_correction_enabled"
+           value="$(arg first_to_second_truth_landing_deadband_correction)"/>
+    <param name="truth_landing_deadband_pose_correction_delay_sec"
+           value="$(arg first_to_second_truth_landing_deadband_correction_delay_sec)"/>
+    <param name="truth_flight_a_recovery_center_error_m"
+           value="$(arg truth_flight_a_recovery_center_error_m)"/>
+    <param name="truth_flight_a_recovery_heading_error_rad"
+           value="$(arg truth_flight_a_recovery_heading_error_rad)"/>
+    <param name="truth_flight_a_recovery_forward_speed_mps"
+           value="$(arg truth_flight_a_recovery_forward_speed_mps)"/>
+    <param name="truth_flight_a_recovery_center_speed_mps"
+           value="$(arg truth_flight_a_recovery_center_speed_mps)"/>
+    <param name="stair_locomotion_recovery_timeout_sec"
+           value="$(arg stair_locomotion_recovery_timeout_sec)"/>
+    <param name="truth_flight_a_recovery_yaw_rate_rps"
+           value="$(arg truth_flight_a_recovery_yaw_rate_rps)"/>
+    <param name="truth_flight_a_stall_timeout_sec"
+           value="$(arg truth_flight_a_stall_timeout_sec)"/>
+    <param name="truth_flight_a_stall_minimum_progress_m"
+           value="$(arg truth_flight_a_stall_minimum_progress_m)"/>
+    <param name="truth_flight_a_stall_minimum_height_gain_m"
+           value="$(arg truth_flight_a_stall_minimum_height_gain_m)"/>
+    <param name="truth_flight_a_stall_recovery_seconds"
+           value="$(arg truth_flight_a_stall_recovery_seconds)"/>
+    <param name="truth_flight_a_stall_recovery_speed_mps"
+           value="$(arg truth_flight_a_stall_recovery_speed_mps)"/>
+    <param name="truth_flight_a_stall_recovery_limit"
+           value="$(arg truth_flight_a_stall_recovery_limit)"/>
+    <param name="truth_flight_b_center_gain"
+           value="$(arg truth_flight_b_center_gain)"/>
+    <param name="truth_flight_b_center_deadband_m"
+           value="$(arg truth_flight_b_center_deadband_m)"/>
+    <param name="truth_flight_b_center_speed_mps"
+           value="$(arg truth_flight_b_center_speed_mps)"/>
+    <param name="truth_flight_b_heading_gain"
+           value="$(arg truth_flight_b_heading_gain)"/>
+    <param name="truth_flight_b_max_yaw_rate_rps"
+           value="$(arg truth_flight_b_max_yaw_rate_rps)"/>
+    <!-- F1->F2 Flight-B can enter with a measured ~0.5 rad heading error
+         after the landing turn.  Keep recovery bounded, but do not let the
+         low-speed 0.08 m/s default hold the dog on one tread. -->
+    <param name="truth_flight_b_recovery_forward_speed_mps" value="0.20"/>
+    <param name="truth_flight_b_recovery_yaw_rate_rps" value="0.34"/>
+    <param name="truth_flight_b_fall_drop_m"
+           value="$(arg truth_flight_b_fall_drop_m)"/>
+    <param name="truth_landing_turn_start_y"
+           value="$(arg truth_landing_turn_start_y)"/>
+    <param name="truth_second_floor_clearance_m"
+           value="$(arg truth_second_floor_clearance_m)"/>
+    <!-- Require a genuinely safe, stable F2-to-F3 upper landing. -->
+    <param name="truth_upper_landing_clearance_tolerance_m" value="0.0"/>
+    <param name="truth_upper_landing_height_shortfall_tolerance_m" value="0.0"/>
+    <param name="truth_upper_landing_center_tolerance_m" value="0.35"/>
+    <param name="truth_upper_landing_heading_tolerance_rad" value="0.35"/>
+    <param name="truth_upper_landing_linear_speed_mps" value="0.20"/>
+    <param name="truth_upper_landing_angular_speed_rps" value="0.35"/>
+    <param name="truth_f2_f3_landing_max_settle_seconds" value="15.0"/>
+    <param name="upper_landing_clearance_grace_sec"
+           value="$(arg upper_landing_clearance_grace_sec)"/>
+    <param name="second_floor_stable_seconds"
+           value="$(arg second_floor_stable_seconds)"/>
+    <param name="wait_for_second_floor_handoff"
+           value="$(arg enable_second_floor_exploration)"/>
+    <param name="second_floor_handoff_timeout_sec"
+           value="$(arg second_floor_handoff_timeout_sec)"/>
+    <param name="pre_ascent_align_timeout_sec"
+           value="$(arg pre_ascent_align_timeout_sec)"/>
+    <param name="pre_ascent_align_watchdog_progress_rad"
+           value="$(arg pre_ascent_align_watchdog_progress_rad)"/>
+    <param name="entry_alignment_yaw_rate_rps"
+           value="$(arg entry_alignment_yaw_rate_rps)"/>
+    <param name="enable_visual_stair_alignment"
+           value="$(arg enable_visual_stair_alignment)"/>
+    <param name="depth_points_topic" value="$(arg depth_points_topic)"/>
+    <param name="visual_stair_max_age_sec" value="$(arg visual_stair_max_age_sec)"/>
+    <param name="visual_stair_min_points" value="$(arg visual_stair_min_points)"/>
+    <param name="visual_stair_alignment_blend"
+           value="$(arg visual_stair_alignment_blend)"/>
+    <param name="command_topic" value="/cmd_vel"/>
+    <param name="offline_truth_layout_metadata"
+           value="$(arg offline_truth_layout_metadata)"/>
+  </node>
+
+  <!-- Idle during F1 and the climb.  At SECOND_FLOOR_REACHED this restores
+       the plane policy and starts a fresh corridor/room scheduler using the
+       voxel projection at the robot's new height. -->
+  <node if="$(arg enable_second_floor_exploration)"
+        pkg="simenv_competitor" type="second_floor_exploration_manager.py"
+        name="second_floor_exploration_manager" output="screen"
+        required="false">
+    <!-- This is a floor-local worker. A successful F2 return intentionally
+         ends it after publishing SECOND_FLOOR_EXPLORATION_COMPLETE. It must
+         not make roslaunch kill Gazebo before the F2-to-F3 controller can
+         consume that latched token. -->
+    <param name="unified_fast_four_room_profile"
+           value="$(arg unified_fast_four_room_profile)"/>
+    <param name="upper_floor_far_row_door_scan_angle_rad"
+           value="$(arg upper_floor_far_row_door_scan_angle_rad)"/>
+    <param name="require_all_rooms_for_floor_handoff"
+           value="$(arg require_all_rooms_for_floor_handoff)"/>
+    <param name="allow_partial_floor_handoff"
+           value="$(arg allow_partial_floor_handoff_for_continuation)"/>
+    <param name="locomotion_recovery_wall_watchdog_seconds"
+           value="$(arg locomotion_recovery_wall_watchdog_seconds)"/>
+    <param name="partial_floor_handoff_minimum_exited_rooms"
+           value="$(arg partial_floor_handoff_minimum_exited_rooms)"/>
+    <!-- A degraded handoff is allowed only after three physical room exits.
+         One-room continuation hid a recoverable F2 search failure and armed
+         F2->F3 from the first doorway instead of the stair-return route. -->
+    <param name="emergency_partial_handoff_minimum_exited_rooms" value="3"/>
+    <param name="parent_output_dir" value="$(arg output_dir)"/>
+    <param name="output_dir" value="$(arg output_dir)/second_floor"/>
+    <param name="map_file" value="$(arg output_dir)/voxel_map.bt"/>
+    <param name="statistics_file" value="$(arg output_dir)/map_statistics.json"/>
+    <param name="maximum_duration" value="$(arg second_floor_maximum_duration)"/>
+    <param name="maximum_goals" value="$(arg second_floor_maximum_goals)"/>
+    <param name="pre_handoff_wait_timeout_sec"
+           value="$(arg second_floor_pre_handoff_wait_timeout_sec)"/>
+    <!-- Once stair ownership begins, keep a separate bounded watchdog. -->
+    <param name="handoff_wait_timeout_sec" value="600.0"/>
+    <param name="plane_policy" value="$(arg rl_policy)"/>
+    <param name="plane_policy_reload_timeout_sec" value="30.0"/>
+    <param name="offline_truth_layout_metadata"
+           value="$(arg offline_truth_layout_metadata)"/>
+    <param name="offline_stair_model_sdf" value="$(arg offline_stair_model_sdf)"/>
+    <param name="enable_second_floor_truth_corridor_guide"
+           value="$(arg enable_second_floor_truth_corridor_guide)"/>
+    <param name="second_floor_truth_corridor_guide_timeout_sec"
+           value="$(arg second_floor_truth_corridor_guide_timeout_sec)"/>
+    <param name="second_floor_truth_corridor_guide_speed_mps"
+           value="$(arg second_floor_truth_corridor_guide_speed_mps)"/>
+    <param name="second_floor_truth_corridor_guide_forward_limit_mps"
+           value="$(arg second_floor_truth_corridor_guide_forward_limit_mps)"/>
+    <param name="second_floor_truth_corridor_guide_reverse_limit_mps"
+           value="$(arg second_floor_truth_corridor_guide_reverse_limit_mps)"/>
+    <param name="second_floor_truth_corridor_guide_lateral_limit_mps"
+           value="$(arg second_floor_truth_corridor_guide_lateral_limit_mps)"/>
+    <param name="second_floor_truth_corridor_guide_planar_limit_mps"
+           value="$(arg second_floor_truth_corridor_guide_planar_limit_mps)"/>
+    <param name="second_floor_truth_corridor_ingress_depth_m"
+           value="$(arg second_floor_truth_corridor_ingress_depth_m)"/>
+    <param name="second_floor_corridor_map_fill_hold_seconds"
+           value="$(arg second_floor_corridor_map_fill_hold_seconds)"/>
+    <param name="second_floor_localization_stable_seconds"
+           value="$(arg second_floor_localization_stable_seconds)"/>
+    <param name="second_floor_localization_stabilization_timeout_sec"
+           value="$(arg second_floor_localization_stabilization_timeout_sec)"/>
+    <param name="truth_pose_authoritative_fast_handoff"
+           value="$(arg truth_pose_authoritative_fast_handoff)"/>
+    <param name="preloaded_map_file" value="$(arg preloaded_map_file)"/>
+    <param name="preloaded_map_manifest" value="$(arg preloaded_map_manifest)"/>
+    <param name="visualization_script"
+           value="$(find simenv_competitor)/../../scripts/visualize_baseline_results.py"/>
+    <param name="auto_generate_combined_visualization"
+           value="$(arg second_floor_auto_generate_combined_visualization)"/>
+    <param name="room_target_count" value="4"/>
+    <param name="stop_after_all_room_exits" value="false"/>
+    <param name="stair_handoff_on_corridor_exit" value="true"/>
+    <!-- A portal whose first live SCAN-lite/footprint check fails remains a
+         valid semantic landmark. Reuse it after the bounded cooldown instead
+         of waiting for map jitter to register the same physical doorway under
+         a fifth ID. The retry still repeats the ordinary occupancy, A* and
+         portal preflight checks before commanding ENTRY. -->
+    <param name="enable_known_unvisited_door_retry" value="true"/>
+    <param name="known_unvisited_door_retry_distance_m" value="6.5"/>
+    <param name="terminal_return_blocked_by_known_unvisited_door"
+           value="true"/>
+    <!-- The GT bridge leaves the robot at the corridor entrance facing +Y;
+         resume the same forward corridor-acquisition flow used on floor 1. -->
+    <param name="corridor_acquisition_heading_search" value="false"/>
+    <param name="corridor_acquisition_heading_samples" value="16"/>
+    <param name="corridor_acquisition_heading_range_m" value="12.0"/>
+    <!-- Do not rotate on the narrow stair landing: run34 remained stable
+         there until this 360-degree scan, then fell to F1.  The exploration
+         manager first uses safe free-space motion to enter the broad lobby,
+         while parallel-wall geometry supplies layout-free corridor semantics. -->
+    <param name="enable_second_floor_lobby_rescan" value="false"/>
+    <param name="corridor_acquisition_parallel_wall_semantic" value="false"/>
+    <param name="corridor_acquisition_semantic_search_radius_m" value="12.0"/>
+    <param name="corridor_acquisition_semantic_minimum_length_m" value="4.0"/>
+  </node>
+
+  <!-- A topic-isolated second instance of the validated two-flight controller.
+       It cannot arm on F1 messages: only the latched F2 completion event starts
+       it, and its truth geometry is restricted to stair floor_1 links. -->
+  <node if="$(arg enable_third_floor_exploration)"
+        pkg="simenv_competitor" type="stair_transition_manager.py"
+        name="second_to_third_floor_stair_manager" output="screen"
+        required="false">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="odom_topic" value="$(arg navigation_odom_topic)"/>
+    <param name="ground_truth_topic" value="/simenv/gazebo_model_states_20hz"/>
+    <param name="truth_odometry_topic" value="/simenv/second_floor_truth_odometry"/>
+    <param name="stair_policy" value="$(find unitree_guide)/../../logs/policy_act_inference_stair.pt"/>
+    <param name="source_floor_index" value="1"/>
+    <param name="truth_upper_floor_exit_clearance_m" value="0.80"/>
+    <param name="target_floor_number" value="3"/>
+    <param name="mission_trigger_topic" value="/simenv/second_floor_state"/>
+    <param name="mission_trigger_token" value="SECOND_FLOOR_EXPLORATION_COMPLETE"/>
+    <param name="state_topic" value="/simenv/second_to_third_floor_stair_state"/>
+    <param name="upper_floor_state_topic" value="/simenv/third_floor_state"/>
+    <param name="upper_floor_reached_phase" value="THIRD_FLOOR_REACHED"/>
+    <param name="upper_floor_settle_phase" value="THIRD_FLOOR_SETTLE"/>
+    <param name="upper_floor_ready_token" value="THIRD_FLOOR_EXPLORATION_READY"/>
+    <param name="upper_floor_handoff_complete_phase"
+           value="THIRD_FLOOR_HANDOFF_COMPLETE"/>
+    <param name="upper_floor_handoff_timeout_phase"
+           value="THIRD_FLOOR_HANDOFF_TIMEOUT"/>
+    <param name="transition_log_basename"
+           value="second_to_third_floor_stair_transition.json"/>
+    <param name="transition_plot_basename"
+           value="21_second_to_third_floor_stair_transition.png"/>
+    <param name="trajectory_plot_basename"
+           value="21_f2_to_third_floor_trajectory.png"/>
+    <param name="height_plot_basename"
+           value="21_truth_stair_height_f2_to_f3.png"/>
+    <param name="auto_start" value="false"/>
+    <param name="approach_only"
+           value="$(arg second_to_third_stair_approach_only)"/>
+    <param name="auto_generate_final_visualization" value="true"/>
+    <param name="truth_entry_guide" value="true"/>
+    <param name="external_entry_guide" value="$(arg enable_visual_corridor_to_stair_entry)"/>
+    <param name="external_entry_state_topic" value="/simenv/stair_visual_entry_state_f2"/>
+    <param name="external_entry_ready_token" value="SECOND_TO_THIRD_STAIR_ENTRY_READY"/>
+    <!-- Allow the F2/F3 corridor return to publish the offline truth stair
+         gate when local odometry is unreliable; F1 remains unchanged. -->
+    <param name="enable_truth_return_gate" value="true"/>
+    <param name="truth_fixed_two_flight_profile" value="true"/>
+    <param name="truth_entry_timeout_sec"
+           value="$(arg stair_truth_entry_timeout_sec)"/>
+    <param name="truth_entry_corridor_max_speed_mps"
+           value="$(arg stair_truth_entry_corridor_max_speed_mps)"/>
+    <param name="truth_entry_side_max_speed_mps"
+           value="$(arg stair_truth_entry_side_max_speed_mps)"/>
+    <param name="truth_entry_final_max_speed_mps"
+           value="$(arg stair_truth_entry_final_max_speed_mps)"/>
+    <param name="truth_post_policy_restage_tolerance_m"
+           value="$(arg second_to_third_post_policy_restage_tolerance_m)"/>
+    <param name="truth_post_policy_restage_timeout_sec"
+           value="$(arg second_to_third_post_policy_restage_timeout_sec)"/>
+    <param name="truth_side_entry_offset_m"
+           value="$(arg stair_truth_side_entry_offset_m)"/>
+    <param name="lock_ascent_heading" value="$(arg lock_ascent_heading)"/>
+    <param name="ascent_speed_mps" value="$(arg stair_ascent_speed_mps)"/>
+    <param name="ascent_maximum_speed_mps"
+           value="$(arg stair_ascent_maximum_speed_mps)"/>
+    <param name="ascent_timeout_sec" value="$(arg stair_ascent_timeout_sec)"/>
+    <param name="flight_b_timeout_sec"
+           value="$(arg second_to_third_flight_b_timeout_sec)"/>
+    <param name="hold_rl_during_ascent" value="$(arg stair_hold_rl_during_ascent)"/>
+    <param name="world_frame_ascent" value="$(arg stair_world_frame_ascent)"/>
+    <param name="two_flight_stair" value="$(arg two_flight_stair)"/>
+    <param name="flight_a_height_gain_m" value="$(arg flight_a_height_gain_m)"/>
+    <param name="total_height_gain_m" value="$(arg total_height_gain_m)"/>
+    <param name="landing_cross_distance_m" value="$(arg landing_cross_distance_m)"/>
+    <param name="landing_cross_speed_mps" value="$(arg landing_cross_speed_mps)"/>
+    <param name="landing_turn_angle_rad" value="$(arg landing_turn_angle_rad)"/>
+    <param name="landing_turn_speed_rps" value="$(arg landing_turn_speed_rps)"/>
+    <param name="landing_heading_tolerance_rad"
+           value="$(arg second_to_third_landing_heading_tolerance_rad)"/>
+    <param name="landing_timeout_sec"
+           value="$(arg second_to_third_landing_timeout_sec)"/>
+    <param name="truth_landing_position_gain"
+           value="$(arg truth_landing_position_gain)"/>
+    <param name="truth_landing_position_tolerance_m"
+           value="$(arg truth_landing_position_tolerance_m)"/>
+    <param name="truth_landing_position_deadband_m"
+           value="$(arg truth_landing_position_deadband_m)"/>
+    <param name="truth_landing_recenter_speed_mps"
+           value="$(arg truth_landing_recenter_speed_mps)"/>
+    <param name="truth_landing_minimum_recenter_speed_mps"
+           value="$(arg truth_landing_minimum_recenter_speed_mps)"/>
+    <param name="truth_landing_minimum_yaw_rate_rps"
+           value="$(arg truth_landing_minimum_yaw_rate_rps)"/>
+    <param name="truth_flight_a_recovery_center_error_m"
+           value="$(arg truth_flight_a_recovery_center_error_m)"/>
+    <param name="truth_flight_a_recovery_heading_error_rad"
+           value="$(arg truth_flight_a_recovery_heading_error_rad)"/>
+    <param name="truth_flight_a_recovery_forward_speed_mps"
+           value="$(arg truth_flight_a_recovery_forward_speed_mps)"/>
+    <param name="truth_flight_a_recovery_center_speed_mps"
+           value="$(arg truth_flight_a_recovery_center_speed_mps)"/>
+    <param name="stair_locomotion_recovery_timeout_sec"
+           value="$(arg stair_locomotion_recovery_timeout_sec)"/>
+    <param name="truth_flight_a_recovery_yaw_rate_rps"
+           value="$(arg truth_flight_a_recovery_yaw_rate_rps)"/>
+    <param name="truth_flight_a_stall_timeout_sec"
+           value="$(arg truth_flight_a_stall_timeout_sec)"/>
+    <param name="truth_flight_a_stall_minimum_progress_m"
+           value="$(arg truth_flight_a_stall_minimum_progress_m)"/>
+    <param name="truth_flight_a_stall_minimum_height_gain_m"
+           value="$(arg truth_flight_a_stall_minimum_height_gain_m)"/>
+    <param name="truth_flight_a_stall_recovery_seconds"
+           value="$(arg truth_flight_a_stall_recovery_seconds)"/>
+    <param name="truth_flight_a_stall_recovery_speed_mps"
+           value="$(arg truth_flight_a_stall_recovery_speed_mps)"/>
+    <param name="truth_flight_a_stall_recovery_limit"
+           value="$(arg truth_flight_a_stall_recovery_limit)"/>
+    <param name="truth_flight_b_center_gain"
+           value="$(arg truth_flight_b_center_gain)"/>
+    <param name="truth_flight_b_center_deadband_m"
+           value="$(arg truth_flight_b_center_deadband_m)"/>
+    <param name="truth_flight_b_center_speed_mps"
+           value="$(arg truth_flight_b_center_speed_mps)"/>
+    <param name="truth_flight_b_heading_gain"
+           value="$(arg second_to_third_flight_b_heading_gain)"/>
+    <param name="truth_flight_b_heading_bias_rad"
+           value="$(arg second_to_third_flight_b_heading_bias_rad)"/>
+    <param name="truth_flight_b_max_yaw_rate_rps"
+           value="$(arg second_to_third_flight_b_max_yaw_rate_rps)"/>
+    <param name="truth_flight_b_recovery_heading_error_rad"
+           value="$(arg second_to_third_flight_b_recovery_heading_error_rad)"/>
+    <param name="truth_flight_b_recovery_release_heading_error_rad"
+           value="$(arg second_to_third_flight_b_recovery_release_heading_error_rad)"/>
+    <param name="truth_flight_b_recovery_forward_speed_mps"
+           value="$(arg second_to_third_flight_b_recovery_forward_speed_mps)"/>
+    <param name="truth_flight_b_recovery_yaw_rate_rps"
+           value="$(arg second_to_third_flight_b_recovery_yaw_rate_rps)"/>
+    <param name="truth_flight_b_stall_timeout_sec"
+           value="$(arg second_to_third_flight_b_stall_timeout_sec)"/>
+    <param name="truth_flight_b_stall_minimum_progress_m"
+           value="$(arg second_to_third_flight_b_stall_minimum_progress_m)"/>
+    <param name="truth_flight_b_stall_minimum_height_gain_m"
+           value="$(arg second_to_third_flight_b_stall_minimum_height_gain_m)"/>
+    <param name="truth_flight_b_stall_recovery_seconds"
+           value="$(arg second_to_third_flight_b_stall_recovery_seconds)"/>
+    <param name="truth_flight_b_stall_recovery_distance_m"
+           value="$(arg second_to_third_flight_b_stall_recovery_distance_m)"/>
+    <param name="truth_flight_b_stall_forward_burst_speed_mps"
+           value="$(arg second_to_third_flight_b_stall_forward_burst_speed_mps)"/>
+    <param name="truth_flight_b_stall_forward_burst_progress_m"
+           value="$(arg second_to_third_flight_b_stall_forward_burst_progress_m)"/>
+    <param name="truth_flight_b_stall_forward_burst_height_m"
+           value="$(arg second_to_third_flight_b_stall_forward_burst_height_m)"/>
+    <param name="truth_flight_b_stall_policy_reset"
+           value="$(arg second_to_third_flight_b_stall_policy_reset)"/>
+    <param name="truth_flight_b_stall_wrench_enabled"
+           value="$(arg second_to_third_flight_b_stall_wrench_enabled)"/>
+    <param name="truth_flight_b_stall_wrench_forward_n"
+           value="$(arg second_to_third_flight_b_stall_wrench_forward_n)"/>
+    <param name="truth_flight_b_stall_wrench_upward_n"
+           value="$(arg second_to_third_flight_b_stall_wrench_upward_n)"/>
+    <param name="truth_flight_b_stall_wrench_duration_sec"
+           value="$(arg second_to_third_flight_b_stall_wrench_duration_sec)"/>
+    <param name="truth_flight_b_stall_nudge_enabled"
+           value="$(arg second_to_third_flight_b_stall_nudge_enabled)"/>
+    <param name="truth_f2_f3_physical_only_recovery"
+           value="$(arg truth_f2_f3_physical_only_recovery)"/>
+    <param name="truth_f2_f3_flight_a_top_body_clearance_m" value="0.38"/>
+    <param name="truth_f2_f3_atomic_final_tread_handoff"
+           value="$(arg truth_f2_f3_atomic_final_tread_handoff)"/>
+    <param name="truth_flight_b_stall_nudge_after_recoveries"
+           value="$(arg second_to_third_flight_b_stall_nudge_after_recoveries)"/>
+    <param name="truth_flight_b_stall_nudge_forward_m"
+           value="$(arg second_to_third_flight_b_stall_nudge_forward_m)"/>
+    <param name="truth_flight_b_stall_nudge_upward_m"
+           value="$(arg second_to_third_flight_b_stall_nudge_upward_m)"/>
+    <param name="truth_flight_b_stall_recovery_speed_mps"
+           value="$(arg second_to_third_flight_b_stall_recovery_speed_mps)"/>
+    <param name="truth_flight_b_stall_recovery_limit"
+           value="$(arg second_to_third_flight_b_stall_recovery_limit)"/>
+    <param name="truth_flight_b_fall_drop_m"
+           value="$(arg truth_flight_b_fall_drop_m)"/>
+    <param name="truth_landing_turn_start_y"
+           value="$(arg truth_landing_turn_start_y)"/>
+    <param name="truth_second_floor_clearance_m"
+           value="$(arg truth_second_floor_clearance_m)"/>
+    <!-- Require a genuinely safe, stable F2-to-F3 upper landing. -->
+    <param name="truth_upper_landing_clearance_tolerance_m" value="0.0"/>
+    <param name="truth_upper_landing_height_shortfall_tolerance_m" value="0.18"/>
+    <param name="truth_upper_landing_center_tolerance_m" value="0.35"/>
+    <param name="truth_upper_landing_heading_tolerance_rad" value="0.35"/>
+    <param name="truth_upper_landing_linear_speed_mps" value="0.20"/>
+    <param name="truth_upper_landing_angular_speed_rps" value="0.35"/>
+    <param name="truth_f2_f3_landing_max_settle_seconds" value="15.0"/>
+    <param name="upper_landing_clearance_grace_sec"
+           value="$(arg upper_landing_clearance_grace_sec)"/>
+    <param name="second_floor_stable_seconds"
+           value="$(arg second_to_third_stable_seconds)"/>
+    <param name="wait_for_second_floor_handoff" value="true"/>
+    <param name="second_floor_handoff_timeout_sec"
+           value="$(arg second_floor_handoff_timeout_sec)"/>
+    <param name="pre_ascent_align_timeout_sec"
+           value="$(arg pre_ascent_align_timeout_sec)"/>
+    <param name="pre_ascent_align_watchdog_progress_rad"
+           value="$(arg pre_ascent_align_watchdog_progress_rad)"/>
+    <param name="entry_alignment_yaw_rate_rps"
+           value="$(arg entry_alignment_yaw_rate_rps)"/>
+    <param name="enable_visual_stair_alignment"
+           value="$(arg enable_visual_stair_alignment)"/>
+    <param name="depth_points_topic" value="$(arg depth_points_topic)"/>
+    <param name="command_topic" value="/cmd_vel"/>
+    <param name="offline_truth_layout_metadata"
+           value="$(arg offline_truth_layout_metadata)"/>
+    <param name="offline_stair_model_sdf" value="$(arg offline_stair_model_sdf)"/>
+  </node>
+
+  <!-- Fresh floor-3 mission.  It shares only the persistent mapper/executor;
+       room detector memory, corridor frame, home anchor and output files are
+       new, exactly as in the proven floor-2 handoff. -->
+  <node if="$(arg enable_third_floor_exploration)"
+        pkg="simenv_competitor" type="second_floor_exploration_manager.py"
+        name="third_floor_exploration_manager" output="screen"
+        required="$(eval not arg('enable_third_floor_descent'))">
+    <param name="floor_number" value="3"/>
+    <param name="state_topic" value="/simenv/third_floor_state"/>
+    <param name="stair_state_topic"
+           value="/simenv/second_to_third_floor_stair_state"/>
+    <param name="stair_reached_token" value="THIRD_FLOOR_REACHED"/>
+    <param name="source_floor_state_topic"
+           value="/simenv/second_floor_state"/>
+    <param name="source_floor_failure_token"
+           value="SECOND_FLOOR_EXPLORATION_FAILED"/>
+    <param name="monitor_source_finalize" value="false"/>
+    <!-- Zero means wait for the explicit F2 success/failure event; do not
+         expire from total launch age while F2 is still exploring. -->
+    <param name="handoff_wait_timeout_sec" value="1200.0"/>
+    <param name="pre_handoff_wait_timeout_sec"
+           value="$(arg third_floor_pre_handoff_wait_timeout_sec)"/>
+    <param name="unified_fast_four_room_profile"
+           value="$(arg unified_fast_four_room_profile)"/>
+    <param name="upper_floor_far_row_door_scan_angle_rad"
+           value="$(arg upper_floor_far_row_door_scan_angle_rad)"/>
+    <param name="require_all_rooms_for_floor_handoff"
+           value="$(arg require_all_rooms_for_floor_handoff)"/>
+    <param name="allow_partial_floor_handoff"
+           value="$(arg allow_partial_floor_handoff_for_continuation)"/>
+    <param name="defer_terminal_shutdown_to_descent"
+           value="$(arg enable_third_floor_descent)"/>
+    <param name="third_floor_stair_return_timeout_sec" value="180.0"/>
+    <param name="locomotion_recovery_wall_watchdog_seconds"
+           value="$(arg locomotion_recovery_wall_watchdog_seconds)"/>
+    <param name="partial_floor_handoff_minimum_exited_rooms"
+           value="$(arg partial_floor_handoff_minimum_exited_rooms)"/>
+    <param name="parent_output_dir" value="$(arg output_dir)"/>
+    <param name="output_dir" value="$(arg output_dir)/third_floor"/>
+    <param name="map_file" value="$(arg output_dir)/voxel_map.bt"/>
+    <param name="statistics_file" value="$(arg output_dir)/map_statistics.json"/>
+    <param name="maximum_duration" value="$(arg third_floor_maximum_duration)"/>
+    <param name="maximum_goals" value="$(arg third_floor_maximum_goals)"/>
+    <param name="plane_policy" value="$(arg rl_policy)"/>
+    <param name="plane_policy_reload_timeout_sec" value="30.0"/>
+    <param name="offline_truth_layout_metadata"
+           value="$(arg offline_truth_layout_metadata)"/>
+    <param name="offline_stair_model_sdf" value="$(arg offline_stair_model_sdf)"/>
+    <param name="enable_second_floor_truth_corridor_guide"
+           value="$(arg enable_third_floor_truth_corridor_guide)"/>
+    <param name="second_floor_truth_corridor_guide_timeout_sec"
+           value="$(arg third_floor_truth_corridor_guide_timeout_sec)"/>
+    <param name="second_floor_truth_corridor_ingress_depth_m"
+           value="$(arg third_floor_truth_corridor_ingress_depth_m)"/>
+    <param name="visualization_script"
+           value="$(find simenv_competitor)/../../scripts/visualize_baseline_results.py"/>
+    <param name="auto_generate_combined_visualization" value="$(arg third_floor_auto_generate_combined_visualization)"/>
+    <param name="room_target_count" value="4"/>
+    <param name="enable_lightweight_room_scheduler" value="true"/>
+    <param name="stop_after_all_room_exits" value="false"/>
+    <param name="stair_handoff_on_corridor_exit" value="true"/>
+    <param name="corridor_acquisition_heading_search" value="false"/>
+    <param name="corridor_acquisition_heading_samples" value="16"/>
+    <param name="corridor_acquisition_heading_range_m" value="12.0"/>
+    <param name="enable_second_floor_lobby_rescan" value="false"/>
+    <param name="corridor_acquisition_parallel_wall_semantic" value="false"/>
+    <param name="corridor_acquisition_semantic_search_radius_m" value="12.0"/>
+    <param name="corridor_acquisition_semantic_minimum_length_m" value="4.0"/>
+  </node>
+
+  <!-- The trigger is the actual F3 post-return token emitted by the current
+       manager.  This node remains alive after the non-required F3 worker
+       exits and owns final roslaunch shutdown. -->
+  <node if="$(arg enable_third_floor_descent)"
+        pkg="simenv_competitor" type="stair_descent_manager.py"
+        name="stair_descent_manager" output="screen" required="true">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="odom_topic" value="$(arg navigation_odom_topic)"/>
+    <param name="stair_policy"
+           value="$(find unitree_guide)/../../logs/policy_act_inference_stair.pt"/>
+    <param name="plane_policy" value="$(arg rl_policy)"/>
+    <param name="start_floor_number" value="3"/>
+    <param name="end_floor_number" value="1"/>
+    <param name="mission_trigger_topic" value="/simenv/third_floor_state"/>
+    <param name="mission_trigger_token" value="THIRD_FLOOR_STAIR_RETURN_READY"/>
+    <param name="mission_trigger_tokens"
+           value="THIRD_FLOOR_STAIR_RETURN_READY,THIRD_FLOOR_STAIR_RETURN_PARTIAL_READY"/>
+    <param name="mission_failure_tokens"
+           value="$(arg descent_mission_failure_tokens)"/>
+    <param name="terminate_on_mission_failure"
+           value="$(arg descent_terminate_on_mission_failure)"/>
+    <param name="mission_failure_return_wait_wall_timeout_sec"
+           value="$(arg descent_failure_return_wait_wall_timeout_sec)"/>
+    <param name="state_topic"
+           value="/simenv/third_to_first_floor_stair_state"/>
+    <param name="offline_stair_model_sdf" value="$(arg offline_stair_model_sdf)"/>
+    <param name="offline_truth_layout_metadata"
+           value="$(arg offline_truth_layout_metadata)"/>
+    <param name="descent_speed_mps" value="$(arg descent_speed_mps)"/>
+    <param name="descent_maximum_speed_mps"
+           value="$(arg descent_maximum_speed_mps)"/>
+    <param name="descent_segment_timeout_sec"
+           value="$(arg descent_segment_timeout_sec)"/>
+    <param name="pre_descent_stand_seconds"
+           value="$(arg descent_pre_stand_seconds)"/>
+    <param name="truth_descent_trigger_timeout_sec"
+           value="$(arg descent_trigger_timeout_sec)"/>
+    <param name="truth_descent_trigger_wall_timeout_sec"
+           value="$(arg descent_trigger_wall_timeout_sec)"/>
+    <param name="truth_descent_entry_guide_speed_mps" value="1.15"/>
+    <!-- The F3 exploration return has already followed the physical reverse
+         bridge to the stair lip.  Re-running the legacy corridor-side entry
+         guide sends the robot north again and oscillates on the landing. -->
+    <param name="skip_entry_guide" value="$(arg descent_skip_entry_guide)"/>
+    <param name="truth_descent_no_drop_correction_enabled"
+           value="$(arg truth_descent_no_drop_correction_enabled)"/>
+    <param name="truth_descent_flight_max_stall_recoveries"
+           value="$(arg truth_descent_flight_max_stall_recoveries)"/>
+    <param name="truth_descent_backward_mode"
+           value="$(arg truth_descent_backward_mode)"/>
+    <param name="truth_descent_stall_seconds"
+           value="$(arg truth_descent_stall_seconds)"/>
+    <param name="truth_descent_stall_pause_seconds"
+           value="$(arg truth_descent_stall_pause_seconds)"/>
+    <param name="truth_descent_stall_arm_drop_m"
+           value="$(arg truth_descent_stall_arm_drop_m)"/>
+    <param name="truth_descent_stall_z_progress_m"
+           value="$(arg truth_descent_stall_z_progress_m)"/>
+    <param name="truth_descent_fall_drop_m"
+           value="$(arg truth_descent_fall_drop_m)"/>
+    <param name="truth_descent_fall_window_sec"
+           value="$(arg truth_descent_fall_window_sec)"/>
+    <param name="truth_descent_max_center_error_m"
+           value="$(arg truth_descent_max_center_error_m)"/>
+    <param name="truth_descent_max_heading_error_rad"
+           value="$(arg truth_descent_max_heading_error_rad)"/>
+    <param name="truth_descent_flight_center_gain"
+           value="$(arg truth_descent_flight_center_gain)"/>
+    <param name="truth_descent_flight_center_deadband_m"
+           value="$(arg truth_descent_flight_center_deadband_m)"/>
+    <param name="truth_descent_flight_center_speed_mps"
+           value="$(arg truth_descent_flight_center_speed_mps)"/>
+    <param name="truth_descent_flight_heading_gain"
+           value="$(arg truth_descent_flight_heading_gain)"/>
+    <param name="truth_descent_flight_max_yaw_rate_rps"
+           value="$(arg truth_descent_flight_max_yaw_rate_rps)"/>
+    <param name="truth_descent_heading_bias_rad"
+           value="$(arg truth_descent_heading_bias_rad)"/>
+    <param name="truth_descent_flight_center_steer_gain"
+           value="$(arg truth_descent_flight_center_steer_gain)"/>
+    <param name="truth_descent_flight_center_steer_max_rad"
+           value="$(arg truth_descent_flight_center_steer_max_rad)"/>
+    <param name="truth_descent_turn_start_y"
+           value="$(arg truth_descent_turn_start_y)"/>
+    <param name="truth_descent_landing_position_tolerance_m"
+           value="$(arg truth_descent_landing_position_tolerance_m)"/>
+    <param name="truth_descent_landing_heading_tolerance_rad"
+           value="$(arg truth_descent_landing_heading_tolerance_rad)"/>
+    <param name="truth_descent_landing_turn_speed_rps"
+           value="$(arg truth_descent_landing_turn_speed_rps)"/>
+    <param name="truth_descent_landing_settle_seconds"
+           value="$(arg truth_descent_landing_settle_seconds)"/>
+    <param name="truth_descent_landing_yaw_stall_sec"
+           value="$(arg truth_descent_landing_yaw_stall_sec)"/>
+    <param name="truth_descent_landing_slip_max_attempts"
+           value="$(arg truth_descent_landing_slip_max_attempts)"/>
+    <param name="truth_descent_segment_turn_yaw_rate_rps"
+           value="$(arg truth_descent_segment_turn_yaw_rate_rps)"/>
+    <param name="truth_descent_segment_turn_lateral_speed_mps"
+           value="$(arg truth_descent_segment_turn_lateral_speed_mps)"/>
+    <param name="truth_descent_segment_turn_side_speed_mps"
+           value="$(arg truth_descent_segment_turn_side_speed_mps)"/>
+    <param name="truth_descent_segment_turn_x_keep_m"
+           value="$(arg truth_descent_segment_turn_x_keep_m)"/>
+    <param name="truth_descent_segment_turn_y_keep_m"
+           value="$(arg truth_descent_segment_turn_y_keep_m)"/>
+    <param name="truth_descent_segment_turn_timeout_sec"
+           value="$(arg truth_descent_segment_turn_timeout_sec)"/>
+    <param name="truth_descent_east_align_minimum_speed_mps"
+           value="$(arg truth_descent_east_align_minimum_speed_mps)"/>
+    <param name="truth_descent_step_pause_seconds"
+           value="$(arg truth_descent_step_pause_seconds)"/>
+    <param name="truth_descent_step_pause_interval_m"
+           value="$(arg truth_descent_step_pause_interval_m)"/>
+    <param name="return_to_first_floor_start" value="true"/>
+    <param name="first_floor_start_x" value="$(arg first_floor_start_x)"/>
+    <param name="first_floor_start_y" value="$(arg first_floor_start_y)"/>
+    <param name="first_floor_start_yaw" value="$(arg first_floor_start_yaw)"/>
+    <param name="first_floor_stair_clear_x"
+           value="$(arg first_floor_stair_clear_x)"/>
+    <param name="first_floor_stair_clear_y"
+           value="$(arg first_floor_stair_clear_y)"/>
+    <param name="first_floor_home_return_speed_mps"
+           value="$(arg first_floor_home_return_speed_mps)"/>
+    <param name="first_floor_home_return_yaw_rate_rps"
+           value="$(arg first_floor_home_return_yaw_rate_rps)"/>
+    <param name="first_floor_home_return_wall_timeout_sec"
+           value="$(arg first_floor_home_return_wall_timeout_sec)"/>
+    <param name="roundtrip_visualization_script"
+           value="$(find simenv_competitor)/../../scripts/visualize_roundtrip_return.py"/>
+    <param name="combined_visualization_script"
+           value="$(find simenv_competitor)/../../scripts/visualize_baseline_results.py"/>
+    <param name="visualization_after_shutdown_script"
+           value="$(find simenv_competitor)/../../scripts/run_visualization_after_shutdown.py"/>
+    <param name="command_topic" value="/cmd_vel"/>
+    <param name="hold_rl_during_ascent" value="true"/>
+  </node>
+
+  <!-- Online-only local geometry: no Gazebo truth, layout metadata, global-y
+       threshold, or fixed room coordinate is exposed to these nodes. -->
+  <node if="$(arg enable_local_doorway_detector)"
+        pkg="simenv_competitor" type="local_doorway_detector.py"
+        name="local_doorway_detector" output="screen" required="false">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <!-- The far pair of doors may only appear after the robot is beside the
+         opening.  Retain a slightly larger robot-centred evidence window so
+         the same geometry check can latch them before corridor transit
+         carries the robot away. -->
+    <param name="local_window_size" value="10.0"/>
+    <!-- Local side-opening detector: permissive candidate generation; the
+         manager still requires known-free, A*, and SCAN-lite validation. -->
+    <param name="wall_search_range" value="3.6"/>
+    <param name="opening_probe_depth" value="5.0"/>
+    <param name="doorway_width_min" value="0.60"/>
+    <param name="minimum_open_area_m2" value="1.20"/>
+    <param name="entry_depth" value="1.00"/>
+    <param name="clearance" value="0.25"/>
+    <param name="confirmation_updates" value="1"/>
+    <!-- Associate a locally observed aperture geometrically rather than by
+         map-cell ID: early FAST-LIO corrections otherwise reset room 0/1
+         confirmation while the robot passes their doors. -->
+    <param name="track_match_radius_m" value="1.20"/>
+    <param name="track_max_age_seconds" value="5.0"/>
+    <!-- Final portal A* and SCAN-lite remain mandatory. Avoid a second A*
+         per temporary local opening during candidate generation. -->
+    <param name="enable_candidate_astar" value="false"/>
+    <!-- Candidate-side SCAN-lite duplicated the mandatory full-path
+         SCAN-lite validation in baseline_exploration_manager.  Defer it to
+         the selected ENTRY path, where the actual approach is known. -->
+    <param name="enable_scan_lite" value="false"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="motion_consistency_guard.py"
+        name="motion_consistency_guard" output="screen" required="false">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <rosparam param="windows_seconds">[5.0, 10.0, 20.0]</rosparam>
+    <param name="minimum_distance_ratio" value="0.5"/>
+    <param name="maximum_distance_ratio" value="1.8"/>
+  </node>
+
+  <!-- Gazebo publishes ModelStates at the 1 kHz physics rate. A single C++
+       ShapeShifter subscriber throttles it before rospy deserializes it. -->
+  <node pkg="topic_tools" type="throttle"
+        name="gazebo_model_states_throttle" output="screen"
+        args="messages /gazebo/model_states 20.0 /simenv/gazebo_model_states_20hz"/>
+
+  <node pkg="simenv_competitor" type="baseline_telemetry.py"
+        name="baseline_telemetry" output="screen" required="false">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="ground_truth_topic" value="/simenv/gazebo_model_states_20hz"/>
+    <param name="ground_truth_model" value="a1_gazebo"/>
+    <param name="truth_motion_relay_rate_hz" value="20.0"/>
+  </node>
+
+  <node if="$(arg localization_truth_recovery_enabled)"
+        pkg="simenv_competitor" type="localization_truth_recovery.py"
+        name="localization_truth_recovery" output="screen" required="false">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="enabled" value="$(arg localization_truth_recovery_enabled)"/>
+    <param name="ground_truth_topic" value="/simenv/gazebo_model_states_20hz"/>
+    <param name="ground_truth_odometry_topic" value="/simenv/second_floor_truth_odometry"/>
+    <param name="minimum_planar_error_m" value="0.75"/>
+    <param name="quiet_speed_mps" value="0.12"/>
+    <param name="quiet_angular_rps" value="0.12"/>
+    <param name="maximum_upright_tilt_rad" value="0.55"/>
+    <param name="post_fall_stability_sec" value="0.40"/>
+    <param name="registration_unhealthy_grace_sec" value="0.35"/>
+    <param name="request_cooldown_sec" value="2.0"/>
+    <param name="maximum_requests_per_mission" value="24"/>
+    <param name="truth_update_rate_hz" value="50.0"/>
+  </node>
+
+  <!-- Strictly offline evaluator: Gazebo truth is written only to the result
+       directory and is never published to exploration/planning topics. -->
+  <node if="$(arg enable_truth_lidar_coverage_logger)"
+        pkg="simenv_competitor" type="truth_lidar_coverage_logger.py"
+        name="truth_lidar_coverage_logger" output="screen" required="false">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="model_name" value="a1_gazebo"/>
+    <param name="resolution" value="0.15"/>
+    <param name="maximum_range" value="30.0"/>
+    <param name="minimum_scan_interval" value="0.20"/>
+    <param name="ray_stride" value="4"/>
+    <param name="maximum_sync_error" value="0.05"/>
+    <rosparam param="floor_heights">[0.0, 2.6, 5.2]</rosparam>
+    <rosparam param="sensor_translation">[0.2, 0.0, 0.08]</rosparam>
+    <param name="sensor_pitch" value="0.785"/>
+  </node>
+</launch>

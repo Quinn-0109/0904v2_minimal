@@ -1,0 +1,504 @@
+<?xml version="1.0"?>
+<!--
+  SCAN-Planner + physical Unitree RL three-floor mission.
+
+  Flat floors: Livox -> SCAN B-spline -> floor command mux -> /cmd_vel ->
+  policy_act_inference_plane.pt -> A1 joint controllers.
+
+  Stairs: the floor mux publishes one stop and becomes silent.  The existing
+  stair managers exclusively own /cmd_vel and hot-load the stair RL policy.
+  A fresh plane-policy acknowledgement is required on every upper landing.
+
+  No body_cmd_vel_driver.py and no /gazebo/set_model_state are used.
+-->
+<launch>
+  <arg name="output_dir"
+       default="$(find simenv_bridge)/../../results/scanplanner_three_floor_rl"/>
+  <arg name="mission_config"
+       default="$(find simenv_bridge)/config/three_floor_rl_mission.json"/>
+  <arg name="world_file"
+       default="$(find simenv_competitor)/../../generated_building/elevator_three_floor_debug/competition_scene_with_dangers.world"/>
+  <arg name="layout_metadata"
+       default="$(find simenv_competitor)/../../generated_building/elevator_three_floor_debug/layout_metadata.json"/>
+  <arg name="stair_model_sdf"
+       default="$(find simenv_competitor)/../../generated_building/elevator_three_floor_debug/model.sdf"/>
+  <arg name="door_config"
+       default="$(find simenv_competitor)/../../generated_building/elevator_three_floor_debug/door_config.yaml"/>
+  <arg name="elevator_config"
+       default="$(find simenv_competitor)/../../generated_building/elevator_three_floor_debug/elevator_config.yaml"/>
+  <arg name="plane_policy"
+       default="$(find unitree_guide)/../../logs/policy_act_inference_plane.pt"/>
+  <arg name="stair_policy"
+       default="$(find unitree_guide)/../../logs/policy_act_inference_stair.pt"/>
+  <arg name="record_camera_video"
+       default="$(optenv RECORD_CAMERA_VIDEO false)"/>
+
+  <env name="DISPLAY" value="$(optenv DISPLAY :99)"/>
+  <env name="LIBGL_ALWAYS_SOFTWARE" value="$(optenv LIBGL_ALWAYS_SOFTWARE 1)"/>
+  <param name="use_sim_time" value="true"/>
+  <!-- Start gait recovery before a corridor roll becomes self-sustaining.
+       These thresholds are stricter than the controller defaults
+       (0.20/0.32/0.14 rad); stair policy motion is explicitly exempt. -->
+  <param name="/simenv/plane_tilt_guard_warning_rad" value="0.14"/>
+  <param name="/simenv/plane_tilt_guard_stop_rad" value="0.27"/>
+  <param name="/simenv/plane_tilt_guard_release_rad" value="0.10"/>
+
+  <!-- Gazebo, physical A1 joint controllers, sensors and hot-reloadable RL. -->
+  <include file="$(find simenv_competitor)/launch/mapping_test.launch">
+    <arg name="world_file" value="$(arg world_file)"/>
+    <arg name="door_config" value="$(arg door_config)"/>
+    <arg name="elevator_config" value="$(arg elevator_config)"/>
+    <arg name="gui" value="false"/>
+    <arg name="rviz" value="false"/>
+    <arg name="teleop" value="false"/>
+    <!-- The image launcher hard-codes a missing devel_0803b controller.
+         Start Gazebo/controllers here, then launch the project-rebuilt current
+         RL controller below. -->
+    <arg name="start_controller" value="false"/>
+    <arg name="enable_realsense" value="true"/>
+    <arg name="realsense_width" value="320"/>
+    <arg name="realsense_height" value="240"/>
+    <arg name="realsense_update_rate" value="10.0"/>
+    <arg name="enable_front_camera" value="true"/>
+    <arg name="front_camera_width" value="640"/>
+    <arg name="front_camera_height" value="480"/>
+    <arg name="front_camera_update_rate" value="20.0"/>
+    <arg name="enable_referee_odom" value="true"/>
+    <arg name="enable_ground_truth" value="true"/>
+    <arg name="enable_building_control" value="true"/>
+    <arg name="open_mapping_entrance" value="true"/>
+    <arg name="enable_mapping_visualizer" value="false"/>
+    <!-- SCAN consumes the simulator world-frame Livox cloud and Gazebo
+         odometry directly. FAST-LIO is not a mission dependency and keeping
+         its delayed process in this launch only wastes native-run resources. -->
+    <arg name="enable_fastlio" value="false"/>
+    <arg name="sensor_warmup_seconds" value="5.0"/>
+    <arg name="slam_startup_delay_seconds" value="1200.0"/>
+    <arg name="controller_dt" value="0.004"/>
+    <arg name="controller_cpu_affinity" value=""/>
+    <arg name="controller_startup_timeout" value="300"/>
+    <arg name="controller_clock_stall_timeout" value="120.0"/>
+    <arg name="controller_safe_paused_start" value="true"/>
+    <arg name="rl_policy" value="$(arg plane_policy)"/>
+    <arg name="rl_device" value="hybrid"/>
+    <arg name="robot_x" value="0.0"/>
+    <arg name="robot_y" value="-3.2"/>
+    <arg name="robot_z" value="0.6"/>
+    <arg name="robot_yaw" value="1.5708"/>
+  </include>
+
+  <include file="$(find simenv_bridge)/launch/unitree_rl_controller.launch">
+    <arg name="rl_policy" value="$(arg plane_policy)"/>
+    <arg name="preload_plane_policy" value="$(arg plane_policy)"/>
+    <arg name="preload_stair_policy" value="$(arg stair_policy)"/>
+    <arg name="rl_device" value="hybrid"/>
+    <arg name="controller_dt" value="0.004"/>
+    <arg name="controller_cpu_affinity" value=""/>
+    <arg name="controller_startup_timeout" value="300"/>
+    <arg name="controller_clock_stall_timeout" value="120.0"/>
+  </include>
+
+  <!-- Publish the packed world-frame PointCloud2 directly on SCAN's input.
+       The image's generic bridge constructs an unused Livox CustomMsg, while
+       the former second Python relay only changed this already-world-frame
+       message's frame id and serialized it again. -->
+  <node pkg="simenv_bridge" type="scanplanner_pointcloud_bridge.py"
+        name="scanplanner_pointcloud_bridge" output="screen" required="true">
+    <param name="input" value="/scan"/>
+    <param name="output" value="/registered_scan"/>
+    <param name="odom_topic" value="/Odometry_gazebo"/>
+    <param name="world_frame" value="map"/>
+    <param name="maximum_rate_hz" value="5.0"/>
+    <param name="laser_blind" value="0.5"/>
+    <param name="minimum_vertical_angle_deg" value="-7"/>
+    <param name="maximum_vertical_angle_deg" value="55"/>
+  </node>
+
+  <!-- SCAN is the flat-floor planner.  Its raw command is isolated so the
+       mux can give each stair manager uncontested command ownership. -->
+  <include file="$(find scan_planner)/launch/simenv_scan.launch">
+    <arg name="navi_mode" value="1"/>
+    <arg name="sensor_type" value="lidar"/>
+    <arg name="max_vel" value="2.05"/>
+    <arg name="max_acc" value="1.10"/>
+    <arg name="body_pose_topic" value="/Odometry_gazebo"/>
+    <arg name="sensor_pose_topic" value="/Odometry_gazebo"/>
+    <arg name="cloud_topic" value="/registered_scan"/>
+    <arg name="cloud_is_world" value="true"/>
+    <arg name="command_topic" value="/scanplanner/planner_cmd_vel"/>
+    <arg name="manual_goal_use_current_height" value="true"/>
+  </include>
+
+  <node pkg="simenv_competitor" type="controller_mode_bootstrap.py"
+        name="scanplanner_plane_rl_bootstrap" output="screen">
+    <param name="stand_after_seconds" value="1.0"/>
+    <param name="fixed_stand_max_duration_sec" value="25.0"/>
+    <param name="rl_repeat_seconds" value="120.0"/>
+    <param name="release_after_rl_request" value="true"/>
+  </node>
+  <node pkg="simenv_bridge" type="rl_floor_command_mux.py"
+        name="rl_floor_command_mux" output="screen" required="true">
+    <param name="planner_topic" value="/scanplanner/planner_cmd_vel"/>
+    <param name="output_topic" value="/cmd_vel"/>
+    <param name="rate" value="30.0"/>
+    <param name="command_timeout_sec" value="0.40"/>
+    <param name="max_forward" value="2.25"/>
+    <param name="max_reverse" value="0.20"/>
+    <param name="max_lateral" value="0.75"/>
+    <param name="max_yaw" value="3.00"/>
+    <param name="yaw_slowdown" value="1.05"/>
+    <param name="yaw_translation_stop" value="1.30"/>
+    <param name="linear_acceleration" value="2.20"/>
+    <param name="linear_deceleration" value="2.00"/>
+    <param name="yaw_acceleration" value="2.40"/>
+  </node>
+
+  <!-- F1 -> F2 physical two-flight stair controller. -->
+  <node pkg="simenv_bridge" type="stair_transition_manager.py"
+        name="stair_transition_manager" output="screen" required="false">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="odom_topic" value="/Odometry_gazebo"/>
+    <param name="stair_policy" value="$(arg stair_policy)"/>
+    <param name="plane_policy" value="$(arg plane_policy)"/>
+    <param name="auto_start" value="false"/>
+    <param name="truth_entry_guide" value="true"/>
+    <param name="truth_fixed_two_flight_profile" value="true"/>
+    <param name="truth_two_stage_guide" value="true"/>
+    <param name="enable_truth_return_gate" value="false"/>
+    <param name="enable_visual_stair_alignment" value="false"/>
+    <param name="offline_stair_model_sdf" value="$(arg stair_model_sdf)"/>
+    <param name="offline_truth_layout_metadata" value="$(arg layout_metadata)"/>
+    <param name="truth_entry_timeout_sec" value="120.0"/>
+    <param name="truth_entry_guide_speed_mps" value="0.45"/>
+    <param name="truth_entry_guide_min_speed_mps" value="0.25"/>
+    <param name="truth_entry_final_speed_mps" value="0.55"/>
+    <param name="entry_alignment_yaw_rate_rps" value="0.40"/>
+    <param name="ascent_speed_mps" value="0.80"/>
+    <param name="ascent_maximum_speed_mps" value="0.80"/>
+    <param name="ascent_timeout_sec" value="70.0"/>
+    <param name="flight_b_timeout_sec" value="70.0"/>
+    <param name="hold_rl_during_ascent" value="true"/>
+    <param name="world_frame_ascent" value="true"/>
+    <param name="two_flight_stair" value="true"/>
+    <param name="flight_a_height_gain_m" value="1.05"/>
+    <param name="total_height_gain_m" value="2.20"/>
+    <param name="landing_cross_distance_m" value="0.95"/>
+    <param name="landing_cross_speed_mps" value="0.75"/>
+    <param name="landing_turn_angle_rad" value="-2.40"/>
+    <!-- Keep the stair gait moving through the broad platform instead of
+         spending roughly nine seconds in the hairpin servo.  These are the
+         manager's original bounded platform defaults; the position and
+         heading acceptance gates remain unchanged. -->
+    <param name="landing_turn_speed_rps" value="1.20"/>
+    <param name="truth_landing_recenter_speed_mps" value="0.75"/>
+    <param name="landing_heading_tolerance_rad" value="0.15"/>
+    <param name="landing_timeout_sec" value="30.0"/>
+    <param name="policy_warmup_seconds" value="0.20"/>
+    <!-- Keep stair RL active across the intermediate landing.  A FixedStand
+         interlude here destabilizes the already-balanced policy when it is
+         handed control back at the second flight. -->
+    <param name="pre_ascent_stand_seconds" value="0.0"/>
+    <param name="pre_ascent_rl_settle_seconds" value="0.60"/>
+    <param name="pre_ascent_rl_fast_takeover" value="true"/>
+    <param name="pre_ascent_rl_fast_blend_seconds" value="0.50"/>
+    <param name="pre_ascent_rl_fast_zero_hold_seconds" value="0.15"/>
+    <param name="truth_flight_a_prediction_horizon_sec" value="1.10"/>
+    <param name="truth_flight_a_stall_release_seconds" value="1.50"/>
+    <param name="truth_flight_a_require_fresh_ready" value="true"/>
+    <param name="truth_flight_a_climb_ramp_seconds" value="1.20"/>
+    <param name="truth_flight_a_policy_stand_seconds" value="0.10"/>
+    <param name="truth_flight_a_policy_settle_seconds" value="0.35"/>
+    <param name="truth_flight_a_policy_settle_timeout_sec" value="8.0"/>
+    <param name="truth_flight_a_policy_capture_max_joint_velocity_rms" value="0.18"/>
+    <!-- Freeze the atomically captured, low-velocity plane-RL pose during
+         FixedStand.  Driving the robot toward the symmetric default pose at
+         this boundary caused a measured roll-over on the flat F1 landing
+         before the stair policy was even loaded. -->
+    <param name="truth_flight_a_policy_use_default_stand_target" value="false"/>
+    <param name="truth_flight_a_policy_require_fixed_stand_ready" value="true"/>
+    <param name="truth_flight_a_policy_fixed_stand_ready_timeout_sec" value="12.0"/>
+    <param name="truth_flight_a_policy_fast_fixed_stand" value="true"/>
+    <param name="truth_flight_a_policy_fast_fixed_stand_duration_seconds" value="0.50"/>
+    <param name="truth_flight_a_policy_fast_fixed_stand_settle_seconds" value="0.00"/>
+    <param name="truth_flight_a_policy_fast_fixed_stand_minimum_elapsed_seconds" value="0.50"/>
+    <param name="truth_flight_a_policy_fast_fixed_stand_stable_seconds" value="0.50"/>
+    <!-- The captured target starts at zero position error, so retaining 75%
+         stance gain only resists the stochastic single-support roll observed
+         when the former ramp began at zero gain. -->
+    <param name="truth_flight_a_policy_fast_fixed_stand_minimum_gain_ratio" value="0.75"/>
+    <!-- Ordinary predictor corrections retain enough tread-contact speed to
+         avoid turning most of the climb into a 0.40 m/s crawl.  Strong
+         lateral escape, edge proximity, and slip still use the proven
+         0.40 m/s protection profile. -->
+    <param name="truth_flight_a_recovery_forward_speed_mps" value="0.60"/>
+    <param name="truth_flight_a_strong_recovery_forward_speed_mps" value="0.40"/>
+    <param name="truth_flight_a_near_edge_strong_center_error_m" value="0.24"/>
+    <param name="truth_flight_a_recovery_center_speed_mps" value="0.22"/>
+    <!-- Catch sustained rearward motion while height is still rising.  Seed
+         4's Flight A backslide was separable at 0.31 to 0.35 m/s more than
+         0.6 s before its pitch collapsed; successful stress traces stayed
+         below 0.23 m/s.  Re-land the stair policy in place, then use a short
+         0.40 m/s recovery ramp without lowering the nominal 0.80 m/s gait. -->
+    <param name="truth_flight_a_rearward_slip_speed_mps" value="0.30"/>
+    <param name="truth_flight_a_rearward_slip_max_climb_speed_mps" value="0.12"/>
+    <param name="truth_flight_a_backslide_recovery_hold_seconds" value="1.50"/>
+    <param name="truth_flight_a_backslide_recovery_ramp_seconds" value="1.00"/>
+    <param name="truth_flight_a_backslide_recovery_ramp_speed_mps" value="0.40"/>
+    <param name="truth_flight_a_backslide_recovery_max_attempts" value="2"/>
+    <param name="truth_flight_b_recovery_forward_speed_mps" value="0.60"/>
+    <param name="truth_flight_b_strong_recovery_forward_speed_mps" value="0.40"/>
+    <param name="truth_flight_b_near_edge_strong_center_error_m" value="0.24"/>
+    <param name="truth_flight_b_rearward_slip_speed_mps" value="0.30"/>
+    <!-- Seed-3 continued climbing while its trunk pitched forward too fast
+         for the height/backslide guards.  Catch that transient before the
+         Euler heading flips, re-land for 1.5 s, then reuse the 0.40 m/s ramp. -->
+    <param name="truth_flight_b_pitch_rate_window_sec" value="0.18"/>
+    <param name="truth_flight_b_pitch_rate_trigger_rps" value="1.60"/>
+    <param name="truth_flight_b_pitch_rate_min_abs_rad" value="0.60"/>
+    <param name="truth_flight_b_severe_pitch_rad" value="0.80"/>
+    <param name="truth_flight_b_severe_pitch_detect_seconds" value="0.10"/>
+    <param name="truth_flight_b_pitch_min_height_gain_m" value="0.08"/>
+    <param name="truth_flight_b_pitch_recovery_max_attempts" value="2"/>
+    <param name="truth_flight_b_max_yaw_rate_rps" value="0.10"/>
+    <param name="truth_flight_b_recovery_hold_seconds" value="4.0"/>
+    <param name="upper_landing_clearance_grace_sec" value="15.0"/>
+    <param name="second_floor_stable_seconds" value="0.50"/>
+    <param name="wait_for_second_floor_handoff" value="true"/>
+    <param name="second_floor_handoff_timeout_sec" value="90.0"/>
+    <param name="command_topic" value="/cmd_vel"/>
+  </node>
+
+  <!-- F2 -> F3 is a topic-isolated second instance. -->
+  <node pkg="simenv_bridge" type="stair_transition_manager.py"
+        name="second_to_third_floor_stair_manager" output="screen"
+        required="false">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="odom_topic" value="/Odometry_gazebo"/>
+    <param name="stair_policy" value="$(arg stair_policy)"/>
+    <param name="plane_policy" value="$(arg plane_policy)"/>
+    <param name="source_floor_index" value="1"/>
+    <param name="target_floor_number" value="3"/>
+    <param name="mission_trigger_topic" value="/simenv/second_floor_state"/>
+    <param name="mission_trigger_token" value="SECOND_FLOOR_EXPLORATION_COMPLETE"/>
+    <param name="mission_failure_token" value="SECOND_FLOOR_EXPLORATION_FAILED"/>
+    <param name="state_topic" value="/simenv/second_to_third_floor_stair_state"/>
+    <param name="upper_floor_state_topic" value="/simenv/third_floor_state"/>
+    <param name="upper_floor_reached_phase" value="THIRD_FLOOR_REACHED"/>
+    <param name="upper_floor_settle_phase" value="THIRD_FLOOR_SETTLE"/>
+    <param name="upper_floor_ready_token" value="THIRD_FLOOR_EXPLORATION_READY"/>
+    <param name="upper_floor_handoff_complete_phase" value="THIRD_FLOOR_HANDOFF_COMPLETE"/>
+    <param name="upper_floor_handoff_timeout_phase" value="THIRD_FLOOR_HANDOFF_TIMEOUT"/>
+    <param name="transition_log_basename" value="second_to_third_floor_stair_transition.json"/>
+    <param name="transition_plot_basename" value="21_second_to_third_floor_stair_transition.png"/>
+    <param name="trajectory_plot_basename" value="21_f2_to_third_floor_trajectory.png"/>
+    <param name="height_plot_basename" value="21_truth_stair_height_f2_to_f3.png"/>
+    <param name="auto_start" value="false"/>
+    <param name="truth_entry_guide" value="true"/>
+    <param name="truth_fixed_two_flight_profile" value="true"/>
+    <param name="truth_two_stage_guide" value="true"/>
+    <param name="enable_truth_return_gate" value="false"/>
+    <param name="truth_upper_floor_exit_clearance_m" value="0.80"/>
+    <param name="enable_visual_stair_alignment" value="false"/>
+    <param name="offline_stair_model_sdf" value="$(arg stair_model_sdf)"/>
+    <param name="offline_truth_layout_metadata" value="$(arg layout_metadata)"/>
+    <param name="truth_entry_timeout_sec" value="120.0"/>
+    <param name="truth_entry_guide_speed_mps" value="0.45"/>
+    <param name="truth_entry_guide_min_speed_mps" value="0.25"/>
+    <param name="truth_entry_final_speed_mps" value="0.55"/>
+    <param name="entry_alignment_yaw_rate_rps" value="0.40"/>
+    <param name="ascent_speed_mps" value="0.80"/>
+    <param name="ascent_maximum_speed_mps" value="0.80"/>
+    <param name="ascent_timeout_sec" value="45.0"/>
+    <param name="flight_b_timeout_sec" value="22.0"/>
+    <param name="hold_rl_during_ascent" value="true"/>
+    <param name="world_frame_ascent" value="true"/>
+    <param name="two_flight_stair" value="true"/>
+    <param name="flight_a_height_gain_m" value="1.05"/>
+    <param name="total_height_gain_m" value="2.20"/>
+    <param name="landing_cross_distance_m" value="0.95"/>
+    <param name="landing_cross_speed_mps" value="0.75"/>
+    <param name="landing_turn_angle_rad" value="-2.40"/>
+    <param name="landing_turn_speed_rps" value="1.20"/>
+    <param name="truth_landing_recenter_speed_mps" value="0.75"/>
+    <param name="landing_heading_tolerance_rad" value="0.15"/>
+    <param name="landing_timeout_sec" value="30.0"/>
+    <param name="policy_warmup_seconds" value="0.20"/>
+    <param name="pre_ascent_stand_seconds" value="0.0"/>
+    <param name="pre_ascent_rl_settle_seconds" value="0.60"/>
+    <param name="pre_ascent_rl_fast_takeover" value="true"/>
+    <param name="pre_ascent_rl_fast_blend_seconds" value="0.50"/>
+    <param name="pre_ascent_rl_fast_zero_hold_seconds" value="0.15"/>
+    <param name="truth_flight_a_stall_release_seconds" value="1.50"/>
+    <param name="truth_flight_a_require_fresh_ready" value="true"/>
+    <param name="truth_flight_a_climb_ramp_seconds" value="1.20"/>
+    <param name="truth_flight_a_policy_stand_seconds" value="0.10"/>
+    <param name="truth_flight_a_policy_settle_seconds" value="0.35"/>
+    <param name="truth_flight_a_policy_settle_timeout_sec" value="8.0"/>
+    <param name="truth_flight_a_policy_capture_max_joint_velocity_rms" value="0.18"/>
+    <param name="truth_flight_a_policy_use_default_stand_target" value="false"/>
+    <param name="truth_flight_a_policy_require_fixed_stand_ready" value="true"/>
+    <param name="truth_flight_a_policy_fixed_stand_ready_timeout_sec" value="12.0"/>
+    <param name="truth_flight_a_policy_fast_fixed_stand" value="true"/>
+    <param name="truth_flight_a_policy_fast_fixed_stand_duration_seconds" value="0.50"/>
+    <param name="truth_flight_a_policy_fast_fixed_stand_settle_seconds" value="0.00"/>
+    <param name="truth_flight_a_policy_fast_fixed_stand_minimum_elapsed_seconds" value="0.50"/>
+    <param name="truth_flight_a_policy_fast_fixed_stand_stable_seconds" value="0.50"/>
+    <param name="truth_flight_a_policy_fast_fixed_stand_minimum_gain_ratio" value="0.75"/>
+    <param name="truth_flight_a_recovery_forward_speed_mps" value="0.60"/>
+    <param name="truth_flight_a_strong_recovery_forward_speed_mps" value="0.40"/>
+    <param name="truth_flight_a_near_edge_strong_center_error_m" value="0.24"/>
+    <param name="truth_flight_a_recovery_center_speed_mps" value="0.22"/>
+    <param name="truth_flight_a_rearward_slip_speed_mps" value="0.30"/>
+    <param name="truth_flight_a_rearward_slip_max_climb_speed_mps" value="0.12"/>
+    <param name="truth_flight_a_backslide_recovery_hold_seconds" value="1.50"/>
+    <param name="truth_flight_a_backslide_recovery_ramp_seconds" value="1.00"/>
+    <param name="truth_flight_a_backslide_recovery_ramp_speed_mps" value="0.40"/>
+    <param name="truth_flight_a_backslide_recovery_max_attempts" value="2"/>
+    <param name="truth_flight_b_recovery_forward_speed_mps" value="0.60"/>
+    <param name="truth_flight_b_strong_recovery_forward_speed_mps" value="0.40"/>
+    <param name="truth_flight_b_near_edge_strong_center_error_m" value="0.24"/>
+    <param name="truth_flight_b_rearward_slip_speed_mps" value="0.30"/>
+    <param name="truth_flight_b_pitch_rate_window_sec" value="0.18"/>
+    <param name="truth_flight_b_pitch_rate_trigger_rps" value="1.60"/>
+    <param name="truth_flight_b_pitch_rate_min_abs_rad" value="0.60"/>
+    <param name="truth_flight_b_severe_pitch_rad" value="0.80"/>
+    <param name="truth_flight_b_severe_pitch_detect_seconds" value="0.10"/>
+    <param name="truth_flight_b_pitch_min_height_gain_m" value="0.08"/>
+    <param name="truth_flight_b_pitch_recovery_max_attempts" value="2"/>
+    <param name="truth_flight_b_max_yaw_rate_rps" value="0.10"/>
+    <param name="truth_flight_b_recovery_hold_seconds" value="4.0"/>
+    <param name="upper_landing_clearance_grace_sec" value="15.0"/>
+    <param name="second_floor_stable_seconds" value="0.50"/>
+    <param name="wait_for_second_floor_handoff" value="true"/>
+    <param name="second_floor_handoff_timeout_sec" value="90.0"/>
+    <param name="command_topic" value="/cmd_vel"/>
+  </node>
+
+  <!-- F3 -> F2 -> F1 under the stair policy.  The isolated physical smoke
+       test includes this exact same controller/tune. -->
+  <include file="$(find simenv_bridge)/launch/stair_descent_controller.launch">
+    <arg name="output_dir" value="$(arg output_dir)"/>
+    <arg name="odom_topic" value="/Odometry_gazebo"/>
+    <arg name="stair_policy" value="$(arg stair_policy)"/>
+    <arg name="stair_model_sdf" value="$(arg stair_model_sdf)"/>
+    <arg name="layout_metadata" value="$(arg layout_metadata)"/>
+    <arg name="mission_trigger_topic" value="/simenv/third_floor_state"/>
+    <arg name="mission_trigger_token" value="THIRD_FLOOR_EXPLORATION_COMPLETE"/>
+    <arg name="truth_entry_guide" value="true"/>
+    <arg name="skip_entry_guide" value="true"/>
+    <arg name="trigger_timeout_sec" value="2400.0"/>
+  </include>
+
+  <node pkg="simenv_bridge" type="scanplanner_three_floor_goal_sequencer.py"
+        name="scanplanner_three_floor_goal_sequencer" output="screen"
+        required="false">
+    <param name="mission_config" value="$(arg mission_config)"/>
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="startup_timeout_sec" value="240.0"/>
+    <param name="waypoint_timeout_sec" value="150.0"/>
+    <param name="progress_timeout_sec" value="45.0"/>
+    <param name="maximum_replans" value="2"/>
+    <param name="minimum_upright_z" value="0.55"/>
+    <param name="minimum_upright_duration_sec" value="0.60"/>
+    <param name="room_tolerance" value="0.40"/>
+    <param name="policy_timeout_sec" value="35.0"/>
+    <param name="speed_scale" value="2.60"/>
+    <param name="entrance_speed_scale" value="1.45"/>
+    <param name="maximum_floor_speed" value="2.25"/>
+    <param name="direct_plane_yaw_rate" value="1.15"/>
+    <param name="direct_plane_min_forward_speed" value="0.30"/>
+    <param name="direct_plane_distance_gain" value="1.25"/>
+    <param name="direct_plane_translation_heading_limit_rad" value="1.45"/>
+    <param name="direct_plane_max_lateral_speed_mps" value="0.75"/>
+    <!-- Prevent the learned plane gait from turning an incipient lean into a
+         fall.  This only reduces commands while tilted; the 2.25 m/s ceiling
+         and the independent failure threshold remain unchanged. -->
+    <param name="plane_attitude_slowdown_upright_z" value="0.97"/>
+    <param name="plane_attitude_hold_upright_z" value="0.90"/>
+    <param name="direct_stair_yaw_rate" value="0.35"/>
+    <!-- Keep the entrance gait parallel to the doorway after a stochastic
+         stair-policy side step; correct cross-track error without pivoting
+         the body toward an off-axis waypoint. -->
+    <param name="entrance_fixed_heading_release_rad" value="0.20"/>
+    <param name="entrance_lateral_gain" value="0.60"/>
+    <param name="entrance_max_lateral_speed_mps" value="0.12"/>
+    <param name="entrance_progress_timeout_sec" value="5.0"/>
+    <param name="entrance_recovery_hold_sec" value="1.0"/>
+    <param name="entrance_recovery_max_attempts" value="2"/>
+    <param name="plane_fast_takeover" value="true"/>
+    <param name="plane_fast_takeover_blend_seconds" value="0.50"/>
+    <param name="plane_fast_takeover_zero_hold_seconds" value="0.15"/>
+    <param name="plane_motion_start_ramp_seconds" value="3.00"/>
+    <param name="plane_motion_start_ramp_initial_speed_mps" value="0.30"/>
+    <param name="plane_motion_start_ramp_minimum_upright_z" value="0.985"/>
+    <param name="stage_announcement_hold_sec" value="0.15"/>
+    <param name="floor_control_settle_sec" value="0.15"/>
+    <param name="manager_release_settle_sec" value="0.10"/>
+    <!-- This is an outer end-to-end budget spanning entry guidance, the
+         verified FixedStand/policy boundary, both physical flights, landing
+         turn and upper-floor handoff.  Each motion phase already has its own
+         tighter watchdog; 90 s expired just after flight B began. -->
+    <param name="handoff_timeout_sec" value="300.0"/>
+    <param name="room_scan_turn_rad" value="1.90"/>
+    <param name="room_scan_yaw_rate" value="2.80"/>
+    <param name="room_scan_timeout_sec" value="30.0"/>
+    <param name="room_scan_settle_sec" value="0.10"/>
+  </node>
+
+  <!-- Online camera/depth detection. The independent recording-camera RGB
+       stream remains live on F3; recent co-located RealSense depth is fused
+       when available. Scene truth is used only by the post-run checker. -->
+  <node pkg="simenv_bridge" type="danger_detector.py"
+        name="scanplanner_red_ball_detector" output="screen" required="true">
+    <param name="out_json" value="$(arg output_dir)/red_ball_detections.json"/>
+    <param name="layout_metadata" value="$(arg layout_metadata)"/>
+    <param name="room_boundary_margin_m" value="0.50"/>
+    <param name="require_room_boundary_during_scan" value="true"/>
+    <param name="image_topic" value="/recording_camera/image_raw"/>
+    <param name="camera_info_topic" value="/recording_camera/camera_info"/>
+    <param name="depth_topic" value="/real_sense/depth/image_raw"/>
+    <param name="camera_ready_topic" value="/simenv/recording_camera_ready"/>
+    <param name="scan_active_topic" value="/scanplanner/room_scan_active"/>
+    <param name="maximum_processing_rate_hz" value="0.0"/>
+    <param name="use_depth" value="true"/>
+    <param name="confirm_count" value="3"/>
+    <param name="merge_radius" value="1.10"/>
+    <param name="floor_height_m" value="2.6"/>
+    <param name="ground_range_scale" value="0.95"/>
+  </node>
+
+  <!-- Save the detector-annotated robot-camera stream for the complete task,
+       including the descent and final return to the first-floor lobby. -->
+  <node if="$(arg record_camera_video)"
+        pkg="simenv_bridge" type="camera_video_recorder.py"
+        name="scanplanner_camera_video_recorder" output="screen">
+    <param name="out" value="$(arg output_dir)/scanplanner_camera_annotated.mp4"/>
+    <param name="fps" value="20.0"/>
+  </node>
+
+  <!-- Descent completion reloads plane RL and follows the safe F1 landing
+       exit configured in the mission file to the lobby centre. -->
+  <node pkg="simenv_bridge" type="three_floor_rl_mission_supervisor.py"
+        name="three_floor_rl_mission_supervisor" output="screen" required="true">
+    <param name="mission_config" value="$(arg mission_config)"/>
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <!-- Wall-clock watchdog is diagnostic only and must not pre-empt the
+         authoritative 600 s Gazebo simulation-time budget at low RTF. -->
+    <param name="mission_timeout_sec" value="1800.0"/>
+    <param name="progress_timeout_sec" value="20.0"/>
+    <param name="minimum_upright_z" value="0.55"/>
+    <param name="minimum_upright_duration_sec" value="0.60"/>
+    <param name="plane_fast_takeover" value="true"/>
+    <param name="plane_fast_takeover_blend_seconds" value="0.50"/>
+    <param name="plane_fast_takeover_zero_hold_seconds" value="0.15"/>
+    <param name="plane_motion_start_ramp_seconds" value="3.00"/>
+    <param name="plane_motion_start_ramp_initial_speed_mps" value="0.30"/>
+    <param name="plane_motion_start_ramp_minimum_upright_z" value="0.985"/>
+    <!-- The final lobby segment starts immediately after a long stair descent.
+         Hold a newly valid heading briefly and slew 0.18 -> 1.10 m/s instead
+         of applying the old one-cycle 0 -> 1.10 m/s command step. -->
+    <param name="lobby_heading_stable_sec" value="0.30"/>
+    <param name="lobby_linear_acceleration_mps2" value="1.00"/>
+    <param name="lobby_initial_forward_speed_mps" value="0.40"/>
+  </node>
+</launch>

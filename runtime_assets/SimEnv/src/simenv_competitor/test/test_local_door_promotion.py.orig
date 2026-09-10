@@ -1,0 +1,443 @@
+#!/usr/bin/env python3
+
+import os
+import sys
+import unittest
+from unittest import mock
+
+import numpy as np
+
+SCRIPTS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts"))
+sys.path.insert(0, SCRIPTS)
+
+from baseline_planning_core import OccupancyGrid2D  # noqa: E402
+from lightweight_room_core import (  # noqa: E402
+    EstimatedDoorway, LightweightRoomConfig, LightweightRoomScheduler,
+    prepare_exit_path, plan_two_pose_room_sweep, sparsify_verified_trace,
+)
+
+
+class LocalDoorPromotionTest(unittest.TestCase):
+    def setUp(self):
+        self.scheduler = LightweightRoomScheduler(
+            LightweightRoomConfig(enabled=True))
+        self.evidence = {
+            "candidate_id": "local-door-1",
+            "confirmed": True,
+            "astar_reachable": True,
+            "scan_lite_safe": True,
+            "door_center": [2.0, 1.0],
+            "corridor_side": [2.0, 0.4],
+            "entry_goal": [2.0, 2.5],
+            "yaw": 1.57079632679,
+            "width_m": 1.2,
+            "confirmation_count": 3,
+        }
+
+    def test_locomotion_recovery_does_not_consume_exit_retry(self):
+        door = EstimatedDoorway(
+            door_id="estimated_door_pause", center=(2.0, 1.0),
+            normal_direction=1.57079632679, width=1.2,
+            left_frame_point=(1.4, 1.0), right_frame_point=(2.6, 1.0),
+            corridor_side=(2.0, 0.4), interior_side=(2.0, 2.5),
+            confidence=0.9, entered_at=1.0)
+        self.scheduler.active_door = door
+        self.scheduler.active_room_id = "estimated_room_pause"
+        self.scheduler.state = "ROOM_EXIT"
+        self.scheduler.exit_attempts = 0
+        result = self.scheduler.record_result(
+            {"source": "lightweight_room_exit", "room_role": "EXIT",
+             "room_id": "estimated_room_pause",
+             "position": [2.0, 0.2, 0.0]},
+            False, (2.0, 2.0), 12.0, "locomotion_not_ready")
+        self.assertFalse(result["success"])
+        self.assertTrue(result["transient_locomotion_failure"])
+        self.assertEqual(self.scheduler.exit_attempts, 0)
+        self.assertIs(self.scheduler.active_door, door)
+        self.assertEqual(self.scheduler.state, "ROOM_EXIT")
+        self.assertEqual(
+            self.scheduler.events[-1]["event"],
+            "ROOM_GOAL_DEFERRED_LOCOMOTION_RECOVERY")
+
+    def test_confirmed_local_candidate_enters_common_preflight(self):
+        sentinel = object()
+        grid = OccupancyGrid2D(
+            np.zeros((40, 40), dtype=np.int16), 0.15, 0.0, 0.0)
+        self.scheduler._prepare_and_activate = mock.Mock(return_value=sentinel)
+        result = self.scheduler.consider_local_door_candidate(
+            grid, (2.0, 0.0), self.evidence, 12.0)
+        self.assertIs(result, sentinel)
+        door = self.scheduler._prepare_and_activate.call_args[0][1]
+        self.assertEqual(door.center, (2.0, 1.0))
+        self.assertEqual(door.corridor_side, (2.0, 0.4))
+        self.assertEqual(door.interior_side, (2.0, 2.5))
+        self.assertEqual(self.scheduler.events[-1]["event"],
+                         "LOCAL_DOOR_CANDIDATE_PROMOTED")
+
+    def test_unconfirmed_candidate_cannot_activate(self):
+        self.evidence["confirmed"] = False
+        self.scheduler._prepare_and_activate = mock.Mock()
+        self.assertIsNone(self.scheduler.consider_local_door_candidate(
+            object(), (2.0, 0.0), self.evidence, 12.0))
+        self.scheduler._prepare_and_activate.assert_not_called()
+
+    def test_failed_corridor_resume_can_be_released(self):
+        self.scheduler.state = "CORRIDOR_RESUME"
+        self.scheduler.abandon_corridor_resume(20.0, "failure_limit")
+        self.assertEqual(self.scheduler.state, "CORRIDOR_SWEEP")
+
+    def test_exit_preflight_bounds_each_local_astar(self):
+        map_grid = OccupancyGrid2D(
+            np.zeros((100, 100), dtype=np.int16), 0.15, 0.0, 0.0)
+        config = LightweightRoomConfig(
+            enabled=True, exit_preflight_maximum_expansions=321)
+        door = EstimatedDoorway(
+            door_id="estimated_door_01", center=(7.5, 7.5),
+            normal_direction=0.0, width=1.20,
+            left_frame_point=(7.5, 8.1),
+            right_frame_point=(7.5, 6.9),
+            corridor_side=(6.9, 7.5), interior_side=(9.0, 7.5),
+            confidence=0.9, entered_at=1.0)
+        with mock.patch(
+                "lightweight_room_core.astar_safe_path",
+                return_value={"success": False,
+                              "reason": "maximum_expansions", "path": []}) as planner:
+            self.assertIsNone(prepare_exit_path(
+                map_grid, door, (8.5, 7.5), config))
+        self.assertEqual(
+            planner.call_args.kwargs["maximum_expansions"], 321)
+
+    def test_unverified_initial_staging_uses_short_evidence_cooldown(self):
+        scheduler = LightweightRoomScheduler(LightweightRoomConfig(
+            enabled=True,
+            require_portal_preflight_for_entry=True,
+            door_evidence_retry_seconds=3.0,
+            door_cooldown_seconds=90.0))
+        door = EstimatedDoorway(
+            door_id="estimated_door_01", center=(2.0, 1.0),
+            normal_direction=1.57079632679, width=1.20,
+            left_frame_point=(1.4, 1.0), right_frame_point=(2.6, 1.0),
+            corridor_side=(2.0, 0.4), interior_side=(2.0, 2.5),
+            confidence=0.9, entered_at=10.0)
+        scheduler.active_door = door
+        scheduler.active_room_id = "estimated_room_01"
+        scheduler.room_started_at = 10.0
+        scheduler.prepared_entry = {
+            "position": [2.0, 1.25],
+            "score": 0.0,
+            "entry_staging_fallback": True,
+        }
+        grid = OccupancyGrid2D(
+            np.zeros((40, 40), dtype=np.int16), 0.15, 0.0, 0.0)
+
+        self.assertIsNone(scheduler.next_goal(grid, (2.0, 0.0), 12.0))
+        cooldowns = scheduler.snapshot()["door_cooldowns"]
+        self.assertEqual(len(cooldowns), 1)
+        self.assertAlmostEqual(cooldowns[0]["until"], 15.0)
+        self.assertIsNone(scheduler.active_door)
+
+    def test_cooled_known_unvisited_door_can_reactivate_without_duplicate(self):
+        door = EstimatedDoorway(
+            door_id="estimated_door_03", center=(6.0, -1.0),
+            normal_direction=-1.57079632679, width=1.0,
+            left_frame_point=(6.5, -1.0), right_frame_point=(5.5, -1.0),
+            corridor_side=(6.0, -0.4), interior_side=(6.0, -2.0),
+            confidence=0.95, entered_at=20.0)
+        self.scheduler.detector.doors.append(door)
+        self.scheduler._set_door_cooldown(door.center, 40.0)
+        sentinel = object()
+        self.scheduler._prepare_and_activate = mock.Mock(
+            return_value=sentinel)
+
+        result = self.scheduler.retry_known_unvisited_door(
+            object(), (6.0, 0.0), 41.0, 6.5)
+
+        self.assertIs(result, sentinel)
+        self.assertEqual(len(self.scheduler.detector.doors), 1)
+        self.assertIs(
+            self.scheduler._prepare_and_activate.call_args.args[1], door)
+        self.assertTrue(
+            self.scheduler._prepare_and_activate.call_args.kwargs[
+                "reuse_existing"])
+        self.assertEqual(
+            self.scheduler.events[-1]["event"],
+            "KNOWN_UNVISITED_DOOR_RETRY_SELECTED")
+
+    def test_known_unvisited_door_waits_for_cooldown(self):
+        door = EstimatedDoorway(
+            door_id="estimated_door_03", center=(6.0, -1.0),
+            normal_direction=-1.57079632679, width=1.0,
+            left_frame_point=(6.5, -1.0), right_frame_point=(5.5, -1.0),
+            corridor_side=(6.0, -0.4), interior_side=(6.0, -2.0),
+            confidence=0.95, entered_at=20.0)
+        self.scheduler.detector.doors.append(door)
+        self.scheduler._set_door_cooldown(door.center, 40.0)
+        self.scheduler._prepare_and_activate = mock.Mock()
+        self.assertIsNone(self.scheduler.retry_known_unvisited_door(
+            object(), (6.0, 0.0), 39.9, 6.5))
+        self.scheduler._prepare_and_activate.assert_not_called()
+
+
+    def test_open_room_relaxes_only_post_entry_path_after_normal_astar_fails(self):
+        grid = OccupancyGrid2D(
+            np.zeros((100, 100), dtype=np.int16), 0.15, 0.0, 0.0)
+        config = LightweightRoomConfig(
+            enabled=True, goal_clearance=0.38,
+            post_entry_path_clearance=0.20,
+            room_depth_probe_range=6.5, room_side_probe_range=5.0,
+            maximum_side_lateral=4.25, visual_breadth_min_baseline=3.6,
+            minimum_goal_separation=1.8)
+        door = EstimatedDoorway(
+            door_id="estimated_door_relaxed", center=(2.0, 7.5),
+            normal_direction=0.0, width=1.20,
+            left_frame_point=(2.0, 8.1),
+            right_frame_point=(2.0, 6.9),
+            corridor_side=(1.4, 7.5), interior_side=(3.4, 7.5),
+            confidence=0.9, entered_at=1.0)
+
+        def clearance_sensitive_path(_, start, target, clearance, *__args,
+                                     **__kwargs):
+            if clearance > 0.201:
+                return {"success": False, "reason": "goal_unreachable",
+                        "path": []}
+            return {"success": True, "reason": "path_found",
+                    "path": [start, target]}
+
+        with mock.patch(
+                "lightweight_room_core.astar_safe_path",
+                side_effect=clearance_sensitive_path):
+            route = plan_two_pose_room_sweep(
+                grid, door, (3.4, 7.5), door.interior_side, config)
+
+        self.assertIsNotNone(route)
+        self.assertEqual(len(route["ordered"]), 2)
+        self.assertTrue(all(
+            item["post_entry_path_clearance_relaxed"]
+            for item in route["ordered"]))
+        self.assertTrue(all(
+            abs(item["path_planning_clearance_m"] - 0.20) < 1e-6
+            for item in route["ordered"]))
+
+    def test_two_pose_clear_room_visits_deep_then_blind_near(self):
+        grid = OccupancyGrid2D(
+            np.zeros((160, 160), dtype=np.int16), 0.10, -8.0, -8.0)
+        config = LightweightRoomConfig(
+            enabled=True, room_depth_probe_range=6.5,
+            maximum_side_lateral=5.0, minimum_goal_separation=1.8)
+        door = EstimatedDoorway(
+            door_id="estimated_door_01", center=(0.0, 0.0),
+            normal_direction=0.0, width=1.2,
+            left_frame_point=(0.0, 0.6), right_frame_point=(0.0, -0.6),
+            corridor_side=(-0.6, 0.0), interior_side=(1.1, 0.0),
+            confidence=0.9, entered_at=1.0)
+
+        route = plan_two_pose_room_sweep(
+            grid, door, (1.1, 0.0), (1.1, 0.0), config)
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["strategy"], "deep_then_blind_near")
+        self.assertEqual(len(route["ordered"]), 2)
+        first, second = route["ordered"]
+        self.assertGreater(first["depth"], second["depth"])
+        self.assertGreaterEqual(first["depth"] - second["depth"], 2.0)
+        self.assertLess(second["depth"], 3.0)
+        self.assertGreater(route["baseline_m"], 2.5)
+        # The deep camera must leave the doorway-normal occlusion line, and
+        # the shallow view must lie on the opposite side with a substantial
+        # diagonal angle relative to that normal.
+        self.assertGreater(abs(first["lateral"]), 1.0)
+        self.assertLess(first["lateral"] * second["lateral"], 0.0)
+        lateral_delta = abs(first["lateral"] - second["lateral"])
+        depth_delta = abs(first["depth"] - second["depth"])
+        self.assertGreaterEqual(lateral_delta, 0.65 * depth_delta)
+
+    def test_two_pose_central_obstacle_splits_views_across_both_sides(self):
+        data = np.zeros((160, 160), dtype=np.int16)
+        resolution, origin = 0.10, -8.0
+        for wx in np.arange(2.35, 3.16, resolution):
+            for wy in np.arange(-0.55, 0.56, resolution):
+                x = int((wx - origin) / resolution)
+                y = int((wy - origin) / resolution)
+                data[y, x] = 100
+        grid = OccupancyGrid2D(data, resolution, origin, origin)
+        config = LightweightRoomConfig(
+            enabled=True, room_depth_probe_range=6.5,
+            maximum_side_lateral=5.0, minimum_goal_separation=1.8)
+        door = EstimatedDoorway(
+            door_id="estimated_door_01", center=(0.0, 0.0),
+            normal_direction=0.0, width=1.2,
+            left_frame_point=(0.0, 0.6), right_frame_point=(0.0, -0.6),
+            corridor_side=(-0.6, 0.0), interior_side=(1.1, 0.0),
+            confidence=0.9, entered_at=1.0)
+
+        route = plan_two_pose_room_sweep(
+            grid, door, (1.1, 0.0), (1.1, 0.0), config)
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["strategy"], "obstacle_side_split")
+        first, second = route["ordered"]
+        self.assertLess(first["lateral"] * second["lateral"], 0.0)
+        self.assertGreater(route["baseline_m"], 1.8)
+        self.assertGreaterEqual(min(first["depth"], second["depth"]),
+                                2.30)
+        self.assertGreater(route["baseline_m"], 1.8)
+
+    def test_two_pose_central_obstacle_finishes_near_door_when_enabled(self):
+        data = np.zeros((160, 160), dtype=np.int16)
+        resolution, origin = 0.10, -8.0
+        for wx in np.arange(2.35, 3.16, resolution):
+            for wy in np.arange(-0.55, 0.56, resolution):
+                x = int((wx - origin) / resolution)
+                y = int((wy - origin) / resolution)
+                data[y, x] = 100
+        grid = OccupancyGrid2D(data, resolution, origin, origin)
+        config = LightweightRoomConfig(
+            enabled=True, room_depth_probe_range=6.5,
+            maximum_side_lateral=5.0, minimum_goal_separation=1.8,
+            obstacle_second_view_near_door=True)
+        door = EstimatedDoorway(
+            door_id="estimated_door_03", center=(0.0, 0.0),
+            normal_direction=0.0, width=1.2,
+            left_frame_point=(0.0, 0.6), right_frame_point=(0.0, -0.6),
+            corridor_side=(-0.6, 0.0), interior_side=(1.1, 0.0),
+            confidence=0.9, entered_at=1.0)
+
+        route = plan_two_pose_room_sweep(
+            grid, door, (1.1, 0.0), (1.1, 0.0), config)
+
+        self.assertIsNotNone(route)
+        self.assertEqual(
+            route["strategy"], "obstacle_deep_then_opposite_near")
+        first, second = route["ordered"]
+        self.assertLess(first["lateral"] * second["lateral"], 0.0)
+        self.assertGreaterEqual(first["depth"] - second["depth"], 1.0)
+        self.assertLess(second["depth"], 2.35)
+        self.assertTrue(route["obstacle"]["second_view_near_door"])
+        self.assertLess(route["return_distance_m"], 3.5)
+
+    def test_two_pose_central_obstacle_uses_front_opposite_sides_when_enabled(self):
+        data = np.zeros((160, 160), dtype=np.int16)
+        resolution, origin = 0.10, -8.0
+        for wx in np.arange(1.70, 2.51, resolution):
+            for wy in np.arange(-0.55, 0.56, resolution):
+                x = int((wx - origin) / resolution)
+                y = int((wy - origin) / resolution)
+                data[y, x] = 100
+        grid = OccupancyGrid2D(data, resolution, origin, origin)
+        config = LightweightRoomConfig(
+            enabled=True, room_depth_probe_range=6.5,
+            maximum_side_lateral=5.0, minimum_goal_separation=1.8,
+            obstacle_second_view_near_door=True,
+            obstacle_front_opposite_side_pair=True)
+        door = EstimatedDoorway(
+            door_id="estimated_door_front_pair", center=(0.0, 0.0),
+            normal_direction=0.0, width=1.2,
+            left_frame_point=(0.0, 0.6), right_frame_point=(0.0, -0.6),
+            corridor_side=(-0.6, 0.0), interior_side=(1.1, 0.0),
+            confidence=0.9, entered_at=1.0)
+
+        route = plan_two_pose_room_sweep(
+            grid, door, (1.5, 0.0), (1.1, 0.0), config)
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["strategy"], "obstacle_front_side_split")
+        first, second = route["ordered"]
+        self.assertLess(first["lateral"] * second["lateral"], 0.0)
+        self.assertLess(max(first["depth"], second["depth"]), 1.70)
+        self.assertAlmostEqual(first["depth"], second["depth"], delta=0.35)
+        self.assertGreaterEqual(route["baseline_m"], 1.75)
+
+    def test_normal_exit_uses_three_saved_door_anchors(self):
+        grid = OccupancyGrid2D(
+            np.zeros((120, 120), dtype=np.int16), 0.10, -2.0, -6.0)
+        config = LightweightRoomConfig(enabled=True)
+        door = EstimatedDoorway(
+            door_id="estimated_door_01", center=(0.0, 0.0),
+            normal_direction=0.0, width=1.2,
+            left_frame_point=(0.0, 0.6), right_frame_point=(0.0, -0.6),
+            corridor_side=(-0.6, 0.0), interior_side=(1.1, 0.0),
+            confidence=0.9, entered_at=1.0)
+
+        result = prepare_exit_path(grid, door, (4.0, 0.0), config)
+
+        self.assertIsNotNone(result)
+        anchors = result["mandatory_portal_waypoints"]
+        self.assertEqual(len(anchors), 3)
+        self.assertGreater(door.depth(anchors[0]), 0.0)
+        self.assertLess(door.depth(anchors[-1]), 0.0)
+        self.assertFalse(result["nearest_observed_anchor_fallback"])
+
+    def test_exit_falls_back_to_nearest_live_inside_anchor(self):
+        grid = OccupancyGrid2D(
+            np.zeros((120, 120), dtype=np.int16), 0.10, -2.0, -6.0)
+        config = LightweightRoomConfig(enabled=True)
+        door = EstimatedDoorway(
+            door_id="estimated_door_01", center=(0.0, 0.0),
+            normal_direction=0.0, width=1.2,
+            left_frame_point=(0.0, 0.6), right_frame_point=(0.0, -0.6),
+            corridor_side=(-0.6, 0.0), interior_side=(1.1, 0.0),
+            confidence=0.9, entered_at=1.0)
+        with mock.patch(
+                "lightweight_room_core._snap_safe_point",
+                side_effect=[None, None, None, door.interior_side]):
+            result = prepare_exit_path(grid, door, (4.0, 0.0), config)
+
+        self.assertIsNotNone(result)
+        self.assertTrue(result["nearest_observed_anchor_fallback"])
+        self.assertEqual(result["mandatory_portal_waypoints"], [
+            [1.1, 0.0], [0.0, 0.0], [-0.6, 0.0]])
+        self.assertLess(result["approach_path_length_m"], 3.5)
+
+    def test_verified_trace_sparsification_preserves_endpoints_and_corner(self):
+        dense = []
+        for x in np.linspace(0.0, 3.0, 31):
+            dense.append([float(x), 0.0])
+        for y in np.linspace(0.1, 2.0, 20):
+            dense.append([3.0, float(y)])
+
+        sparse = sparsify_verified_trace(dense, spacing=0.9)
+
+        self.assertEqual(sparse[0], dense[0])
+        self.assertEqual(sparse[-1], dense[-1])
+        self.assertLess(min(np.hypot(p[0] - 3.0, p[1]) for p in sparse), 0.75)
+        self.assertLess(len(sparse), len(dense) // 3)
+
+    def test_direct_three_anchor_entry_discards_backtracking_astar(self):
+        config = LightweightRoomConfig(
+            enabled=True, prefer_direct_anchored_entry=True,
+            require_portal_preflight_for_entry=False)
+        scheduler = LightweightRoomScheduler(config)
+        door = EstimatedDoorway(
+            door_id="estimated_door_01", center=(2.0, 1.0),
+            normal_direction=1.57079632679, width=0.60,
+            left_frame_point=(1.7, 1.0), right_frame_point=(2.3, 1.0),
+            corridor_side=(2.0, 0.4), interior_side=(2.0, 2.0),
+            confidence=0.9, entered_at=1.0)
+        scheduler.active_door = door
+        scheduler.room_started_at = 1.0
+        scheduler.prepared_entry = {
+            "position": [2.0, 2.0], "score": 1.0,
+            "entry_staging_path_result": {
+                "success": True,
+                "path": [[0.0, 0.0], [-1.5, 0.0], [2.0, 2.0]],
+            },
+            "portal_preflight": {
+                "mandatory_portal_waypoints": [[-1.5, 0.0], [2.0, 2.0]],
+                "portal_clearance_m": 0.26,
+                "preflight_path": [[0.0, 0.0], [-1.5, 0.0], [2.0, 2.0]],
+                "portal_resume_inside": False,
+            },
+        }
+        grid = OccupancyGrid2D(
+            np.zeros((40, 40), dtype=np.int16), 0.15, 0.0, 0.0)
+
+        goal = scheduler.next_goal(grid, (0.0, 0.0), 2.0)
+
+        self.assertEqual(goal["mandatory_portal_waypoints"], [
+            [2.0, 0.4], [2.0, 1.0], [2.0, 2.0]])
+        self.assertNotIn("_preplanned_path_result", goal)
+        self.assertIn("ROOM_ENTRY_DIRECT_THREE_ANCHOR_SELECTED",
+                      [event["event"] for event in scheduler.events])
+
+if __name__ == "__main__":
+    unittest.main()

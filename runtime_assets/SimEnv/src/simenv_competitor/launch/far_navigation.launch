@@ -1,0 +1,84 @@
+<launch>
+  <!-- Official FAR node.  The Python adapter only translates its real graph
+       path to nav_msgs/Path and owns the explicit A* failure fallback. -->
+  <arg name="output_dir"/>
+  <arg name="maximum_duration" default="700.0"/>
+  <arg name="world_frame" default="map"/>
+  <arg name="tare_goal_topic" default="/refined_exploration_goal"/>
+  <arg name="odom_topic" default="/tare/state_estimation_at_scan"/>
+  <arg name="start_official_far" default="true"/>
+  <arg name="far_config"
+       default="$(find simenv_competitor)/config/far_simenv.yaml"/>
+
+  <node if="$(arg start_official_far)"
+        pkg="far_planner" type="far_planner" name="far_planner"
+        output="screen" respawn="true" respawn_delay="2.0">
+    <rosparam command="load" file="$(arg far_config)"/>
+    <remap from="/odom_world" to="$(arg odom_topic)"/>
+    <remap from="/terrain_cloud" to="/tare/terrain_map_ext"/>
+    <remap from="/terrain_local_cloud" to="/tare/terrain_map"/>
+    <remap from="/scan_cloud" to="/tare/registered_scan"/>
+    <remap from="/goal_point" to="/far/goal_point"/>
+    <remap from="/way_point" to="/far/way_point"/>
+    <remap from="/viz_path_topic" to="/far/viz_path_topic"/>
+    <remap from="/far_reach_goal_status" to="/far/reach_goal_status"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="far_interface.py"
+        name="far_interface" output="screen" required="true">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="maximum_duration" value="$(arg maximum_duration)"/>
+    <param name="world_frame" value="$(arg world_frame)"/>
+    <param name="tare_goal_topic" value="$(arg tare_goal_topic)"/>
+    <param name="far_path_marker_topic" value="/far/viz_path_topic"/>
+    <param name="map_topic" value="/simenv/voxel_floor_projection"/>
+    <param name="odom_topic" value="$(arg odom_topic)"/>
+    <param name="scan_service"
+           value="/tare_far_voxel_mapper/check_twin_cylinder"/>
+    <!-- Local receding-horizon waypoints are short and already A*-reachable.
+         Give Official FAR a brief first chance, then fall back promptly so a
+         missing/stale FAR marker cannot create multi-second zero-speed gaps. -->
+    <param name="far_plan_timeout" value="2.0"/>
+    <!-- Exact endpoint tolerance remains tight.  Official FAR is nevertheless
+         allowed to return a bounded adjusted endpoint (its configured goal
+         adjust radius is 2.0 m) when that endpoint makes real progress toward
+         the TARE goal.  Only a short SCAN-lite-verified prefix is executed, so
+         this grows FAR through unknown space without treating the adjusted
+         endpoint as completion of the TARE target. -->
+    <param name="far_goal_match_distance" value="0.35"/>
+    <param name="far_adjusted_goal_max_distance" value="2.25"/>
+    <param name="astar_maximum_expansions" value="100000"/>
+    <!-- The current robot cell can appear occupied after voxel projection.
+         Ignore only that already-occupied start cell; every successor keeps
+         full clearance and SCAN-lite validation. -->
+    <param name="astar_allow_blocked_start" value="true"/>
+    <!-- Debounce small rolling look-ahead jitter while retaining meaningful
+         inward movement of Official TARE's goal. -->
+    <param name="same_tare_goal_distance" value="0.6"/>
+    <!-- TARE publishes a rolling goal at planner frequency.  Preserve the
+         latest goal for the next FAR cycle without cancelling the currently
+         verified short segment; otherwise the robot can be preempted forever
+         while TARE is functioning normally. -->
+    <param name="preempt_on_tare_goal_change" value="false"/>
+    <!-- Only validate the part of the FAR path that can be executed next.
+         Auditing an entire long global path one voxel-service call at a time
+         blocked the adapter for minutes and prevented later room goals. -->
+    <param name="scan_lite_horizon_distance" value="2.5"/>
+    <param name="execution_lookahead_distance" value="1.8"/>
+    <param name="waypoint_spacing" value="0.20"/>
+    <param name="minimum_execution_progress" value="0.25"/>
+    <param name="scan_lite_body_safety_margin" value="0.12"/>
+    <!-- Upper-floor handoff maps can contain a stale dynamic voxel at the
+         corridor centreline. Keep full footprint/segment checks, but allow
+         the bounded refiner to route around that voxel instead of retrying
+         the same blocked doorway goal forever. -->
+    <param name="scan_lite_search_radius" value="1.20"/>
+    <param name="scan_lite_search_step" value="0.15"/>
+    <param name="scan_lite_unknown_policy" value="penalize"/>
+    <param name="auto_generate_visualization" value="true"/>
+    <param name="visualization_script"
+           value="$(find simenv_competitor)/../../scripts/visualize_baseline_results.py"/>
+    <param name="offline_truth_layout_metadata"
+           value="$(find simenv_competitor)/../../generated_building/layout_metadata.json"/>
+  </node>
+</launch>

@@ -1,0 +1,50 @@
+[
+  {
+    "attempt_count": 1,
+    "branch_id": "side_branch_01",
+    "cooldown_until": 114.77033999108244,
+    "entry_quality": 0.0,
+    "entry_target": [
+      13.569605567400737,
+      -2.7359377749831366
+    ],
+    "frontier": null,
+    "last_seen": 47.021588835981674,
+    "observations": 1,
+    "side": -1,
+    "state": "ENTERED_PARTIAL",
+    "station": 6.153381909292319
+  },
+  {
+    "attempt_count": 1,
+    "branch_id": "side_branch_02",
+    "cooldown_until": 0.0,
+    "entry_quality": 0.0,
+    "entry_target": [
+      13.865725537334638,
+      0.36874193893149526
+    ],
+    "frontier": null,
+    "last_seen": 77.12167622498237,
+    "observations": 1,
+    "side": 1,
+    "state": "COVERED",
+    "station": 6.210105759526265
+  },
+  {
+    "attempt_count": 2,
+    "branch_id": "side_branch_03",
+    "cooldown_until": 0.0,
+    "entry_quality": 0.0,
+    "entry_target": [
+      21.975736120936993,
+      -1.3827098084558314
+    ],
+    "frontier": null,
+    "last_seen": 172.76322563597932,
+    "observations": 2,
+    "side": 1,
+    "state": "COVERED",
+    "station": 13.316423039330868
+  }
+]

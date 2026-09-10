@@ -1,0 +1,50 @@
+<launch>
+  <!-- Isolated F1 -> stair-base -> stair-RL integration test.  The robot
+       starts at the normal F1/lobby pose; first-floor exploration is not run. -->
+  <arg name="output_dir" default="$(find simenv_competitor)/../../results/stair_transition_debug_run1"/>
+  <arg name="world_file" default="$(find simenv_competitor)/../../generated_building/stair_direct_test.world"/>
+  <arg name="ascent_timeout_sec" default="45.0"/>
+  <arg name="robot_spawn_x" default="3.27"/>
+  <!-- The first physical step begins near y=2.85.  Keep the initial body
+       footprint fully on the flat landing so FixedStand can stabilise before
+       the preloaded stair policy starts. -->
+  <arg name="robot_spawn_y" default="1.90"/>
+  <arg name="robot_spawn_yaw" default="1.5708"/>
+  <env name="GAZEBO_MODEL_PATH"
+       value="$(find simenv_competitor)/../../generated_building/models:$(optenv GAZEBO_MODEL_PATH)"/>
+  <include file="$(find simenv_competitor)/launch/baseline_fastlio_exploration.launch">
+    <arg name="output_dir" value="$(arg output_dir)"/>
+    <arg name="world_file" value="$(arg world_file)"/>
+    <arg name="offline_stair_model_sdf"
+         value="$(find simenv_competitor)/../../generated_building/models/hotel_building/model.sdf"/>
+    <arg name="rl_policy" value="$(find unitree_guide)/../../logs/policy_act_inference_stair.pt"/>
+    <arg name="maximum_duration" value="120.0"/>
+    <arg name="maximum_goals" value="1"/>
+    <arg name="enable_realsense" value="false"/>
+    <arg name="robot_spawn_x" value="$(arg robot_spawn_x)"/>
+    <arg name="robot_spawn_y" value="$(arg robot_spawn_y)"/>
+    <arg name="robot_spawn_z" value="0.6"/>
+    <arg name="robot_spawn_yaw" value="$(arg robot_spawn_yaw)"/>
+    <arg name="stair_auto_start" value="true"/>
+    <arg name="stair_ascent_timeout_sec" value="$(arg ascent_timeout_sec)"/>
+    <arg name="stair_policy_preloaded" value="true"/>
+    <arg name="stair_skip_approach" value="true"/>
+    <arg name="lock_ascent_heading" value="true"/>
+    <!-- This policy has a learned gait dead-band near 0.2 m/s; 0.30 m/s is
+         the lowest command that maintains its stair stepping cycle. -->
+    <arg name="stair_ascent_speed_mps" value="0.75"/>
+    <arg name="stair_ascent_maximum_speed_mps" value="0.75"/>
+    <arg name="stair_ascent_boost_speed_mps" value="0.0"/>
+    <arg name="stair_ascent_boost_seconds" value="0.0"/>
+    <arg name="stair_ascent_settle_seconds" value="0.0"/>
+    <arg name="enable_goal_executor" value="false"/>
+  </include>
+  <!-- The executor is intentionally absent, but its small bootstrap node is
+       still needed to take Unitree from FixedStand to RL /cmd_vel mode. -->
+  <node pkg="simenv_competitor" type="controller_mode_bootstrap.py"
+        name="stair_debug_rl_bootstrap" output="screen">
+    <param name="stand_after_seconds" value="1.0"/>
+    <param name="fixed_stand_max_duration_sec" value="15.0"/>
+    <param name="rl_repeat_seconds" value="45.0"/>
+  </node>
+</launch>

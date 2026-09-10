@@ -1,0 +1,137 @@
+<launch>
+  <!-- Step 2.3 only: attach the lightweight executor to an already running
+       FAST-LIO + official-RL system. No global or local navigation stack. -->
+  <arg name="output_dir" default="$(find simenv_exploration)/../../results/goal_executor/latest"/>
+  <arg name="start_rl_mode" default="true"/>
+  <arg name="shutdown_on_result" default="false"/>
+  <arg name="command_topic" default="/cmd_vel"/>
+  <arg name="odom_topic" default="/Odometry"/>
+  <arg name="cancel_topic" default="/simenv/cancel_exploration_goal"/>
+  <arg name="arm_rl_guard" default="false"/>
+  <arg name="enable_rl_guard" default="false"/>
+  <arg name="guard_pose_topic" default="/Odometry"/>
+  <arg name="goal_tolerance" default="0.30"/>
+  <arg name="minimum_speed" default="0.30"/>
+  <arg name="maximum_speed" default="0.35"/>
+  <!-- The manager changes the per-goal limit on /simenv/goal_speed_limit.
+       Keep that limit independently configurable instead of silently
+       clamping a faster mission profile back to 1.20 m/s. -->
+  <arg name="dynamic_speed_cap" default="$(arg maximum_speed)"/>
+  <arg name="distance_gain" default="0.40"/>
+  <arg name="heading_gain" default="0.0"/>
+  <arg name="maximum_yaw_rate" default="0.20"/>
+  <arg name="lateral_speed_limit" default="$(arg maximum_speed)"/>
+  <arg name="heading_slowdown_threshold" default="0.45"/>
+  <arg name="turning_speed_limit" default="0.65"/>
+  <arg name="localization_degraded_speed_cap" default="0.85"/>
+  <arg name="maximum_vertical_pose_jump" default="0.45"/>
+  <arg name="minimum_pose_z" default="-0.80"/>
+  <arg name="maximum_pose_z" default="1.20"/>
+  <arg name="registration_abort_invalid_count" default="3"/>
+  <!-- The stabilized navigation odometry is relayed by the voxel mapper.
+       A point-cloud insertion can occupy that single-threaded node for more
+       than 0.5 s even while FAST-LIO registration remains healthy.  Allow a
+       bounded relay delay; registration loss and progress watchdogs remain
+       the authoritative motion safety gates. -->
+  <arg name="odom_timeout" default="1.50"/>
+  <arg name="acceleration" default="0.20"/>
+  <arg name="deceleration" default="0.60"/>
+  <arg name="preemption_deceleration" default="0.55"/>
+  <arg name="preemption_settle_command_speed" default="0.08"/>
+  <arg name="preemption_settle_measured_speed" default="0.18"/>
+  <arg name="preemption_settle_seconds" default="0.30"/>
+  <arg name="preemption_timeout" default="4.0"/>
+  <arg name="enable_takeover_monitor" default="true"/>
+  <arg name="log_file" default="goal_execution_log.json"/>
+  <arg name="takeover_output_dir" default="$(arg output_dir)/../rl_takeover_stability"/>
+  <arg name="external_pause_topic" default=""/>
+
+  <node if="$(arg start_rl_mode)" pkg="simenv_exploration"
+        type="controller_mode_bootstrap.py" name="goal_executor_rl_bootstrap"
+        output="screen">
+    <param name="stand_after_seconds" value="1.0"/>
+    <param name="fixed_stand_max_duration_sec" value="15.0"/>
+    <param name="rl_repeat_seconds" value="45.0"/>
+  </node>
+
+  <node if="$(arg enable_takeover_monitor)" pkg="simenv_exploration" type="rl_takeover_stability_monitor.py"
+        name="rl_takeover_stability_monitor" output="screen">
+    <param name="output_dir" value="$(arg takeover_output_dir)"/>
+  </node>
+
+  <node pkg="simenv_exploration" type="goal_executor.py"
+        name="goal_executor" output="screen" required="true">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="goal_topic" value="/exploration_goal"/>
+    <param name="odom_topic" value="$(arg odom_topic)"/>
+    <param name="command_topic" value="$(arg command_topic)"/>
+    <param name="cancel_topic" value="$(arg cancel_topic)"/>
+    <param name="arm_rl_guard" value="$(arg arm_rl_guard)"/>
+    <param name="goal_tolerance" value="$(arg goal_tolerance)"/>
+    <param name="log_file" value="$(arg log_file)"/>
+    <param name="minimum_speed" value="$(arg minimum_speed)"/>
+    <param name="maximum_speed" value="$(arg maximum_speed)"/>
+    <param name="dynamic_speed_cap" value="$(arg dynamic_speed_cap)"/>
+    <param name="distance_gain" value="$(arg distance_gain)"/>
+    <param name="heading_gain" value="$(arg heading_gain)"/>
+    <param name="maximum_yaw_rate" value="$(arg maximum_yaw_rate)"/>
+    <param name="lateral_speed_limit" value="$(arg lateral_speed_limit)"/>
+    <param name="heading_slowdown_threshold" value="$(arg heading_slowdown_threshold)"/>
+    <param name="turning_speed_limit" value="$(arg turning_speed_limit)"/>
+    <param name="localization_degraded_speed_cap" value="$(arg localization_degraded_speed_cap)"/>
+    <param name="maximum_vertical_pose_jump" value="$(arg maximum_vertical_pose_jump)"/>
+    <param name="minimum_pose_z" value="$(arg minimum_pose_z)"/>
+    <param name="maximum_pose_z" value="$(arg maximum_pose_z)"/>
+    <param name="registration_abort_invalid_count"
+           value="$(arg registration_abort_invalid_count)"/>
+    <param name="acceleration" value="$(arg acceleration)"/>
+    <param name="deceleration" value="$(arg deceleration)"/>
+    <param name="preemption_deceleration" value="$(arg preemption_deceleration)"/>
+    <param name="preemption_settle_command_speed" value="$(arg preemption_settle_command_speed)"/>
+    <param name="preemption_settle_measured_speed" value="$(arg preemption_settle_measured_speed)"/>
+    <param name="preemption_settle_seconds" value="$(arg preemption_settle_seconds)"/>
+    <param name="preemption_timeout" value="$(arg preemption_timeout)"/>
+    <param name="odom_timeout" value="$(arg odom_timeout)"/>
+    <!-- The stair policy advances in discrete gait bursts.  Require 5 cm in
+         eight seconds so real progress is retained while a stopped robot is
+         still detected promptly. -->
+    <param name="progress_timeout" value="8.0"/>
+    <param name="minimum_progress" value="0.05"/>
+    <param name="maximum_stall_recoveries" value="2"/>
+    <param name="stall_recovery_seconds" value="1.2"/>
+    <param name="stall_recovery_speed" value="0.16"/>
+    <param name="goal_timeout" value="180.0"/>
+    <param name="shutdown_on_result" value="$(arg shutdown_on_result)"/>
+    <!-- Arbitration for an external /cmd_vel owner (visual corridor-exit
+         guide): while true is published here, the executor outputs nothing
+         and rejects goals with reason "external_driver_active". -->
+    <param name="external_pause_topic" value="$(arg external_pause_topic)"/>
+  </node>
+
+  <node if="$(arg enable_rl_guard)" pkg="simenv_exploration"
+        type="rl_mapping_speed_guard.py" name="goal_executor_rl_speed_guard"
+        output="screen" required="true">
+    <param name="output_dir" value="$(arg output_dir)/motion_guard"/>
+    <param name="pose_topic" value="$(arg guard_pose_topic)"/>
+    <param name="maximum_linear" value="0.35"/>
+    <param name="maximum_lateral" value="0.35"/>
+    <param name="maximum_yaw" value="0.20"/>
+    <param name="acceleration" value="0.20"/>
+    <param name="deceleration" value="0.60"/>
+    <!-- Match the already validated official-RL walking envelope.  The guard
+         defaults (hold at 0.14 rad, release below 0.08 rad) describe quiet
+         standing and permanently suppress a healthy stair-policy gait whose
+         normal pitch is about 0.15 to 0.20 rad.  A true unsafe tilt still aborts
+         at 0.35 rad. -->
+    <param name="warning_tilt" value="0.26"/>
+    <param name="abort_tilt" value="0.35"/>
+    <param name="recovery_tilt" value="0.28"/>
+    <param name="recovery_release_tilt" value="0.24"/>
+    <param name="recovery_release_seconds" value="0.8"/>
+    <!-- FAST-LIO z is relative to its initialization pose, not an absolute
+         body height.  Keep roll/pitch, freshness and finite-value guards, but
+         do not interpret relative odometry z as ground clearance. -->
+    <param name="minimum_height" value="-10.0"/>
+    <param name="recovery_minimum_height" value="-10.0"/>
+  </node>
+</launch>

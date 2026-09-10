@@ -1,0 +1,136 @@
+<?xml version="1.0"?>
+<!--
+  explore_simenv.launch: 在 SimEnv(Unitree A1) 上启动 TARE 探索 + 全部桥接 + 自动门。
+
+  前提:
+    1. SimEnv 仿真已通过 ./docker/run.sh sim|control 启动 (gzserver + A1 + 传感器 +
+       building_generator_classic 门/电梯控制服务 + pointcloud2livox)。
+    2. 若要机器狗真的跟着走: junior_ctrl 处于 RL 模式 (前台控制器按过 2 然后 6)。
+       否则 TARE 仍会建图+规划航点，只是机器狗不动。
+
+  节点链:
+    /Odometry_gazebo   (odom_relay)     > /state_estimation_at_scan
+    /livox/Pointcloud2 (scan_to_map)    > /registered_scan            > TARE
+    /livox/Pointcloud2 (scan_to_uf)     > /scan_uf                    (optional UF-format mirror)
+    TARE /way_point    (waypoint_follower) > /cmd_vel > A1 RL
+    /Odometry_gazebo   (auto_door)      > /set_door_state, /call_elevator
+
+  用法:
+    roslaunch simenv_bridge explore_simenv.launch
+-->
+<launch>
+  <arg name="tare_scenario" default="simenv"/>
+  <arg name="scan_input" default="/livox/Pointcloud2"/>   <!-- UF/Livox native PointCloud2; 备选 /scan_uf, /scan 或 /real_sense/depth/points -->
+  <arg name="scan_max_range" default="12.0"/>   <!-- 4-room layouts need to see beyond one lower doorway/corridor segment. -->
+  <arg name="follow" default="true"/>   <!-- true: 启动航点跟踪器 -->
+  <arg name="follow_mode" default="world"/> <!-- ponytail: world=kinematic driver (local dev, the working path; RL/tf blocked on ROS1+Ignition). tf=RL controller (competition, ROS2+Harmonic). -->
+  <arg name="auto_door" default="true"/>
+  <arg name="layout_metadata" default="/workspace/SimEnv/generated_building/layout_metadata.json"/>
+
+  <!-- ⓪ 物理加速仅 kinematic(world)模式用. RL(tf)必须用默认 1000Hz 物理(≤250Hz 会让 A1 RL 关节失稳, MIGRATION.md). -->
+  <node if="$(eval arg('follow_mode') == 'world')" pkg="simenv_bridge" type="set_sim_physics.py" name="set_sim_physics" output="screen"/>
+
+  <!-- ⓪ UF 兼容镜像: SimEnv 已直接发布 UF/M3DGR 风格的 /livox/Pointcloud2.
+       /scan_uf 只作为兼容旧命令的镜像，不再优先使用 CustomMsg 二次转换. -->
+  <node pkg="simenv_bridge" type="scan_to_uf.py" name="scan_to_uf" output="screen">
+    <param name="input" value="/livox/Pointcloud2"/>
+    <param name="custom_input" value="/livox/lidar2"/>
+    <param name="output" value="/scan_uf"/>
+    <param name="prefer_custom" value="false"/>
+    <param name="scan_duration_ns" value="100000000"/>
+    <param name="total_rings" value="32"/>
+    <param name="min_range" value="0.2"/>
+  </node>
+
+  <!-- ① 里程计改名转发 -->
+  <node pkg="simenv_bridge" type="odom_relay.py" name="odom_relay" output="screen">
+    <param name="input"  value="/Odometry_gazebo"/>
+    <param name="output" value="/state_estimation_at_scan"/>
+    <param name="frame"  value="map"/>
+    <param name="lock_z" value="0.6"/>
+  </node>
+
+  <!-- ② 传感器点云 -> map 系 registered_scan (tf2 变换 + intensity).
+       默认用 /livox/Pointcloud2: SimEnv/Livox 插件原生 UF 风格 PointCloud2. -->
+  <node pkg="simenv_bridge" type="scan_to_map.py" name="scan_to_map" output="screen">
+    <param name="input"         value="$(arg scan_input)"/>
+    <param name="output"        value="/registered_scan"/>
+    <param name="target_frame"  value="map"/>
+    <param name="min_range"     value="0.5"/>
+    <param name="max_range"     value="$(arg scan_max_range)"/>
+  </node>
+
+  <!-- ③ 从 SimEnv GT layout 发布 TARE 需要的导航/覆盖边界.
+       没有该边界时，TARE 在小室内场景容易快速判定 frontier/coverage 为空并返回 home。 -->
+  <node pkg="simenv_bridge" type="layout_boundary_publisher.py"
+        name="layout_boundary_publisher" output="screen">
+    <param name="metadata" value="$(arg layout_metadata)"/>
+    <param name="frame" value="map"/>
+    <param name="margin" value="0.5"/>
+    <param name="nogo_margin" value="0.2"/>
+    <param name="navigation_topic" value="/navigation_boundary"/>
+    <param name="coverage_topic" value="/sensor_coverage_planner/coverage_boundary"/>
+    <param name="nogo_topic" value="/sensor_coverage_planner/nogo_boundary"/>
+    <param name="rate" value="1.0"/>
+  </node>
+
+  <!-- TARE 探索规划器 -->
+  <include file="$(find tare_planner)/launch/explore.launch">
+    <arg name="scenario" value="$(arg tare_scenario)"/>
+    <arg name="rviz" value="false"/>   <!-- 容器内通常无显示; 需要时改 true -->
+  </include>
+
+  <!-- ④ 航点 -> /cmd_vel -> Gazebo model state.
+       SimEnv 当前没有稳定发布 map->base TF, 默认用 /Odometry_gazebo 的 world follower。
+       world 模式用 kinematic driver 执行 /cmd_vel, 避免依赖手动启动 A1 RL 控制器。 -->
+  <node if="$(eval arg('follow') and arg('follow_mode') == 'world')" pkg="simenv_bridge" type="cmd_vel_to_model_state.py"
+        name="cmd_vel_to_model_state" output="screen">
+    <param name="cmd_vel" value="/cmd_vel"/>
+    <param name="model_name" value="a1_gazebo"/>
+    <param name="command_frame" value="world"/>
+    <param name="max_vx" value="1.5"/>   <!-- ponytail: raised from 1.0 for exploration speed (score budget 600s). Lower if the A1 scrapes walls / oscillates in tight rooms. -->
+    <param name="max_vy" value="1.5"/>
+    <param name="max_wz" value="0.0"/>
+    <param name="rate" value="30"/>
+    <param name="use_topic" value="true"/>
+    <param name="lock_z" value="0.6"/>
+  </node>
+
+  <node if="$(eval arg('follow') and arg('follow_mode') == 'world')" pkg="simenv_bridge" type="waypoint_follower_world.py"
+        name="waypoint_follower" output="screen">
+    <param name="waypoint"     value="/way_point"/>
+    <param name="path"         value="/sensor_coverage_planner/global_path_full"/>
+    <param name="odom"         value="/Odometry_gazebo"/>
+    <param name="cmd_vel"      value="/cmd_vel"/>
+    <param name="v_max"        value="1.5"/>   <!-- ponytail: raised from 1.0 to match driver cap; must stay <= cmd_vel_to_model_state max_vx/vy. -->
+    <param name="goal_tol"     value="0.35"/>
+    <param name="prefer_path"  value="true"/>
+    <param name="path_lookahead" value="2.0"/>
+    <param name="path_anchor_tolerance" value="3.0"/>
+    <param name="latch_waypoint" value="true"/>
+    <param name="latch_timeout"  value="20.0"/>
+    <param name="topology_guard" value="false"/>   <!-- ponytail: A/B test. TARE lookahead oscillates at score ties (room_2 back vs room_3 fwd equal) -> 59 x-flips. topology_guard was per-cycle redirecting the driven target, defeating the 20s latch's smoothing. Disabling lets the latch hold one waypoint long enough to commit deep into a room. Revert if the robot wedges in a doorway. -->
+    <param name="layout_metadata" value="$(arg layout_metadata)"/>
+    <param name="topology_door_tolerance" value="0.75"/>
+    <param name="topology_corridor_margin" value="0.5"/>
+    <param name="topology_room_entry_depth" value="2.0"/>
+  </node>
+
+  <node if="$(eval arg('follow') and arg('follow_mode') == 'tf')" pkg="simenv_bridge" type="waypoint_follower.py"
+        name="waypoint_follower" output="screen">
+    <param name="waypoint"     value="/way_point"/>
+    <param name="cmd_vel"      value="/cmd_vel"/>
+    <param name="target_frame" value="base"/>
+    <param name="v_max"        value="1.0"/>   <!-- ponytail: RL policy trained ~1.0 m/s; do NOT copy world-mode 1.5 (gait stumbles). -->
+    <param name="w_max"        value="0.8"/>   <!-- ponytail: was 0.25. RL commands_scale[2]=0.25 -> policy expects yaw up to ±1.0 rad/s; 0.25 under-commands 4x so the dog barely turns toward waypoints. -->
+    <param name="goal_tol"     value="0.3"/>
+  </node>
+
+  <!-- ⑤ 自动开门/叫电梯 -->
+  <node if="$(arg auto_door)" pkg="simenv_bridge" type="auto_door.py"
+        name="auto_door" output="screen">
+    <param name="door_config"     value="/workspace/SimEnv/generated_building/door_config.yaml"/>
+    <param name="elevator_config" value="/workspace/SimEnv/generated_building/elevator_config.yaml"/>
+    <param name="odom"            value="/Odometry_gazebo"/>
+  </node>
+</launch>

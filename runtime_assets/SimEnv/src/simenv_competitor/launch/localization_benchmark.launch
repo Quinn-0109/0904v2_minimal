@@ -1,0 +1,36 @@
+<launch>
+  <!-- Diagnostic-only: GT is recorded for offline scoring and is never fed to LIO. -->
+  <arg name="trajectory_file" default="$(env PWD)/results/localization_estimate.json"/>
+  <arg name="gt_trajectory_file" default="$(env PWD)/results/localization_ground_truth.json"/>
+  <arg name="health_file" default="$(env PWD)/results/localization_health.json"/>
+  <arg name="done_file" default="$(env PWD)/results/localization_motion_done.json"/>
+  <arg name="odom_topic" default="/Odometry"/>
+
+  <node pkg="simenv_competitor" type="trajectory_recorder.py"
+        name="localization_trajectory_recorder" output="screen" required="true">
+    <param name="output_file" value="$(arg trajectory_file)"/>
+    <param name="odom_topic" value="$(arg odom_topic)"/>
+    <param name="gt_output_file" value="$(arg gt_trajectory_file)"/>
+    <param name="gt_odom_topic" value="/ground_truth/base_w"/>
+    <param name="min_spacing" value="0.02"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="localization_health_monitor.py"
+        name="localization_health_monitor" output="screen" required="true">
+    <param name="output_file" value="$(arg health_file)"/>
+    <param name="odom_topic" value="$(arg odom_topic)"/>
+    <param name="imu_topic" value="/trunk_imu"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="localization_motion_benchmark.py"
+        name="localization_motion_benchmark" output="screen" required="true">
+    <param name="done_file" value="$(arg done_file)"/>
+    <param name="profile" value="square"/>
+    <param name="forward_speed" value="0.40"/>
+    <param name="yaw_rate" value="0.38"/>
+    <param name="drive1_seconds" value="12.0"/>
+    <param name="drive2_seconds" value="10.0"/>
+    <param name="drive3_seconds" value="12.0"/>
+    <param name="drive4_seconds" value="10.0"/>
+  </node>
+</launch>

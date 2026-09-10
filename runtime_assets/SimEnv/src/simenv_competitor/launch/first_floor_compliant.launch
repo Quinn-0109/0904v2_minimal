@@ -1,0 +1,104 @@
+<launch>
+  <!--
+    First-floor compliant stack (FUEL-inspired hierarchy):
+      FAST-LIO / external LIO
+        -> compliant_tare_bridge (state + registered_scan)
+        -> TARE global frontier exploration (nearby-first config)
+        -> radar_camera_attention local RGB refine (FIS near/mid/far)
+        -> danger_detector
+
+    No layout_metadata, no /Odometry_gazebo, no Gazebo control services.
+  -->
+  <arg name="result_file" default="$(env PWD)/results/detected_danger.json"/>
+  <arg name="trajectory_file" default="$(env PWD)/results/compliant_trajectory.json"/>
+  <arg name="timeout_seconds" default="150.0"/>
+  <arg name="max_speed" default="0.9"/>
+  <arg name="sensor_range" default="9.0"/>
+  <arg name="lio_odom_topic" default="/Odometry"/>
+  <arg name="lio_cloud_topic" default="/cloud_registered"/>
+
+  <node pkg="simenv_competitor" type="controller_mode_bootstrap.py"
+        name="controller_mode_bootstrap" output="screen" required="true"/>
+
+  <!-- fastlio_pointcloud_adapter is started by fast_lio/simenv_mid360.launch -->
+
+  <node pkg="simenv_competitor" type="compliant_tare_bridge.py"
+        name="compliant_tare_bridge" output="screen" required="true">
+    <param name="max_linear_speed" value="$(arg max_speed)"/>
+    <param name="max_yaw_rate" value="0.6"/>
+    <param name="lio_odom_topic" value="$(arg lio_odom_topic)"/>
+    <param name="lio_cloud_topic" value="$(arg lio_cloud_topic)"/>
+    <param name="flip_loam_axes" type="bool" value="false"/>
+    <!-- Drive directly from local planner; attention is optional refine only. -->
+    <param name="forward_cmd_vel" type="bool" value="true"/>
+    <param name="planar_stabilize" type="bool" value="true"/>
+    <param name="lock_z" type="double" value="0.28"/>
+    <param name="max_pose_jump_m" type="double" value="1.5"/>
+  </node>
+
+  <group>
+    <remap from="/cmd_vel" to="/tare/cmd_vel_stamped"/>
+    <include file="$(find simenv_competitor)/launch/local_planner_headless.launch">
+      <arg name="autonomyMode" value="true"/>
+      <arg name="maxSpeed" value="$(arg max_speed)"/>
+      <arg name="autonomySpeed" value="$(arg max_speed)"/>
+      <arg name="twoWayDrive" value="true"/>
+    </include>
+  </group>
+
+  <node pkg="tare_planner" type="tare_planner_node"
+        name="tare_planner_node" output="screen"
+        ns="sensor_coverage_planner">
+    <rosparam command="load" file="$(find tare_planner)/config/indoor.yaml"/>
+    <rosparam command="load"
+              file="$(find simenv_competitor)/config/fast_indoor_unknown.yaml"/>
+    <param name="kAutoStart" value="true"/>
+    <param name="kRushHome" value="true"/>
+    <param name="kNoExplorationReturnHome" value="false"/>
+    <param name="kAtHomeDistThreshold" value="1.2"/>
+    <param name="kSensorRange" value="$(arg sensor_range)"/>
+    <param name="kLookAheadDistance" value="5.0"/>
+    <param name="kExtendWayPointDistanceBig" value="5.0"/>
+    <param name="kExtendWayPointDistanceSmall" value="2.5"/>
+    <param name="viewpoint_manager/number_z" value="1"/>
+  </node>
+
+  <!-- Optional camera refine: does NOT own /cmd_vel (bridge forwards planner). -->
+  <node pkg="simenv_competitor" type="radar_camera_attention.py"
+        name="radar_camera_attention" output="screen">
+    <param name="own_cmd_vel" value="false"/>
+    <param name="attention_spacing" value="3.5"/>
+    <param name="camera_cell_size" value="3.0"/>
+    <param name="camera_range" value="7.5"/>
+    <param name="camera_fov_deg" value="60.0"/>
+    <param name="attention_yaw_rate" value="0.8"/>
+    <param name="sector_count" value="36"/>
+    <param name="near_range" value="4.0"/>
+    <param name="mid_range" value="9.0"/>
+    <param name="radar_max_range" value="20.0"/>
+    <param name="min_viewpoint_score" value="0.12"/>
+    <param name="yaw_blend_seconds" value="1.2"/>
+    <param name="yaw_blend_linear_scale" value="0.55"/>
+    <param name="merge_yaw_deg" value="25.0"/>
+    <param name="frontier_stale_sec" value="8.0"/>
+    <param name="min_sector_points" value="3"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="trajectory_recorder.py"
+        name="trajectory_recorder" output="screen">
+    <param name="output_file" value="$(arg trajectory_file)"/>
+    <param name="odom_topic" value="/state_estimation"/>
+    <param name="min_spacing" value="0.08"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="danger_detector.py"
+        name="danger_detector" output="screen" required="true">
+    <param name="result_file" value="$(arg result_file)"/>
+    <param name="timeout_seconds" value="$(arg timeout_seconds)"/>
+    <param name="home_tolerance" value="0.8"/>
+    <param name="minimum_hits" value="2"/>
+    <param name="minimum_area" value="45.0"/>
+    <param name="minimum_circularity" value="0.65"/>
+    <param name="dedup_radius" value="0.5"/>
+  </node>
+</launch>

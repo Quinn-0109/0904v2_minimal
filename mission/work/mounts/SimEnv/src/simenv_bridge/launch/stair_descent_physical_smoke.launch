@@ -1,0 +1,98 @@
+<?xml version="1.0"?>
+<!--
+  Isolated physical-RL test for the riskiest return leg.  The A1 starts on the
+  F3 stair landing, walks F3 -> F2, performs the intermediate landing turn,
+  and walks F2 -> F1.  This launch never teleports the robot after spawning.
+-->
+<launch>
+  <arg name="output_dir"
+       default="$(find simenv_bridge)/../../results/stair_descent_physical_smoke"/>
+  <arg name="world_file"
+       default="$(find simenv_competitor)/../../generated_building/elevator_three_floor_debug/competition_scene_with_dangers.world"/>
+  <arg name="layout_metadata"
+       default="$(find simenv_competitor)/../../generated_building/elevator_three_floor_debug/layout_metadata.json"/>
+  <arg name="stair_model_sdf"
+       default="$(find simenv_competitor)/../../generated_building/elevator_three_floor_debug/model.sdf"/>
+  <arg name="plane_policy"
+       default="$(find unitree_guide)/../../logs/policy_act_inference_plane.pt"/>
+  <arg name="stair_policy"
+       default="$(find unitree_guide)/../../logs/policy_act_inference_stair.pt"/>
+  <arg name="trigger_delay_sec" default="15.0"/>
+  <arg name="descent_speed_mps" default="0.80"/>
+
+  <env name="DISPLAY" value="$(optenv DISPLAY :99)"/>
+  <env name="LIBGL_ALWAYS_SOFTWARE" value="$(optenv LIBGL_ALWAYS_SOFTWARE 1)"/>
+  <param name="use_sim_time" value="true"/>
+
+  <!-- Production F3 handoff pose: use the position reached by the complete
+       mission instead of an easier, already-centred stair-smoke shortcut. -->
+  <include file="$(find simenv_competitor)/launch/mapping_test.launch">
+    <arg name="world_file" value="$(arg world_file)"/>
+    <arg name="gui" value="false"/>
+    <arg name="rviz" value="false"/>
+    <arg name="teleop" value="false"/>
+    <arg name="start_controller" value="false"/>
+    <arg name="enable_realsense" value="false"/>
+    <arg name="enable_referee_odom" value="true"/>
+    <arg name="enable_ground_truth" value="true"/>
+    <arg name="enable_building_control" value="false"/>
+    <arg name="open_mapping_entrance" value="false"/>
+    <arg name="enable_mapping_visualizer" value="false"/>
+    <arg name="sensor_warmup_seconds" value="5.0"/>
+    <arg name="slam_startup_delay_seconds" value="0.0"/>
+    <arg name="controller_dt" value="0.004"/>
+    <arg name="controller_cpu_affinity" value=""/>
+    <arg name="controller_startup_timeout" value="300"/>
+    <arg name="controller_clock_stall_timeout" value="120.0"/>
+    <arg name="controller_safe_paused_start" value="true"/>
+    <arg name="rl_policy" value="$(arg plane_policy)"/>
+    <arg name="rl_device" value="hybrid"/>
+    <arg name="robot_x" value="-2.665"/>
+    <arg name="robot_y" value="1.625"/>
+    <arg name="robot_z" value="5.71"/>
+    <arg name="robot_yaw" value="1.5708"/>
+  </include>
+
+  <include file="$(find simenv_bridge)/launch/unitree_rl_controller.launch">
+    <arg name="rl_policy" value="$(arg plane_policy)"/>
+    <arg name="preload_plane_policy" value="$(arg plane_policy)"/>
+    <arg name="preload_stair_policy" value="$(arg stair_policy)"/>
+    <arg name="rl_device" value="hybrid"/>
+    <arg name="controller_dt" value="0.004"/>
+    <arg name="controller_cpu_affinity" value=""/>
+    <arg name="controller_startup_timeout" value="300"/>
+    <arg name="controller_clock_stall_timeout" value="120.0"/>
+  </include>
+
+  <node pkg="simenv_competitor" type="controller_mode_bootstrap.py"
+        name="descent_smoke_plane_rl_bootstrap" output="screen">
+    <param name="stand_after_seconds" value="1.0"/>
+    <param name="fixed_stand_max_duration_sec" value="25.0"/>
+    <param name="rl_repeat_seconds" value="120.0"/>
+    <param name="release_after_rl_request" value="true"/>
+  </node>
+
+  <include file="$(find simenv_bridge)/launch/stair_descent_controller.launch">
+    <arg name="output_dir" value="$(arg output_dir)"/>
+    <arg name="odom_topic" value="/Odometry_gazebo"/>
+    <arg name="stair_policy" value="$(arg stair_policy)"/>
+    <arg name="stair_model_sdf" value="$(arg stair_model_sdf)"/>
+    <arg name="layout_metadata" value="$(arg layout_metadata)"/>
+    <arg name="mission_trigger_topic" value="/simenv/descent_smoke_trigger"/>
+    <arg name="mission_trigger_token" value="DESCENT_SMOKE_START"/>
+    <arg name="truth_entry_guide" value="true"/>
+    <arg name="skip_entry_guide" value="true"/>
+    <arg name="trigger_timeout_sec" value="300.0"/>
+    <arg name="descent_speed_mps" value="$(arg descent_speed_mps)"/>
+  </include>
+
+  <node pkg="simenv_bridge" type="stair_descent_smoke_trigger.py"
+        name="stair_descent_smoke_trigger" output="screen" required="false">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="trigger_topic" value="/simenv/descent_smoke_trigger"/>
+    <param name="trigger_token" value="DESCENT_SMOKE_START"/>
+    <param name="state_topic" value="/simenv/third_to_first_floor_stair_state"/>
+    <param name="odom_topic" value="/Odometry_gazebo"/>
+    <param name="trigger_delay_sec" value="$(arg trigger_delay_sec)"/>
+  </node>
+</launch>

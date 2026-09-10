@@ -1,0 +1,46 @@
+<launch>
+  <!--
+    PointCloud2-only FAST-LIO2 for SimEnv.
+    Input:  /livox/Pointcloud2 and /livox/imu
+    Output: /Odometry and /cloud_registered
+  -->
+  <arg name="publish_path" default="false"/>
+  <arg name="lidar_type" default="2"/>
+  <arg name="sensor_warmup_seconds" default="0.0"/>
+  <arg name="startup_delay_seconds" default="0.0"/>
+  <arg name="imu_topic" default="/livox/imu"/>
+  <node pkg="simenv_competitor" type="fastlio_pointcloud_adapter.py"
+        name="fastlio_pointcloud_adapter" output="screen" required="true"
+        launch-prefix="bash -c 'sleep $(arg startup_delay_seconds); exec &quot;$@&quot;' --">
+    <param name="unpitch_rad" value="0.785"/>
+    <param name="rotate_imu" value="true"/>
+    <param name="raw_imu_topic" value="$(arg imu_topic)"/>
+    <param name="scan_period_s" value="0.1"/>
+    <param name="scan_lines" value="6"/>
+    <param name="model_acquisition_time" value="false"/>
+    <param name="warmup_seconds" value="$(arg sensor_warmup_seconds)"/>
+    <param name="blind" value="0.25"/>
+    <param name="max_acceleration_mps2" value="45.0"/>
+    <param name="acc_filter_alpha" value="0.10"/>
+    <param name="gyr_filter_alpha" value="0.20"/>
+  </node>
+
+  <rosparam command="load" file="$(find fast_lio)/config/simenv_mid360.yaml"/>
+
+  <param name="feature_extract_enable" type="bool" value="false"/>
+  <!-- The first-floor corridor is longitudinally degenerate.  Preserve all
+       2.5k simulated returns and smaller wall/door voxels so door edges and
+       the end wall constrain translation instead of aliasing to an old wall. -->
+  <param name="point_filter_num" type="int" value="1"/>
+  <param name="max_iteration" type="int" value="6"/>
+  <param name="filter_size_surf" type="double" value="0.15"/>
+  <param name="filter_size_map" type="double" value="0.15"/>
+  <param name="cube_side_length" type="double" value="80.0"/>
+  <param name="runtime_pos_log_enable" type="bool" value="false"/>
+  <param name="publish/path_en" type="bool" value="$(arg publish_path)"/>
+  <param name="preprocess/lidar_type" type="int" value="$(arg lidar_type)"/>
+
+  <node pkg="fast_lio" type="fastlio_mapping" name="fast_lio_mapping"
+        output="screen" required="true"
+        launch-prefix="bash -c 'sleep $(arg startup_delay_seconds); exec &quot;$@&quot;' --"/>
+</launch>

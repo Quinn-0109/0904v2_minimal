@@ -1,0 +1,1572 @@
+[
+  {
+    "coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.5025062656641605,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 2394,
+      "entry_depth_m": 0.0,
+      "entry_requirement_met": false,
+      "frontier_cells": 179,
+      "known_free_cells": 1203,
+      "known_free_m2": 27.067502151131674,
+      "largest_unknown_m2": 12.352500981688518,
+      "map_known_free_cells": 1452,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1203,
+      "reason": "measured",
+      "unknown_cells": 1191
+    },
+    "coverage_streak": 0,
+    "elapsed_sec": 0.133,
+    "entry_return_pending": false,
+    "event": "REGION_COVERAGE_UPDATED",
+    "region_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_entry_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_index": 2
+  },
+  {
+    "cycle": 1,
+    "elapsed_sec": 5.49,
+    "entry_return_pending": false,
+    "escape_reason": null,
+    "escape_requested": false,
+    "event": "disabled",
+    "failure_reason": null,
+    "goal": [
+      3.9967008962610975,
+      0.08533532546919809,
+      -0.0023793001423541
+    ],
+    "goal_source": "corridor_acquisition",
+    "phase": "SEEK_CORRIDOR_FORWARD",
+    "region_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.5025062656641605,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 2394,
+      "entry_depth_m": 0.0,
+      "entry_requirement_met": false,
+      "frontier_cells": 179,
+      "known_free_cells": 1203,
+      "known_free_m2": 27.067502151131674,
+      "largest_unknown_m2": 12.352500981688518,
+      "map_known_free_cells": 1452,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1203,
+      "reason": "measured",
+      "unknown_cells": 1191
+    },
+    "region_entry_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_goal_count": 0,
+    "region_index": 2,
+    "region_path_length": 0.0,
+    "success": true
+  },
+  {
+    "coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.5242085661080075,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 2148,
+      "entry_depth_m": 3.8647824224534872,
+      "entry_requirement_met": false,
+      "frontier_cells": 109,
+      "known_free_cells": 1126,
+      "known_free_m2": 25.335002013444942,
+      "largest_unknown_m2": 12.64500100493433,
+      "map_known_free_cells": 1297,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1126,
+      "reason": "measured",
+      "unknown_cells": 1022
+    },
+    "coverage_streak": 0,
+    "elapsed_sec": 5.992,
+    "entry_return_pending": false,
+    "event": "REGION_COVERAGE_UPDATED",
+    "region_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_entry_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_index": 2
+  },
+  {
+    "cycle": 2,
+    "elapsed_sec": 11.082,
+    "entry_return_pending": false,
+    "escape_reason": null,
+    "escape_requested": false,
+    "event": "disabled",
+    "failure_reason": null,
+    "goal": [
+      7.361194837057363,
+      0.13438494790366096,
+      -0.002379300142354098
+    ],
+    "goal_source": "corridor_acquisition",
+    "phase": "SEEK_CORRIDOR_FORWARD",
+    "region_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.5242085661080075,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 2148,
+      "entry_depth_m": 3.8647824224534872,
+      "entry_requirement_met": false,
+      "frontier_cells": 109,
+      "known_free_cells": 1126,
+      "known_free_m2": 25.335002013444942,
+      "largest_unknown_m2": 12.64500100493433,
+      "map_known_free_cells": 1297,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1126,
+      "reason": "measured",
+      "unknown_cells": 1022
+    },
+    "region_entry_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_goal_count": 0,
+    "region_index": 2,
+    "region_path_length": 0.0,
+    "success": true
+  },
+  {
+    "coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.5239423523942353,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 2151,
+      "entry_depth_m": 7.200590520472541,
+      "entry_requirement_met": false,
+      "frontier_cells": 110,
+      "known_free_cells": 1127,
+      "known_free_m2": 25.35750201523308,
+      "largest_unknown_m2": 12.64500100493433,
+      "map_known_free_cells": 1300,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1127,
+      "reason": "measured",
+      "unknown_cells": 1024
+    },
+    "coverage_streak": 0,
+    "elapsed_sec": 11.833,
+    "entry_return_pending": false,
+    "event": "REGION_COVERAGE_UPDATED",
+    "region_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_entry_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_index": 2
+  },
+  {
+    "attempt": 1,
+    "cycle": 3,
+    "elapsed_sec": 16.009,
+    "event": "REGION_STALL_BACKTRACK_SELECTED",
+    "target": [
+      6.022920677237705,
+      0.07923277924137827
+    ],
+    "trajectory_distance_m": 1.328131151189498,
+    "waypoint_count": 3
+  },
+  {
+    "cycle": 3,
+    "elapsed_sec": 20.702,
+    "entry_return_pending": false,
+    "escape_reason": null,
+    "escape_requested": false,
+    "event": "region_stall_backtrack_completed",
+    "failure_reason": null,
+    "goal": [
+      6.022920677237705,
+      0.07923277924137827,
+      -0.0023793001423541016
+    ],
+    "goal_source": "region_stall_backtrack",
+    "phase": "REGION_STALL_BACKTRACK",
+    "region_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.5239423523942353,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 2151,
+      "entry_depth_m": 7.200590520472541,
+      "entry_requirement_met": false,
+      "frontier_cells": 110,
+      "known_free_cells": 1127,
+      "known_free_m2": 25.35750201523308,
+      "largest_unknown_m2": 12.64500100493433,
+      "map_known_free_cells": 1300,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1127,
+      "reason": "measured",
+      "unknown_cells": 1024
+    },
+    "region_entry_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_goal_count": 0,
+    "region_index": 2,
+    "region_path_length": 0.0,
+    "success": true
+  },
+  {
+    "coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.5331141380930015,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 2129,
+      "entry_depth_m": 6.193411620296837,
+      "entry_requirement_met": false,
+      "frontier_cells": 97,
+      "known_free_cells": 1135,
+      "known_free_m2": 25.537502029538196,
+      "largest_unknown_m2": 12.375000983476658,
+      "map_known_free_cells": 1301,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1135,
+      "reason": "measured",
+      "unknown_cells": 994
+    },
+    "coverage_streak": 0,
+    "elapsed_sec": 21.281,
+    "entry_return_pending": false,
+    "event": "REGION_COVERAGE_UPDATED",
+    "region_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_entry_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_index": 2
+  },
+  {
+    "cycle": 4,
+    "elapsed_sec": 23.871,
+    "entry_return_pending": false,
+    "escape_reason": null,
+    "escape_requested": false,
+    "event": "disabled",
+    "failure_reason": null,
+    "goal": [
+      6.754344419325863,
+      -0.7680807676852877,
+      -0.0023793001423541016
+    ],
+    "goal_source": "corridor_door_forward_commit",
+    "phase": "CORRIDOR_SWEEP",
+    "region_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.5331141380930015,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 2129,
+      "entry_depth_m": 6.193411620296837,
+      "entry_requirement_met": false,
+      "frontier_cells": 97,
+      "known_free_cells": 1135,
+      "known_free_m2": 25.537502029538196,
+      "largest_unknown_m2": 12.375000983476658,
+      "map_known_free_cells": 1301,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1135,
+      "reason": "measured",
+      "unknown_cells": 994
+    },
+    "region_entry_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_goal_count": 0,
+    "region_index": 2,
+    "region_path_length": 0.0,
+    "success": true
+  },
+  {
+    "cycle": 5,
+    "elapsed_sec": 26.499,
+    "entry_return_pending": false,
+    "escape_reason": null,
+    "escape_requested": false,
+    "event": "disabled",
+    "failure_reason": null,
+    "goal": [
+      7.2531358099049505,
+      -0.7600013777145629,
+      -0.0023793001423541016
+    ],
+    "goal_source": "corridor_door_forward_commit",
+    "phase": "CORRIDOR_SWEEP",
+    "region_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.5331141380930015,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 2129,
+      "entry_depth_m": 6.193411620296837,
+      "entry_requirement_met": false,
+      "frontier_cells": 97,
+      "known_free_cells": 1135,
+      "known_free_m2": 25.537502029538196,
+      "largest_unknown_m2": 12.375000983476658,
+      "map_known_free_cells": 1301,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1135,
+      "reason": "measured",
+      "unknown_cells": 994
+    },
+    "region_entry_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_goal_count": 0,
+    "region_index": 2,
+    "region_path_length": 0.0,
+    "success": true
+  },
+  {
+    "cycle": 6,
+    "elapsed_sec": 29.055,
+    "entry_return_pending": false,
+    "escape_reason": null,
+    "escape_requested": false,
+    "event": "disabled",
+    "failure_reason": null,
+    "goal": [
+      7.657707086730206,
+      -0.7534481589177622,
+      -0.0023793001423540946
+    ],
+    "goal_source": "corridor_door_forward_commit",
+    "phase": "CORRIDOR_SWEEP",
+    "region_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.5331141380930015,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 2129,
+      "entry_depth_m": 6.193411620296837,
+      "entry_requirement_met": false,
+      "frontier_cells": 97,
+      "known_free_cells": 1135,
+      "known_free_m2": 25.537502029538196,
+      "largest_unknown_m2": 12.375000983476658,
+      "map_known_free_cells": 1301,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1135,
+      "reason": "measured",
+      "unknown_cells": 994
+    },
+    "region_entry_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_goal_count": 0,
+    "region_index": 2,
+    "region_path_length": 0.0,
+    "success": true
+  },
+  {
+    "cycle": 7,
+    "elapsed_sec": 31.141,
+    "entry_return_pending": false,
+    "escape_reason": null,
+    "escape_requested": false,
+    "event": "disabled",
+    "failure_reason": null,
+    "goal": [
+      8.091434049480348,
+      -0.746422678247761,
+      0.006585743331802715
+    ],
+    "goal_source": "corridor_door_forward_commit",
+    "phase": "CORRIDOR_SWEEP",
+    "region_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.5331141380930015,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 2129,
+      "entry_depth_m": 6.193411620296837,
+      "entry_requirement_met": false,
+      "frontier_cells": 97,
+      "known_free_cells": 1135,
+      "known_free_m2": 25.537502029538196,
+      "largest_unknown_m2": 12.375000983476658,
+      "map_known_free_cells": 1301,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1135,
+      "reason": "measured",
+      "unknown_cells": 994
+    },
+    "region_entry_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_goal_count": 0,
+    "region_index": 2,
+    "region_path_length": 0.0,
+    "success": true
+  },
+  {
+    "cycle": 8,
+    "elapsed_sec": 40.361,
+    "entry_return_pending": false,
+    "escape_reason": null,
+    "escape_requested": false,
+    "event": "corridor_forward_disabled",
+    "failure_reason": null,
+    "goal": [
+      14.949217793619027,
+      -0.8353669860969384,
+      -0.0023793001423541016
+    ],
+    "goal_source": "corridor_sweep",
+    "phase": "CORRIDOR_SWEEP",
+    "region_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.5331141380930015,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 2129,
+      "entry_depth_m": 6.193411620296837,
+      "entry_requirement_met": false,
+      "frontier_cells": 97,
+      "known_free_cells": 1135,
+      "known_free_m2": 25.537502029538196,
+      "largest_unknown_m2": 12.375000983476658,
+      "map_known_free_cells": 1301,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1135,
+      "reason": "measured",
+      "unknown_cells": 994
+    },
+    "region_entry_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_goal_count": 0,
+    "region_index": 2,
+    "region_path_length": 0.0,
+    "success": true
+  },
+  {
+    "cycle": 9,
+    "elapsed_sec": 46.355,
+    "entry_return_pending": false,
+    "escape_reason": null,
+    "escape_requested": false,
+    "event": "room_semantic_goal_completed",
+    "failure_reason": null,
+    "goal": [
+      13.6053,
+      -2.8683,
+      -0.0023793001423541016
+    ],
+    "goal_source": "lightweight_room_entry",
+    "phase": "ROOM_ENTRY",
+    "region_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.5331141380930015,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 2129,
+      "entry_depth_m": 6.193411620296837,
+      "entry_requirement_met": false,
+      "frontier_cells": 97,
+      "known_free_cells": 1135,
+      "known_free_m2": 25.537502029538196,
+      "largest_unknown_m2": 12.375000983476658,
+      "map_known_free_cells": 1301,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1135,
+      "reason": "measured",
+      "unknown_cells": 994
+    },
+    "region_entry_anchor": [
+      -0.002215123686144684,
+      -0.00778108237232851
+    ],
+    "region_goal_count": 0,
+    "region_index": 2,
+    "region_path_length": 0.0,
+    "success": true
+  },
+  {
+    "component_cells": null,
+    "corridor_branch_id": "side_branch_01",
+    "corridor_branch_side": -1,
+    "corridor_branch_station_m": 6.153381909292319,
+    "elapsed_sec": 47.022,
+    "entry_pose": [
+      13.367892413499352,
+      -0.8960218169948666
+    ],
+    "event": "PHYSICAL_REGION_ENTRY",
+    "inside_pose": [
+      13.569605567400737,
+      -2.7359377749831366
+    ],
+    "matched_branch_ids": [],
+    "region_index": 3,
+    "result": "physical_region_entry_observed"
+  },
+  {
+    "coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.4372958850424559,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 3062,
+      "entry_depth_m": 1.8509400122415467,
+      "entry_requirement_met": false,
+      "frontier_cells": 256,
+      "known_free_cells": 1339,
+      "known_free_m2": 30.12750239431863,
+      "largest_unknown_m2": 14.310001137256645,
+      "map_known_free_cells": 2851,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1339,
+      "reason": "measured",
+      "unknown_cells": 1723
+    },
+    "coverage_streak": 0,
+    "elapsed_sec": 47.052,
+    "entry_return_pending": false,
+    "event": "REGION_COVERAGE_UPDATED",
+    "region_anchor": [
+      13.569605567400737,
+      -2.7359377749831366
+    ],
+    "region_entry_anchor": [
+      13.367892413499352,
+      -0.8960218169948666
+    ],
+    "region_index": 3
+  },
+  {
+    "cycle": 10,
+    "elapsed_sec": 58.117,
+    "entry_return_pending": false,
+    "escape_reason": null,
+    "escape_requested": false,
+    "event": "room_semantic_goal_completed",
+    "failure_reason": null,
+    "goal": [
+      13.125000610947609,
+      -4.87499973475933,
+      -0.0023793001423541016
+    ],
+    "goal_source": "lightweight_room_semantic",
+    "phase": "ROOM_G1",
+    "region_anchor": [
+      13.569605567400737,
+      -2.7359377749831366
+    ],
+    "region_coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.4372958850424559,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 3062,
+      "entry_depth_m": 1.8509400122415467,
+      "entry_requirement_met": false,
+      "frontier_cells": 256,
+      "known_free_cells": 1339,
+      "known_free_m2": 30.12750239431863,
+      "largest_unknown_m2": 14.310001137256645,
+      "map_known_free_cells": 2851,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1339,
+      "reason": "measured",
+      "unknown_cells": 1723
+    },
+    "region_entry_anchor": [
+      13.367892413499352,
+      -0.8960218169948666
+    ],
+    "region_goal_count": 0,
+    "region_index": 3,
+    "region_path_length": 0.0,
+    "success": true
+  },
+  {
+    "coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.5115268960908788,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 2993,
+      "entry_depth_m": 3.46037158749095,
+      "entry_requirement_met": false,
+      "frontier_cells": 266,
+      "known_free_cells": 1531,
+      "known_free_m2": 34.447502737641386,
+      "largest_unknown_m2": 6.300000500679026,
+      "map_known_free_cells": 2790,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1531,
+      "reason": "measured",
+      "unknown_cells": 1462
+    },
+    "coverage_streak": 0,
+    "elapsed_sec": 58.717,
+    "entry_return_pending": false,
+    "event": "REGION_COVERAGE_UPDATED",
+    "region_anchor": [
+      13.569605567400737,
+      -2.7359377749831366
+    ],
+    "region_entry_anchor": [
+      13.367892413499352,
+      -0.8960218169948666
+    ],
+    "region_index": 3
+  },
+  {
+    "cycle": 11,
+    "elapsed_sec": 69.77,
+    "entry_return_pending": false,
+    "escape_reason": null,
+    "escape_requested": false,
+    "event": "room_semantic_goal_completed",
+    "failure_reason": null,
+    "goal": [
+      13.425000622868538,
+      -1.1249995857477177,
+      -0.0023793001423541016
+    ],
+    "goal_source": "lightweight_room_exit_fallback",
+    "phase": "ROOM_EXIT",
+    "region_anchor": [
+      13.569605567400737,
+      -2.7359377749831366
+    ],
+    "region_coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.5115268960908788,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 2993,
+      "entry_depth_m": 3.46037158749095,
+      "entry_requirement_met": false,
+      "frontier_cells": 266,
+      "known_free_cells": 1531,
+      "known_free_m2": 34.447502737641386,
+      "largest_unknown_m2": 6.300000500679026,
+      "map_known_free_cells": 2790,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1531,
+      "reason": "measured",
+      "unknown_cells": 1462
+    },
+    "region_entry_anchor": [
+      13.367892413499352,
+      -0.8960218169948666
+    ],
+    "region_goal_count": 0,
+    "region_index": 3,
+    "region_path_length": 0.0,
+    "success": true
+  },
+  {
+    "cycle": 12,
+    "elapsed_sec": 76.397,
+    "entry_return_pending": false,
+    "escape_reason": null,
+    "escape_requested": false,
+    "event": "room_semantic_goal_completed",
+    "failure_reason": null,
+    "goal": [
+      13.875000640749931,
+      0.5250004798173915,
+      -0.0023793001423541016
+    ],
+    "goal_source": "lightweight_room_entry",
+    "phase": "MIRRORED_PAIRED_ROOM_VERIFY",
+    "region_anchor": [
+      13.569605567400737,
+      -2.7359377749831366
+    ],
+    "region_coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.5115268960908788,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 2993,
+      "entry_depth_m": 3.46037158749095,
+      "entry_requirement_met": false,
+      "frontier_cells": 266,
+      "known_free_cells": 1531,
+      "known_free_m2": 34.447502737641386,
+      "largest_unknown_m2": 6.300000500679026,
+      "map_known_free_cells": 2790,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1531,
+      "reason": "measured",
+      "unknown_cells": 1462
+    },
+    "region_entry_anchor": [
+      13.367892413499352,
+      -0.8960218169948666
+    ],
+    "region_goal_count": 0,
+    "region_index": 3,
+    "region_path_length": 0.0,
+    "success": true
+  },
+  {
+    "component_cells": null,
+    "corridor_branch_id": "side_branch_02",
+    "corridor_branch_side": 1,
+    "corridor_branch_station_m": 6.210105759526265,
+    "elapsed_sec": 77.122,
+    "entry_pose": [
+      13.431020256527574,
+      -1.2909210627653391
+    ],
+    "event": "PHYSICAL_REGION_ENTRY",
+    "inside_pose": [
+      13.865725537334638,
+      0.36874193893149526
+    ],
+    "matched_branch_ids": [],
+    "region_index": 4,
+    "result": "physical_region_entry_observed"
+  },
+  {
+    "coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.5247851949768672,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 3026,
+      "entry_depth_m": 1.7156485538602873,
+      "entry_requirement_met": false,
+      "frontier_cells": 197,
+      "known_free_cells": 1588,
+      "known_free_m2": 35.73000283956533,
+      "largest_unknown_m2": 24.817501972317736,
+      "map_known_free_cells": 2985,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1588,
+      "reason": "measured",
+      "unknown_cells": 1438
+    },
+    "coverage_streak": 0,
+    "elapsed_sec": 77.161,
+    "entry_return_pending": false,
+    "event": "REGION_COVERAGE_UPDATED",
+    "region_anchor": [
+      13.865725537334638,
+      0.36874193893149526
+    ],
+    "region_entry_anchor": [
+      13.431020256527574,
+      -1.2909210627653391
+    ],
+    "region_index": 4
+  },
+  {
+    "cycle": 13,
+    "elapsed_sec": 88.465,
+    "entry_return_pending": false,
+    "escape_reason": null,
+    "escape_requested": false,
+    "event": "room_semantic_goal_completed",
+    "failure_reason": null,
+    "goal": [
+      14.025000646710396,
+      2.925000575184823,
+      -0.0023793001423541016
+    ],
+    "goal_source": "lightweight_room_semantic",
+    "phase": "ROOM_G1",
+    "region_anchor": [
+      13.865725537334638,
+      0.36874193893149526
+    ],
+    "region_coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.5247851949768672,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 3026,
+      "entry_depth_m": 1.7156485538602873,
+      "entry_requirement_met": false,
+      "frontier_cells": 197,
+      "known_free_cells": 1588,
+      "known_free_m2": 35.73000283956533,
+      "largest_unknown_m2": 24.817501972317736,
+      "map_known_free_cells": 2985,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1588,
+      "reason": "measured",
+      "unknown_cells": 1438
+    },
+    "region_entry_anchor": [
+      13.431020256527574,
+      -1.2909210627653391
+    ],
+    "region_goal_count": 0,
+    "region_index": 4,
+    "region_path_length": 0.0,
+    "success": true
+  },
+  {
+    "coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.599601593625498,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 3012,
+      "entry_depth_m": 3.761308251982486,
+      "entry_requirement_met": false,
+      "frontier_cells": 158,
+      "known_free_cells": 1806,
+      "known_free_m2": 40.63500322937972,
+      "largest_unknown_m2": 7.470000593662274,
+      "map_known_free_cells": 3009,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1806,
+      "reason": "measured",
+      "unknown_cells": 1206
+    },
+    "coverage_streak": 0,
+    "elapsed_sec": 89.412,
+    "entry_return_pending": false,
+    "event": "REGION_COVERAGE_UPDATED",
+    "region_anchor": [
+      13.865725537334638,
+      0.36874193893149526
+    ],
+    "region_entry_anchor": [
+      13.431020256527574,
+      -1.2909210627653391
+    ],
+    "region_index": 4
+  },
+  {
+    "cycle": 14,
+    "elapsed_sec": 100.006,
+    "entry_return_pending": false,
+    "escape_reason": null,
+    "escape_requested": false,
+    "event": "room_semantic_goal_completed",
+    "failure_reason": null,
+    "goal": [
+      13.875000640749931,
+      -1.1249995857477177,
+      -0.0023793001423541016
+    ],
+    "goal_source": "lightweight_room_exit",
+    "phase": "ROOM_EXIT",
+    "region_anchor": [
+      13.865725537334638,
+      0.36874193893149526
+    ],
+    "region_coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.599601593625498,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 3012,
+      "entry_depth_m": 3.761308251982486,
+      "entry_requirement_met": false,
+      "frontier_cells": 158,
+      "known_free_cells": 1806,
+      "known_free_m2": 40.63500322937972,
+      "largest_unknown_m2": 7.470000593662274,
+      "map_known_free_cells": 3009,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1806,
+      "reason": "measured",
+      "unknown_cells": 1206
+    },
+    "region_entry_anchor": [
+      13.431020256527574,
+      -1.2909210627653391
+    ],
+    "region_goal_count": 0,
+    "region_index": 4,
+    "region_path_length": 0.0,
+    "success": true
+  },
+  {
+    "cycle": 15,
+    "elapsed_sec": 106.767,
+    "entry_return_pending": false,
+    "escape_reason": null,
+    "escape_requested": false,
+    "event": "disabled",
+    "failure_reason": null,
+    "goal": [
+      14.23533505094106,
+      -1.0897776920958744,
+      -0.0023793001423541016
+    ],
+    "goal_source": "corridor_resume_centerline",
+    "phase": "CORRIDOR_RESUME",
+    "region_anchor": [
+      13.865725537334638,
+      0.36874193893149526
+    ],
+    "region_coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.599601593625498,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 3012,
+      "entry_depth_m": 3.761308251982486,
+      "entry_requirement_met": false,
+      "frontier_cells": 158,
+      "known_free_cells": 1806,
+      "known_free_m2": 40.63500322937972,
+      "largest_unknown_m2": 7.470000593662274,
+      "map_known_free_cells": 3009,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1806,
+      "reason": "measured",
+      "unknown_cells": 1206
+    },
+    "region_entry_anchor": [
+      13.431020256527574,
+      -1.2909210627653391
+    ],
+    "region_goal_count": 0,
+    "region_index": 4,
+    "region_path_length": 0.0,
+    "success": true
+  },
+  {
+    "cycle": 16,
+    "elapsed_sec": 120.281,
+    "entry_return_pending": false,
+    "escape_reason": null,
+    "escape_requested": false,
+    "event": "corridor_forward_disabled",
+    "failure_reason": null,
+    "goal": [
+      16.730459974917206,
+      -1.0493618235238975,
+      -0.0023793001423541016
+    ],
+    "goal_source": "corridor_sweep",
+    "phase": "CORRIDOR_SWEEP",
+    "region_anchor": [
+      13.865725537334638,
+      0.36874193893149526
+    ],
+    "region_coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.599601593625498,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 3012,
+      "entry_depth_m": 3.761308251982486,
+      "entry_requirement_met": false,
+      "frontier_cells": 158,
+      "known_free_cells": 1806,
+      "known_free_m2": 40.63500322937972,
+      "largest_unknown_m2": 7.470000593662274,
+      "map_known_free_cells": 3009,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1806,
+      "reason": "measured",
+      "unknown_cells": 1206
+    },
+    "region_entry_anchor": [
+      13.431020256527574,
+      -1.2909210627653391
+    ],
+    "region_goal_count": 0,
+    "region_index": 4,
+    "region_path_length": 0.0,
+    "success": true
+  },
+  {
+    "cycle": 17,
+    "elapsed_sec": 125.446,
+    "entry_return_pending": false,
+    "escape_reason": null,
+    "escape_requested": false,
+    "event": "corridor_forward_disabled",
+    "failure_reason": null,
+    "goal": [
+      19.599912898012953,
+      -1.402935085939034,
+      -0.0023793001423541016
+    ],
+    "goal_source": "corridor_sweep",
+    "phase": "CORRIDOR_SWEEP",
+    "region_anchor": [
+      13.865725537334638,
+      0.36874193893149526
+    ],
+    "region_coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.599601593625498,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 3012,
+      "entry_depth_m": 3.761308251982486,
+      "entry_requirement_met": false,
+      "frontier_cells": 158,
+      "known_free_cells": 1806,
+      "known_free_m2": 40.63500322937972,
+      "largest_unknown_m2": 7.470000593662274,
+      "map_known_free_cells": 3009,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1806,
+      "reason": "measured",
+      "unknown_cells": 1206
+    },
+    "region_entry_anchor": [
+      13.431020256527574,
+      -1.2909210627653391
+    ],
+    "region_goal_count": 0,
+    "region_index": 4,
+    "region_path_length": 0.0,
+    "success": true
+  },
+  {
+    "cycle": 18,
+    "elapsed_sec": 132.241,
+    "entry_return_pending": false,
+    "escape_reason": null,
+    "escape_requested": false,
+    "event": "corridor_forward_disabled",
+    "failure_reason": null,
+    "goal": [
+      22.06066132383143,
+      -1.363076045611669,
+      -0.0023793001423541016
+    ],
+    "goal_source": "corridor_sweep",
+    "phase": "CORRIDOR_SWEEP",
+    "region_anchor": [
+      13.865725537334638,
+      0.36874193893149526
+    ],
+    "region_coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.599601593625498,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 3012,
+      "entry_depth_m": 3.761308251982486,
+      "entry_requirement_met": false,
+      "frontier_cells": 158,
+      "known_free_cells": 1806,
+      "known_free_m2": 40.63500322937972,
+      "largest_unknown_m2": 7.470000593662274,
+      "map_known_free_cells": 3009,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 1806,
+      "reason": "measured",
+      "unknown_cells": 1206
+    },
+    "region_entry_anchor": [
+      13.431020256527574,
+      -1.2909210627653391
+    ],
+    "region_goal_count": 0,
+    "region_index": 4,
+    "region_path_length": 0.0,
+    "success": true
+  },
+  {
+    "component_cells": null,
+    "corridor_branch_id": "side_branch_03",
+    "corridor_branch_side": 1,
+    "corridor_branch_station_m": 12.337446348530804,
+    "elapsed_sec": 133.342,
+    "entry_pose": [
+      19.560739193711814,
+      -1.3881295309201218
+    ],
+    "event": "PHYSICAL_REGION_ENTRY",
+    "inside_pose": [
+      21.902049196873065,
+      -1.3968025353299298
+    ],
+    "matched_branch_ids": [],
+    "region_index": 5,
+    "result": "physical_region_entry_observed"
+  },
+  {
+    "coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.3047887323943662,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 1775,
+      "entry_depth_m": 2.3413260669775218,
+      "entry_requirement_met": false,
+      "frontier_cells": 42,
+      "known_free_cells": 541,
+      "known_free_m2": 12.172500967383403,
+      "largest_unknown_m2": 22.522501789927517,
+      "map_known_free_cells": 788,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 541,
+      "reason": "measured",
+      "unknown_cells": 1234
+    },
+    "coverage_streak": 0,
+    "elapsed_sec": 133.36,
+    "entry_return_pending": false,
+    "event": "REGION_COVERAGE_UPDATED",
+    "region_anchor": [
+      21.902049196873065,
+      -1.3968025353299298
+    ],
+    "region_entry_anchor": [
+      19.560739193711814,
+      -1.3881295309201218
+    ],
+    "region_index": 5
+  },
+  {
+    "coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.7336747759282971,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 781,
+      "entry_depth_m": 2.3689638612994792,
+      "entry_requirement_met": false,
+      "frontier_cells": 23,
+      "known_free_cells": 573,
+      "known_free_m2": 12.892501024603863,
+      "largest_unknown_m2": 4.5450003612041545,
+      "map_known_free_cells": 781,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 573,
+      "reason": "measured",
+      "unknown_cells": 208
+    },
+    "coverage_streak": 0,
+    "elapsed_sec": 138.141,
+    "entry_return_pending": false,
+    "event": "REGION_COVERAGE_UPDATED",
+    "region_anchor": [
+      21.902049196873065,
+      -1.3968025353299298
+    ],
+    "region_entry_anchor": [
+      19.560739193711814,
+      -1.3881295309201218
+    ],
+    "region_index": 5
+  },
+  {
+    "coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.3266106442577031,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 1785,
+      "entry_depth_m": 2.356574340291986,
+      "entry_requirement_met": false,
+      "frontier_cells": 24,
+      "known_free_cells": 583,
+      "known_free_m2": 13.117501042485259,
+      "largest_unknown_m2": 22.567501793503798,
+      "map_known_free_cells": 798,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 583,
+      "reason": "measured",
+      "unknown_cells": 1202
+    },
+    "coverage_streak": 0,
+    "elapsed_sec": 141.429,
+    "entry_return_pending": false,
+    "event": "REGION_COVERAGE_UPDATED",
+    "region_anchor": [
+      21.902049196873065,
+      -1.3968025353299298
+    ],
+    "region_entry_anchor": [
+      19.560739193711814,
+      -1.3881295309201218
+    ],
+    "region_index": 5
+  },
+  {
+    "coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.3255295429208473,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 1794,
+      "entry_depth_m": 2.1928086983316644,
+      "entry_requirement_met": false,
+      "frontier_cells": 32,
+      "known_free_cells": 584,
+      "known_free_m2": 13.140001044273397,
+      "largest_unknown_m2": 22.612501797080075,
+      "map_known_free_cells": 807,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 584,
+      "reason": "measured",
+      "unknown_cells": 1210
+    },
+    "coverage_streak": 0,
+    "elapsed_sec": 146.237,
+    "entry_return_pending": false,
+    "event": "REGION_COVERAGE_UPDATED",
+    "region_anchor": [
+      21.902049196873065,
+      -1.3968025353299298
+    ],
+    "region_entry_anchor": [
+      19.560739193711814,
+      -1.3881295309201218
+    ],
+    "region_index": 5
+  },
+  {
+    "coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.4181010549694614,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 1801,
+      "entry_depth_m": 2.1051857146059954,
+      "entry_requirement_met": false,
+      "frontier_cells": 42,
+      "known_free_cells": 753,
+      "known_free_m2": 16.94250134646895,
+      "largest_unknown_m2": 22.657501800656355,
+      "map_known_free_cells": 814,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 753,
+      "reason": "measured",
+      "unknown_cells": 1048
+    },
+    "coverage_streak": 0,
+    "elapsed_sec": 149.512,
+    "entry_return_pending": false,
+    "event": "REGION_COVERAGE_UPDATED",
+    "region_anchor": [
+      21.902049196873065,
+      -1.3968025353299298
+    ],
+    "region_entry_anchor": [
+      19.560739193711814,
+      -1.3881295309201218
+    ],
+    "region_index": 5
+  },
+  {
+    "cycle": 23,
+    "elapsed_sec": 166.896,
+    "entry_return_pending": false,
+    "escape_reason": null,
+    "escape_requested": false,
+    "event": "corridor_forward_disabled",
+    "failure_reason": null,
+    "goal": [
+      21.426710390160693,
+      -1.3733447409263262,
+      -0.0023793001423541016
+    ],
+    "goal_source": "corridor_sweep",
+    "phase": "CORRIDOR_SWEEP",
+    "region_anchor": [
+      21.902049196873065,
+      -1.3968025353299298
+    ],
+    "region_coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.4181010549694614,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 1801,
+      "entry_depth_m": 2.1051857146059954,
+      "entry_requirement_met": false,
+      "frontier_cells": 42,
+      "known_free_cells": 753,
+      "known_free_m2": 16.94250134646895,
+      "largest_unknown_m2": 22.657501800656355,
+      "map_known_free_cells": 814,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 753,
+      "reason": "measured",
+      "unknown_cells": 1048
+    },
+    "region_entry_anchor": [
+      19.560739193711814,
+      -1.3881295309201218
+    ],
+    "region_goal_count": 0,
+    "region_index": 5,
+    "region_path_length": 0.0,
+    "success": true
+  },
+  {
+    "branch_state": "COVERED",
+    "coverage_complete": true,
+    "coverage_source": "lightweight_room_lidar",
+    "elapsed_sec": 167.948,
+    "event": "CORRIDOR_BRANCH_EXIT"
+  },
+  {
+    "component_cells": 0,
+    "corridor_branch_id": "side_branch_03",
+    "corridor_branch_side": 1,
+    "corridor_branch_station_m": 13.316423039330868,
+    "elapsed_sec": 172.763,
+    "entry_pose": [
+      21.520906179586262,
+      -1.5089328395911425
+    ],
+    "event": "PHYSICAL_REGION_ENTRY",
+    "inside_pose": [
+      21.975736120936993,
+      -1.3827098084558314
+    ],
+    "matched_branch_ids": [],
+    "region_index": 6,
+    "result": "physical_region_entry_observed"
+  },
+  {
+    "coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.3051668460710441,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 1858,
+      "entry_depth_m": 0.47201962791614394,
+      "entry_requirement_met": false,
+      "frontier_cells": 42,
+      "known_free_cells": 567,
+      "known_free_m2": 12.757501013875029,
+      "largest_unknown_m2": 23.400001859664954,
+      "map_known_free_cells": 839,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 567,
+      "reason": "measured",
+      "unknown_cells": 1291
+    },
+    "coverage_streak": 0,
+    "elapsed_sec": 172.782,
+    "entry_return_pending": false,
+    "event": "REGION_COVERAGE_UPDATED",
+    "region_anchor": [
+      21.975736120936993,
+      -1.3827098084558314
+    ],
+    "region_entry_anchor": [
+      21.520906179586262,
+      -1.5089328395911425
+    ],
+    "region_index": 6
+  },
+  {
+    "coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.3164420485175202,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 1855,
+      "entry_depth_m": 1.014466679185179,
+      "entry_requirement_met": false,
+      "frontier_cells": 39,
+      "known_free_cells": 587,
+      "known_free_m2": 13.207501049637816,
+      "largest_unknown_m2": 23.400001859664954,
+      "map_known_free_cells": 836,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 587,
+      "reason": "measured",
+      "unknown_cells": 1268
+    },
+    "coverage_streak": 0,
+    "elapsed_sec": 176.018,
+    "entry_return_pending": false,
+    "event": "REGION_COVERAGE_UPDATED",
+    "region_anchor": [
+      21.975736120936993,
+      -1.3827098084558314
+    ],
+    "region_entry_anchor": [
+      21.520906179586262,
+      -1.5089328395911425
+    ],
+    "region_index": 6
+  },
+  {
+    "coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.31561996779388085,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 1863,
+      "entry_depth_m": 0.5080635147834731,
+      "entry_requirement_met": false,
+      "frontier_cells": 46,
+      "known_free_cells": 588,
+      "known_free_m2": 13.230001051425955,
+      "largest_unknown_m2": 23.49000186681751,
+      "map_known_free_cells": 844,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 588,
+      "reason": "measured",
+      "unknown_cells": 1275
+    },
+    "coverage_streak": 0,
+    "elapsed_sec": 180.846,
+    "entry_return_pending": false,
+    "event": "REGION_COVERAGE_UPDATED",
+    "region_anchor": [
+      21.975736120936993,
+      -1.3827098084558314
+    ],
+    "region_entry_anchor": [
+      21.520906179586262,
+      -1.5089328395911425
+    ],
+    "region_index": 6
+  },
+  {
+    "coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.2559860687853722,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 2297,
+      "entry_depth_m": 0.35022635642438116,
+      "entry_requirement_met": false,
+      "frontier_cells": 50,
+      "known_free_cells": 588,
+      "known_free_m2": 13.230001051425955,
+      "largest_unknown_m2": 23.535001870393792,
+      "map_known_free_cells": 1278,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 588,
+      "reason": "measured",
+      "unknown_cells": 1709
+    },
+    "coverage_streak": 0,
+    "elapsed_sec": 184.09,
+    "entry_return_pending": false,
+    "event": "REGION_COVERAGE_UPDATED",
+    "region_anchor": [
+      21.975736120936993,
+      -1.3827098084558314
+    ],
+    "region_entry_anchor": [
+      21.520906179586262,
+      -1.5089328395911425
+    ],
+    "region_index": 6
+  },
+  {
+    "coverage": {
+      "coverage_complete": false,
+      "coverage_ratio": 0.3508695652173913,
+      "coverage_source": "post_entry_lidar_rays",
+      "domain_cells": 2300,
+      "entry_depth_m": 0.34005413278336244,
+      "entry_requirement_met": false,
+      "frontier_cells": 33,
+      "known_free_cells": 807,
+      "known_free_m2": 18.15750144302848,
+      "largest_unknown_m2": 23.51250186860565,
+      "map_known_free_cells": 1281,
+      "physical_entry_observed": true,
+      "post_entry_goal_count": 0,
+      "post_entry_observed_cells": 807,
+      "reason": "measured",
+      "unknown_cells": 1493
+    },
+    "coverage_streak": 0,
+    "elapsed_sec": 188.929,
+    "entry_return_pending": false,
+    "event": "REGION_COVERAGE_UPDATED",
+    "region_anchor": [
+      21.975736120936993,
+      -1.3827098084558314
+    ],
+    "region_entry_anchor": [
+      21.520906179586262,
+      -1.5089328395911425
+    ],
+    "region_index": 6
+  },
+  {
+    "branch_state": "COVERED",
+    "coverage_complete": true,
+    "coverage_source": "lightweight_room_lidar",
+    "elapsed_sec": 192.152,
+    "event": "CORRIDOR_BRANCH_EXIT"
+  }
+]

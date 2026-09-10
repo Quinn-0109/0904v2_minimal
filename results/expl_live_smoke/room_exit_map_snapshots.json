@@ -1,0 +1,22 @@
+[
+  {
+    "elapsed_sec": 69.763,
+    "grid_shape": [
+      143,
+      247
+    ],
+    "room_id": "estimated_room_01",
+    "snapshot_file": "room_exit_map_snapshots/room_exit_01_grid.npz",
+    "trajectory_sample_count": 620
+  },
+  {
+    "elapsed_sec": 99.996,
+    "grid_shape": [
+      143,
+      247
+    ],
+    "room_id": "estimated_room_02",
+    "snapshot_file": "room_exit_map_snapshots/room_exit_02_grid.npz",
+    "trajectory_sample_count": 885
+  }
+]

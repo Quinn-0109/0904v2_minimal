@@ -1,0 +1,26 @@
+<launch>
+  <!--
+    FAST-LIVO2 for SimEnv: LiDAR + IMU + RealSense RGB.
+    Level Mid-360 pitch into base FLU, then fuse with camera.
+    Input:  /scan, /livox/imu, /real_sense/rgb/image_raw
+    Output: /Odometry (relayed), /cloud_registered
+  -->
+  <node pkg="simenv_competitor" type="fastlio_pointcloud_adapter.py"
+        name="fastlio_pointcloud_adapter" output="screen" required="true">
+    <!-- URDF laser pitch=+0.785; +0.785 maps points into base-oriented FLU. -->
+    <param name="unpitch_rad" value="0.785"/>
+    <param name="rotate_imu" value="true"/>
+  </node>
+
+  <node pkg="simenv_competitor" type="pointcloud2livox_livo.py"
+        name="pointcloud2livox_livo" output="screen" required="true"/>
+
+  <rosparam command="load" file="$(find fast_livo)/config/simenv_mid360.yaml"/>
+
+  <node pkg="fast_livo" type="fastlivo_mapping" name="laserMapping" output="screen" required="true">
+    <rosparam file="$(find fast_livo)/config/camera_simenv.yaml"/>
+  </node>
+
+  <node pkg="topic_tools" type="relay" name="livo_odom_relay"
+        args="/aft_mapped_to_init /Odometry"/>
+</launch>

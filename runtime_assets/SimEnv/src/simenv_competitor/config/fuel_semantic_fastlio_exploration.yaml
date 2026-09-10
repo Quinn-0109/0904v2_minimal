@@ -1,0 +1,669 @@
+task_mode: baseline_fastlio_exploration
+
+# These global flags remain false so the clean FUEL manager boundary is kept.
+# The online semantic options below are private manager parameters and use
+# only FAST-LIO trajectory, point cloud and observed occupancy projection.
+enable_structured_exploration: false
+enable_room_detection: false
+enable_room_state_machine: false
+enable_door_detection: false
+enable_door_attention: false
+enable_door_commit: false
+enable_door_alignment: false
+enable_cross_door: false
+enable_room_information_gain: false
+enable_room_recovery: false
+enable_scan_lite_refiner: true
+
+baseline_voxel_mapper:
+  cloud_topic: /cloud_registered
+  odom_topic: /Odometry
+  resolution: 0.15
+  minimum_range: 0.30
+  self_filter_radius: 0.55
+  self_filter_min_relative_z: -0.75
+  self_filter_max_relative_z: -0.08
+  maximum_range: 30.0
+  maximum_scan_points: 12000
+  # Periodic .bt serialization is for recovery/debug only; planning reads the
+  # in-memory grid.  Reducing these synchronous writes avoids map-thread
+  # stalls while final shutdown serialization remains unchanged.
+  # The planner consumes the live in-memory projection, not the .bt file.
+  # Keep a periodic recovery point, but avoid serializing a growing OctoMap
+  # every few seconds during the time-limited mission.  Finalization still
+  # always writes voxel_map.bt.
+  save_every_updates: 240
+  projection_topic: /simenv/voxel_floor_projection
+  projection_every_updates: 5
+  # This mapper is shared with F1.  Lowering the bound globally to -0.40 m
+  # projects F1 ground returns into occupied robot-footprint cells and makes
+  # the initial corridor goals fail.  Upper floors use the verified
+  # floor-local preloaded map at handoff instead.
+  projection_min_height: -0.05
+  projection_max_height: 1.20
+  # Compensate FAST-LIO z drift only inside the mapper.  Do not overwrite the
+  # EKF state: doing so invalidates its cross-covariance and can trigger a
+  # catastrophic horizontal jump during later room entries.
+  planar_height_stabilization_enabled: true
+  stabilized_odom_topic: /simenv/fastlio_stabilized_odometry
+  # Baseline exploration also consumes the stabilized topic, so its
+  # CheckTwinCylinder request is already expressed in the mapper's z frame.
+  # Do not subtract the FAST-LIO drift offset again inside the service.
+  collision_request_pose_is_stabilized: true
+  # Full-tree telemetry held the mapper callback for 190--280 ms once F1
+  # grew large, starving the live projection/goal loop and causing repeated
+  # LOCAL_RESCAN at the far corridor end.  Planning uses the in-memory grid;
+  # retain key-node/final map_statistics.json writes but do not traverse the
+  # whole OctoMap periodically during the mission.
+  telemetry_map_rate_hz: 0.0
+  map_statistics_warn_ms: 50.0
+
+baseline_exploration_manager:
+  # Do not terminate the whole mission on one rejected LiDAR update.  FAST-LIO
+  # now publishes an immediate healthy recovery transition; three consecutive
+  # invalid updates still stop before an unsafe navigation command is issued.
+  fastlio_registration_abort_invalid_count: 3
+  odom_topic: /simenv/fastlio_stabilized_odometry
+  cloud_topic: /cloud_registered
+  goal_topic: /exploration_goal
+  startup_timeout: 120.0
+  planner_timeout: 35.0
+  goal_timeout: 180.0
+  maximum_duration: 400.0
+  maximum_goals: 40
+  maximum_consecutive_failures: 3
+  corridor_start_collision_backtrack_distance: 0.90
+  corridor_start_collision_backtrack_spacing: 0.25
+  corridor_start_collision_backtrack_limit: 2
+  minimum_map_updates: 1
+  # A saved lobby point can become falsely occupied after a long accumulated
+  # map update.  Search locally first, then fall back to recorded corridor
+  # centreline poses rather than repeating the same blocked goal.
+  stair_return_relocation_radius: 2.40
+  stair_return_breadcrumb_spacing: 1.20
+  stair_return_centerline_tolerance: 0.85
+  # After a verified doorway crossing, wait only briefly for a fresh grid
+  # before planning the deep in-room scan.  The normal A*/SCAN-lite preflight
+  # remains mandatory, so this removes scheduler latency rather than sensing.
+  room_entry_replan_wait_seconds: 0.25
+  # After any successful goal, plan from the next available live occupancy
+  # update rather than waiting for asynchronous map-statistics file output.
+  # The live occupancy callback, rather than the asynchronous statistics
+  # writer, is the planning source.  0.60 s still spans several 5 Hz map
+  # updates while removing repeated idle time between already-verified goals.
+  # A live occupancy update already invalidates the plan cache.  Waiting
+  # longer here adds idle time after every verified in-room goal without
+  # increasing A*/SCAN-lite safety.
+  replan_grid_wait_seconds: 0.40
+  minimum_free_voxels: 5000
+
+  # FUEL-lite is the only exploration candidate generator.  A* plans to the
+  # selected candidate and SCAN-lite validates every executable waypoint.
+  astar_clearance: 0.30
+  # The voxel map and SCAN-lite acceptance are 0.15 m resolution.  Reaching
+  # within 0.20 m keeps the same safe cell while avoiding the slow final
+  # centimetres of each short in-room transit.
+  reached_tolerance: 0.20
+  # SCAN-lite still validates every chord.  A 0.45 m command spacing avoids
+  # stop-and-go control on otherwise straight, observed-free room exits.
+  # Keep short execution guidance for the RL controller.  A 0.65 m setting
+  # collapsed a 7 m corridor plan into one remote target: the controller
+  # looped for 15.9 m and 28.3 s instead of progressing forward.  SCAN-lite
+  # still validates this fine path before every command.
+  waypoint_spacing: 0.45
+  enable_scan_lite_refiner: true
+  scan_lite_unknown_policy: penalize
+  scan_lite_failure_policy: request_astar_replan
+  refinement_search_radius: 0.60
+  refinement_search_step: 0.15
+  enable_waypoint_simplification: true
+  # Merge longer straight, footprint-validated A* runs.  SCAN-lite samples
+  # the whole replacement segment, so this removes controller stop-go points
+  # without bypassing obstacle checks.
+  waypoint_collinearity_tolerance: 0.10
+  waypoint_max_direct_connect_distance: 4.00
+  waypoint_max_yaw_change: 0.55
+  body_front_offset: 0.06675
+  body_rear_offset: -0.06675
+  body_collision_radius: 0.11772
+  body_min_height: -0.057
+  body_max_height: 0.057
+  body_safety_margin: 0.05
+
+  # Persistent coverage memory prevents FUEL from repeatedly selecting a
+  # recently executed endpoint while still allowing an explored corridor to
+  # be used as a transit path.
+  trajectory_history_spacing: 0.75
+  fuel_execution_duplicate_radius: 0.90
+  # A covered room must hand control back to the semantic room/corridor state
+  # machine.  Do not turn an already executed endpoint into a new exploration
+  # goal merely because every current FUEL candidate is a duplicate.
+  fuel_allow_transit_revisit_fallback: false
+  fuel_minimum_selected_score: 0.0
+
+  # Online corridor and side-branch arbitration over FUEL candidates.
+  enable_corridor_branch_scheduler: true
+  enable_corridor_side_coverage_priority: true
+  corridor_minimum_advance: 2.50
+  corridor_recent_exclusion: 1.50
+  # A longer forward chord keeps the 1.20 m/s gait moving through the
+  # corridor.  The local doorway detector remains allowed to preempt the
+  # chord as soon as a side opening is confirmed, so this reduces stop-go
+  # overhead without skipping room doors.
+  # A longer forward chord keeps the gait moving through the corridor.  The
+  # local doorway detector remains allowed to preempt the chord as soon as a
+  # side opening is confirmed, reducing stop-go overhead without skipping
+  # room doors.
+  corridor_forward_distance: 7.00
+  # Before room-door detection is armed, leave the lobby by following a
+  # directly reachable online forward ray.  Generic FUEL is used only when
+  # this ray is blocked, so it cannot keep revisiting lobby frontiers.
+  enable_corridor_acquisition: true
+  corridor_acquisition_distance: 4.00
+  corridor_acquisition_minimum_advance: 1.50
+  corridor_acquisition_maximum_detour_ratio: 1.18
+  # Once the robot has travelled one metre inside an online corridor-shaped
+  # region, suppress generic lobby/backward frontier selection. Door entry is
+  # still armed only by the normal corridor confirmation logic.
+  corridor_entry_forward_lock_distance_m: 1.00
+  # Bounded forward survey after the four required rooms are complete.
+  # Decisions use only the online corridor axis and occupancy grid.
+  enable_post_room_corridor_sweep: true
+  # Once all rooms are exited and the forward terminal wall is confirmed,
+  # return through the verified corridor to the map-ready G1/start area.
+  # This is a bounded online return, not a new lobby/frontier exploration.
+  stop_after_all_room_exits: false
+  room_exit_terminal_wall_distance_m: 8.0
+  # Start the return pass only when known occupied cells form a terminal wall
+  # within this forward LiDAR distance.  The manager latches this observation
+  # while returning, so the wall need not remain in view all the way to G2.
+  corridor_terminal_return_distance_m: 5.0
+  # If the terminal wall classifier collapses near the closed end, start the
+  # return once online progress is 1.2 m beyond the farthest of two separated
+  # observed doorway stations. No layout coordinates or room truth are used.
+  corridor_terminal_past_far_station_m: 1.2
+  # Timed four-room profile.  Every goal remains A*/SCAN-lite validated; the
+  # limits only shorten the transit between validated viewpoints.  The hard
+  # executor cap remains 1.20 m/s.
+  # Timed first-floor profile.  These are body-command limits; the executor
+  # still bounds sideways motion separately at doors and corners.
+  corridor_transit_speed: 1.55
+  corridor_search_speed: 1.55
+  # Long verified-corridor return: reach the existing 1.35 m/s cap earlier.
+  # This is a gain only; it does not raise the RL/GoalExecutor velocity cap.
+  return_goal_distance_gain: 1.35
+  # Handoff radius around the first online-validated G1/stair staging pose.
+  stair_wait_tolerance_m: 0.60
+  # Room/door goals still stop at validated viewpoints; this only raises the
+  # transit limit between them, reducing travel time without changing scan
+  # poses or coverage thresholds.
+  # The previous 0.85/0.50 m/s room cap made a 2.6--3.1 m validated room
+  # segment take 12--17 s, leaving no budget for the far doorway pair.  Keep
+  # the same A*/SCAN-lite waypoints and coverage criteria.  Run26 showed that
+  # a 1.20 m/s tight doorway turn can outrun scan registration, so only the
+  # short room ingress/egress legs are capped more conservatively.
+  # The dynamic FAST-LIO innovation gate now accounts for commanded motion,
+  # so short verified portal legs can use the faster stable gait without the
+  # old fixed-step false registration loss.
+  room_entry_speed: 0.55
+  # Narrow 0.9 m portals need nearly straight motion; fix23 yaw/lateral
+  # correction consumed the old 18 s budget and wedged at the jamb.
+  narrow_door_width_threshold_m: 1.05
+  narrow_door_entry_speed: 0.38
+  narrow_door_lateral_speed_limit: 0.10
+  # Long breadcrumb return is safety-critical and must not inherit the
+  # 1.55 m/s corridor-search cap. fix23 fell at the lobby approach.
+  stair_return_speed: 0.85
+  stair_return_lateral_speed_limit: 0.20
+  # run89 toppled while a far-room EXIT held about 0.85 m/s through the
+  # doorway until the final 0.6 m segment. EXIT now has a separate stable-gait
+  # cap; ENTRY and in-room observation retain their validated timed profile.
+  room_exit_speed: 0.55
+  # Keep lateral correction small while crossing the door plane. The executor
+  # may still rotate toward the target, but cannot combine a fast forward gait
+  # with the former 0.42 m/s sideways component at the narrow portal.
+  room_exit_lateral_speed_limit: 0.20
+  # A corridor target can be lateral in the robot body frame until yaw catches
+  # up. Permit a moderate sideways correction only in the confirmed corridor;
+  # room manoeuvres retain their separate limit below.
+  corridor_lateral_speed_limit: 0.55
+  # Room ENTRY/G1 segments use the normal room limit. EXIT uses the stricter
+  # independent limit above.
+  room_lateral_speed_limit: 0.18
+  # After all room exits, at most one forward verification goal is allowed;
+  # the manager then stops on a wall or repeated forward-path blockage.
+  post_room_corridor_sweep_max_goals: 1
+  # Corridor direction is established from three distinct map updates and is
+  # oriented away from the mission start.  At most two spatially bounded
+  # reverse observations are available: one can recover a transient false
+  # terminal, leaving one for the genuine end if rooms are still missing.
+  # Neither pass is permitted to become a lobby/frontier return.
+  corridor_reversal_limit: 2
+  # If long centreline goals are cut by sparse rolling-map projection cells,
+  # continue through the observed free corridor using short safe increments
+  # and a narrow lateral target search.  This grows the map toward the far
+  # room pair instead of interpreting map horizon loss as permission to turn.
+  corridor_forward_recovery_minimum_advance_m: 0.80
+  corridor_forward_lateral_search_m: 0.40
+  corridor_no_frontier_probe_after: 2
+  corridor_no_frontier_probe_distance_m: 0.45
+  # F1 uses the same dense 3-D body-footprint guard as upper floors when a
+  # long 2-D corridor goal is split by stale projection cells.
+  enable_corridor_monotonic_forward_probe: true
+  corridor_monotonic_probe_after: 2
+  corridor_monotonic_probe_distance_m: 0.60
+  corridor_monotonic_probe_sample_spacing_m: 0.10
+  corridor_monotonic_probe_max_unknown_queries: 8
+  corridor_monotonic_probe_limit: 24
+  # Best-effort continuity: after the far room row is reached, or when the
+  # remaining floor budget must be reserved for return/stairs, start the same
+  # preemptible homeward pass used by terminal-wall detection. Only a verified
+  # unvisited door opposite an already visited same-station room may interrupt
+  # that pass; incomplete room count cannot strand the multi-floor mission.
+  corridor_partial_return_minimum_outbound_progress_m: 23.0
+  corridor_partial_return_reserve_seconds: 120.0
+  corridor_partial_return_room_minimum_remaining_seconds: 45.0
+  enable_terminal_missing_room_retrace: true
+  # At a terminal wall, try the final locally confirmed side doors against
+  # the saved online corridor axis before paying for a reverse pass.  If no
+  # door survives the normal A*/SCAN checks, reverse immediately rather than
+  # spending repeated stationary rescans.
+  terminal_missing_room_rescan_limit: 3
+  # Do not treat a distant shelf/wall return as the corridor terminal.  A
+  # reverse observation is admitted only for a close transverse wall and is
+  # spatially bounded, so transient frontier loss cannot send the robot back
+  # to the lobby while far rooms remain unvisited.
+  terminal_missing_room_retrace_wall_distance_m: 2.25
+  terminal_missing_room_retrace_max_distance_m: 8.0
+  terminal_door_context_fallback_drawdown_m: 1.75
+  terminal_door_context_fallback_lateral_m: 1.10
+  corridor_confirmation_updates: 3
+  # A side aperture may erase one strict wall-width sample.  Once lobby
+  # egress has locked the corridor direction, a strongly confirmed local
+  # door can establish the room phase after this additional forward travel.
+  corridor_local_door_entry_lock_minimum_progress_m: 2.0
+  corridor_minimum_visible_length: 4.00
+  corridor_minimum_aspect_ratio: 1.60
+  # A real corridor remains long and nearly equal-width at multiple
+  # longitudinal samples.  This rejects a room made locally narrow by one
+  # obstacle without using room/layout truth.
+  corridor_uniform_width_sample_offset: 1.50
+  corridor_maximum_width_spread: 0.90
+  corridor_side_entry_depth: 2.10
+  # After exiting a room, defer only the same-side doorway briefly.  Opposite
+  # side doorway candidates remain eligible and are scored preferentially.
+  room_exit_resume_distance_m: 3.50
+  room_exit_resume_time_s: 8.0
+  # The opposite portal may first become confirmed after the exit clearance
+  # has advanced about 2.5 m.  This is a recenter-only bound, not a general
+  # allowance for rearward corridor goals.
+  room_exit_opposite_door_revisit_radius_m: 4.0
+  room_exit_opposite_door_revisit_time_s: 12.0
+  # When the 150 s F1 room target expires inside a room, finish its physical
+  # exit and retain one bounded same-station observation window. A confirmed
+  # opposite doorway may preempt during this window; expiry still starts the
+  # normal best-effort stair return, so a missed room cannot block upper floors.
+  room_phase_post_exit_opposite_probe_grace_seconds: 8.0
+  # Persist a side opening even when the first oblique scan exposes only a
+  # shallow known-free strip.  The staging point remains A*/SCAN checked and
+  # is replaced by a deeper endpoint as the online map expands.
+  corridor_side_staging_minimum_depth: 1.05
+  corridor_side_station_search_radius: 1.20
+  corridor_side_station_search_step: 0.30
+  corridor_side_raw_frontier_minimum_size: 40
+  corridor_side_frontier_minimum_lateral: 1.20
+  corridor_side_frontier_maximum_longitudinal: 3.00
+  corridor_side_minimum_mission_progress: 2.50
+  corridor_centerline_membership_tolerance: 0.75
+  # A confirmed physical room exit re-observes the corridor centre more
+  # reliably than the initial oblique lobby/door latch.  Correct only the
+  # station line's lateral offset; its axis and door station coordinates stay
+  # unchanged, so this does not alter stair or second-floor phase logic.
+  corridor_exit_centerline_rebase_maximum_m: 2.50
+  corridor_branch_station_tolerance: 2.50
+  corridor_branch_retry_cooldown_seconds: 45.0
+  corridor_branch_entry_target_tolerance: 0.90
+  # Complement narrow-aperture trajectory detection with persistent online
+  # corridor semantics.  This never invents a target: the side frontier must
+  # be observed repeatedly and its penetration point must already have passed
+  # A*, SCAN-lite and physical execution before jamb geometry is confirmed.
+  enable_semantic_side_door_candidate: true
+  semantic_side_door_minimum_observations: 3
+  semantic_side_door_minimum_penetration: 1.35
+  # Reject transient lobby strips that only look corridor-like until the robot
+  # has advanced along the online corridor station frame.
+  room_corridor_minimum_progress: 2.00
+  # New-room discovery may use a short delayed-map window, but it must never
+  # issue a multi-metre rearward exploration goal.  A visited room's return
+  # path uses its separately remembered doorway/trajectory anchor.
+  # Map evidence for the paired doorway can mature just after leaving the
+  # first room.  A short reconnect is permitted only for this new, verified
+  # room-side opening; it does not authorize a lobby return.
+  room_new_door_maximum_lookbehind: 1.80
+  # Only a truly co-located opposite doorway may interrupt the forward
+  # corridor commitment after a room exit.  A farther rearward aperture is
+  # deferred until the corridor end/return phase.
+  # After exiting a room the paired door on the opposite wall can become
+  # confirmed only after the robot has cleared the portal.  Permit this
+  # short return only inside the recent-exit + same-station guard in the
+  # manager; it never authorises a lobbyward choice at corridor entry.
+  paired_opposite_maximum_backtrack_m: 2.0
+  # A true side-room crossing is transverse to the online corridor axis.
+  # Reject longitudinal narrowings mistaken for doors by trajectory geometry.
+  room_door_maximum_corridor_alignment: 0.55
+  # Robot-local apertures several metres ahead are seen obliquely.  They must
+  # still pass confirmation, known-free A*, SCAN-lite and room-area checks.
+  local_door_maximum_corridor_alignment: 0.82
+
+  # A side opening is accepted only after three observed-map confirmations,
+  # bilateral door-frame support and a larger reachable region behind it.
+  enable_lightweight_room_scheduler: true
+  enable_planned_room_path_intercept: true
+  # A real 1.40 m opening is commonly represented as a stable 0.90 m free
+  # aperture in the rolling projection.  fix9 proved that a 1.10 m gate skips
+  # both first-row rooms.  Accept 0.90 m only after the strengthened three-map
+  # confirmation below; safe ingress comes from the low-speed portal profile.
+  room_doorway_width_min: 0.90
+  # Real paired portals observed online reach about 1.80 m after mapping
+  # settles.  A 2.25 m opening at the corridor end is a terminal free-space
+  # artifact, not a lateral room door; reject that range before activation.
+  room_doorway_width_max: 2.05
+  # Entry is a two-stage decision: a modest opening is enough to attempt a
+  # safe inside waypoint; detailed room coverage is evaluated afterwards.
+  room_expansion_margin: 0.40
+  room_confirmation_depth: 1.10
+  # A live-map-safe entry endpoint may stop just inside the opening.  This is
+  # sufficient to confirm a physical crossing; deeper G1/G3/G4 viewpoints
+  # remain mandatory for room observation.
+  room_minimum_crossing_depth: 0.18
+  room_door_confirmation_count: 3
+  room_door_takeover_distance: 5.00
+  room_door_lookbehind_distance: 6.00
+  room_door_approach_offset: 0.60
+  # Cross far enough that the body centre is no longer sitting in the jamb
+  # envelope. If the full target is unavailable, the separately validated
+  # staging fallback still permits a shorter crossing followed by deep G1.
+  room_entry_depth: 1.50
+  # If a drifted local projection makes the normal deep entry cell too tight,
+  # accept a short observed-free portal staging pose and replan G1 after its
+  # scan. SCAN-lite validates the staged path before execution.
+  room_entry_staging_clearance: 0.26
+  # Use a genuinely interior camera baseline; the 1 m doorway stop in run93
+  # left the body only 0.25--0.50 m past the wall and could not cover the
+  # complete room with forward RGB-D.
+  room_side_goal_depth: 3.00
+  room_minimum_goal_separation: 1.00
+  # A side FUEL frontier plus three stable opening observations and strong
+  # room-side expansion may use one visible jamb.  Portal A*/SCAN checks stay
+  # mandatory; zero-jamb candidates remain forbidden.
+  room_allow_single_jamb_strong_expansion: true
+  room_single_jamb_minimum_confidence: 0.82
+  # Do not suppress the doorway on the opposite side of the corridor merely
+  # because small FAST-LIO drift makes its inward ray overlap a visited room.
+  # Door geometry, A* and SCAN-lite remain required before entry.
+  room_visited_overlap_min_normal_alignment: 0.25
+  room_maximum_center_depth: 3.00
+  room_maximum_side_lateral: 3.00
+  # Re-evaluate coverage after every distinct scan pose.  One deep view is
+  # enough in an unobstructed room; extra views must clear measured unknown or
+  # obstacle-shadow debt.
+  room_coverage_minimum_observations: 1
+  # A high global ratio can hide one large unbuilt corner.  Completion must
+  # also clear the largest connected unknown component and obstacle shadow;
+  # use the same residual bound as the adaptive set-cover planner so a queued
+  # G4 is not discarded after G3 merely because total coverage exceeds 90%.
+  # Timed four-room profile: a deep centre view exposes almost all of these
+  # compact rooms with the 8 m LiDAR.  Keep a high observed ratio, but do not
+  # spend a second transverse traverse solely to erase small furniture-shadow
+  # regions after that scan.
+  room_coverage_minimum_ratio: 0.94
+  room_coverage_maximum_unknown_m2: 0.75
+  # Retain shadow debt as a coverage-quality diagnostic; the timed profile
+  # never turns that debt into a second translational room viewpoint.
+  room_coverage_maximum_shadow_m2: 0.55
+  room_adaptive_minimal_viewpoints: true
+  # Allow the two separated lateral candidates plus one real central G1
+  # candidate; all endpoints remain occupancy/A*-validated.
+  room_adaptive_maximum_viewpoints: 3
+  # The lateral pair supplies occlusion parallax, then physical G1 closes the
+  # central camera gap before coverage completion.
+  room_adaptive_prefer_central_first: true
+  room_adaptive_occlusion_shadow_trigger_m2: 0.55
+  # Coverage residuals remain diagnostic only in this throughput profile;
+  # they never authorize a 4--5 m lateral detour after G1.
+  room_adaptive_minimum_gain_m2: 0.45
+  room_adaptive_path_cost_weight: 0.55
+  # Minimum-cardinality set cover is the first objective; only then minimize
+  # the safe entrance -> views -> remembered exit-anchor route.
+  room_adaptive_set_cover_ratio: 0.88
+  room_adaptive_set_cover_residual_m2: 0.75
+  room_adaptive_route_return_weight: 0.65
+  # Reject only local same-side overlap, not a genuinely new far station.
+  # Run27's phantom was 4.36 m from the just-exited door.
+  # Real same-side stations in this scene are about 14 m apart.
+  room_visited_overlap_max_door_separation: 5.00
+  # Conservative reliable floor-coverage range for online room set cover.
+  # Raw 30 m rays previously overclaimed unseen corners as covered.
+  room_lidar_effective_range: 8.0
+  # Keep the 150 s throughput target, but allow enough bounded recovery for
+  # three physical camera viewpoints in all four rooms. The 370 s room-phase
+  # hard deadline still forces a safe exit/return before later floors.
+  room_phase_target_seconds: 150.0
+  enforce_room_phase_target_deadline: true
+  room_phase_deadline_minimum_exited_rooms: 4
+  room_phase_deadline_hard_overrun_seconds: 220.0
+  # At the hard deadline, skip optional views and drain the remembered
+  # RETURN/EXIT route before handing command ownership to the stair manager.
+  room_phase_active_exit_grace_seconds: 45.0
+  room_mission_entry_minimum_remaining_seconds: 24.0
+  # ENTRY has its own timeout. Start this budget only after a confirmed
+  # crossing so the deep camera point never becomes a three-second goal.
+  room_budget_starts_after_entry: true
+  room_visit_budget_seconds: 60.0
+  room_exit_reserve_seconds: 10.0
+  # Abort a room viewpoint that has made no useful progress sooner; the
+  # adaptive coverage scheduler can still select the next safe viewpoint.
+  # A side-view route normally finishes in 8--13 s.  Do not spend a full
+  # room visit on a stale in-room path when its map has already changed.
+  room_goal_timeout_seconds: 12.0
+  # ENTRY owns a separate pre-room budget. It includes the corridor-side
+  # anchor, door centre and interior anchor, so 18 s was insufficient for
+  # every fix23 portal. The 60 s room scan budget still starts after entry.
+  room_entry_timeout_seconds: 45.0
+  # Prevent a false/drifted doorway from committing a 10+ m A* detour for a
+  # nearby portal and spending the entire entry timeout before other rooms.
+  room_entry_preflight_max_path_m: 7.5
+  room_entry_preflight_max_detour_ratio: 3.0
+  room_entry_candidate_astar_limit: 8
+  room_portal_timeout_seconds: 14.0
+  # Exit watchdog is independent from the full path timeout. Twelve seconds
+  # covers a centred portal turn without allowing repeated unbounded stalls.
+  # Near the portal, the deeper alignment anchor is removed entirely.
+  room_exit_progress_timeout_seconds: 12.0
+  # EXIT is a safety operation, so its deadline follows the remaining verified
+  # path length rather than the already-consumed room observation budget.
+  room_exit_timeout_seconds_per_meter: 6.5
+  room_exit_timeout_overhead_seconds: 8.0
+  room_exit_timeout_max_seconds: 60.0
+  corridor_resume_failure_limit: 1
+  room_exit_anchor_skip_distance: 0.90
+  # A normal doorway exit resolves locally. If its newly inflated raster is
+  # disconnected, promptly reverse the physically traversed ENTRY trace.
+  room_exit_preflight_maximum_expansions: 800
+  room_exit_retry_limit: 3
+  # Keep the short interior alignment before EXIT.  In opt15 the single direct
+  # path from G1 to corridor took longer than RETURN + EXIT around furniture.
+  # After the final coverage view, the exit preflight already verifies the
+  # complete current -> portal -> corridor route.  Execute it continuously
+  # instead of stopping at a separate interior return anchor first.
+  room_direct_verified_exit: true
+  # Keep the conservative failed-portal cooldown: the 30 s experiment caused
+  # repeated stale-candidate retries and reduced room completion.
+  room_door_cooldown_seconds: 90.0
+  # One scan-refinement failure is normally caused by a just-changing doorway
+  # map, not a false room. Retry it promptly once; subsequent failures use
+  # the 90 s generic cooldown above.
+  room_entry_refinement_retry_cooldown_seconds: 12.0
+
+  # The legacy region scheduler enforces a second fixed three-goal policy and
+  # would defeat adaptive minimal-view selection.
+  enable_depth_breadth_scheduler: false
+  depth_breadth_maximum_goals: 3
+  depth_breadth_region_radius: 5.0
+  depth_breadth_exclusion_radius: 4.0
+  depth_breadth_maximum_path_length: 10.0
+  depth_breadth_maximum_seconds: 75.0
+  enable_region_coverage_completion: true
+  region_coverage_minimum_post_entry_goals: 1
+  region_coverage_minimum_entry_depth: 1.25
+
+  auto_generate_visualization: true
+  # Drift-tolerant doorway and frontier-termination safeguards. Detection is
+  # based only on the robot-centred occupancy window and known-free paths.
+  enable_local_doorway_detector: true
+  # Keep a confirmed side opening actionable while the robot advances at the
+  # corridor speed (roughly 1.2 m/s).  Geometry/behind-area checks still
+  # reject stale openings that are no longer beside the current station.
+  local_candidate_freshness_seconds: 8.0
+  local_candidate_recent_window_seconds: 20.0
+  local_door_minimum_unknown_behind_m2: 1.0
+  local_door_minimum_free_behind_m2: 6.0
+  # Match the scheduler gate above.  Width alone is not a centre-quality
+  # metric; require the same 0.90 m aperture plus the scheduler confirmation,
+  # area, A-star and SCAN-lite checks before executable room entry.
+  local_door_minimum_semantic_width_m: 0.90
+  # A real paired doorway was measured at 1.65--1.80 m after the first room
+  # exit.  Accept it within the scheduler's existing global doorway upper
+  # bound; lateral-normal, room-area, A* and SCAN-lite checks still prevent
+  # wide corridor/frontier openings from becoming room entries.
+  local_door_maximum_semantic_width_m: 2.10
+  # A side opening can become geometrically complete one or two metres after
+  # the robot first passes its jamb.  Allow one short, verified reconnect so
+  # the far room pair is not silently skipped; this is not a lobby return.
+  local_door_forward_high_water_tolerance_m: 1.8
+  corridor_new_branch_maximum_lookbehind_m: 1.8
+  # Stage boundary: keep lobby egress and corridor acquisition untouched.
+  # Three-frame corridor confirmation is the phase boundary. No extra travel
+  # is imposed after confirmation, so the first real pair of doors is retained.
+  # Corridor confirmation starts a forward-commit phase.  The robot advances
+  # using the normal online corridor planner before side-door takeover; this
+  # is relative motion, not a global coordinate or lobby distance threshold.
+  corridor_door_detection_minimum_progress_m: 0.0
+  # Door search starts as soon as the online corridor detector is confirmed;
+  # delaying this by 1.5 m made the lower pair of doors get passed before
+  # local candidates could take over.
+  # After the corridor axis is confirmed, keep moving forward before a side
+  # opening can take over.  This prevents the lobby-side opening/path from
+  # being reconsidered at the corridor entrance.
+  corridor_door_forward_commit_distance_m: 0.35
+  # Local post-latch motion required before a side opening can preempt the
+  # forward corridor goal.  Prevents lobby openings from being treated as
+  # doors while preserving immediate door search once the corridor is real.
+  corridor_door_post_latch_motion_m: 2.0
+  # The online corridor station origin is established after crossing the
+  # lobby throat. Before the first physical room entry, reject lateral
+  # apertures within the first 2 m of that origin so the lobby/corridor
+  # transition cannot consume a room slot.
+  first_room_minimum_corridor_station_m: 2.0
+  termination_local_unknown_area_m2: 3.0
+  # A half-turn is sufficient to refresh the side-opening detector after a
+  # failed candidate.  Keep it short: the room scheduler must resume motion
+  # even if the controller cannot report the rescan completion.
+  # Generic map recovery must never compete with the room RGB-D sweep.  A
+  # bounded quarter-turn is sufficient to refresh a stalled local frontier;
+  # the full room visual sweeps use their own request parameters below.
+  local_rescan_angle_rad: 1.570796327
+  local_rescan_angular_speed: 0.50
+  local_rescan_maximum_seconds: 4.0
+  room_visual_sweep_maximum_seconds: 5.0
+  # At the existing LiDAR-safe G1 stop, use one route-preserving full RGB-D
+  # turn. The 5 s action cap prevents an observation stall.
+  room_camera_sweep_enabled: true
+  # Permit one full sweep at each of the two lateral parallax poses and the
+  # physical G1 centre. The 5 s per-sweep cap and 60 s room budget keep the
+  # three-view contract bounded.
+  room_camera_sweep_max_per_room: 3
+  room_camera_sweep_angle_rad: 3.141592654
+  # Keep the single full RGB-D turn fast enough for the per-room budget.
+  room_camera_sweep_angular_speed: 1.70
+  room_visual_force_g1_fan: true
+  room_visual_deepening_enabled: false
+  room_visual_deepening_budget: 0
+  room_visual_deepening_min_completed_rooms: 0
+  room_visual_deepening_min_remaining_s: 18.0
+  # RGB-D visual coverage is evaluated in five sectors during the single full
+  # azimuth pass; no follow-up translation is scheduled.
+  room_visual_coverage_target: 1.00
+  # One 180-degree inward fan is cheaper than a second room translation and
+  # still gives the detector repeated views across the entire room-facing
+  # hemisphere.
+  # A full azimuth pass guarantees all five inward camera sectors regardless
+  # of the yaw at which the doorway traversal finishes.
+  room_visual_primary_min_angle_rad: 6.283185307
+  # If LiDAR reports an obstacle shadow, G2 is a translated camera centre;
+  # add a short fan there for actual occlusion parallax.
+  room_visual_occlusion_sweep_angle_rad: 1.570796327
+  # Close one measured RGB-D blind wedge at the existing G1 viewpoint.  This
+  # adds no translational detour and is only enabled for exactly one missing
+  # sector; broad gaps remain disabled in the timed profile.
+  room_visual_one_sector_completion_angle_rad: 0.70
+  room_visual_one_sector_completion_enabled: false
+  room_visual_pending_strict_nudge_enabled: false
+  # High-recall visual mode: use two safe map-derived lateral viewpoints,
+  # followed by the physical central G1 viewpoint configured below.
+  room_visual_two_pose_full_sweep_enabled: true
+  # Execute G1 physically after the two side views; never satisfy it through
+  # the virtual-anchor shortcut when visual recall is the priority.
+  room_visual_require_physical_center: true
+  # Room-visit budget: ENTRY + two full sweeps + G1 + EXIT must fit ~35 s.
+  # The compact rooms are fully exposed by a 180-degree azimuth pass from
+  # each lateral viewpoint; a full 360 turn only doubles the dwell without
+  # adding map content.  Sweep faster to keep the two-view recall.
+  room_visual_full_sweep_angle_rad: 3.141592654
+  # Both lateral poses perform full azimuth passes from separated centres.
+  room_visual_secondary_sweep_angle_rad: 3.141592654
+  # Retain the measured-coverage threshold for lateral recovery diagnostics;
+  # the physical-centre contract below still requires G1 before completion.
+  room_visual_second_view_min_coverage: 0.85
+  # One room-level parallax recovery is reserved for the first room whose
+  # central full spin produces no red evidence at all.  Later edge-only
+  # contours cannot consume the final room's exit budget.
+  room_visual_second_view_budget: 4
+  # Keep two genuinely distinct camera centres, but cap their lateral
+  # separation at a medium baseline.  The former 2.5 m target commonly
+  # produced a 4--5 m cross-room traverse after the first full turn; 1.65 m
+  # preserves occlusion parallax while returning several seconds per room.
+  # Endpoints remain live-map/A*/SCAN-lite validated, never fixed waypoints.
+  room_visual_breadth_lateral_m: 1.60
+  room_visual_breadth_min_baseline_m: 1.10
+  # LiDAR never labels a ball.  It can nevertheless supply one compact,
+  # isolated in-room obstacle bearing to aim the existing RGB-D G1 fan; RGB
+  # HSV/depth and the multi-frame tracker remain the only hazard decision.
+  lidar_visual_cue_enabled: true
+  lidar_visual_cue_min_range_m: 0.70
+  lidar_visual_cue_max_range_m: 6.50
+  lidar_visual_cue_cell_size_m: 0.18
+  lidar_visual_cue_max_cells: 9
+  lidar_visual_cue_height_min_m: -0.25
+  lidar_visual_cue_height_max_m: 0.85
+  # Keep the fast single-view route; targeted side views were validated to
+  # delay later doorway discovery beyond the mission budget.
+  empty_visual_supplement_enabled: false
+  empty_visual_supplement_angle_rad: 1.55
+  room_visual_completion_angle_rad: 1.55
+  empty_visual_supplement_minimum_remaining_s: 8.0
+  room_visual_completion_room_budget: 4
+  room_visual_completion_minimum_rooms: 1
+  # The permissive oblique RGB contour branch additionally requires this
+  # signed centre-to-edge RGB-D curvature, rejecting planar red boxes before
+  # multi-frame hazard confirmation without changing the robot route.
+  oblique_minimum_depth_convexity_m: 0.018
+  local_rescan_cooldown_seconds: 8.0
+
+baseline_telemetry:
+  odom_topic: /Odometry
+  command_topic: /cmd_vel
+  telemetry_trajectory_rate_hz: 5.0
+  # Keep every telemetry sample but batch filesystem flushes; the async writer
+  # flushes remaining records normally at shutdown.
+  telemetry_flush_every: 10

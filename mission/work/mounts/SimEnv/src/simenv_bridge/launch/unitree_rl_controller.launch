@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<!-- Workspace-local launcher for the rebuilt, current Unitree RL controller. -->
+<launch>
+  <arg name="rl_policy"/>
+  <arg name="preload_plane_policy" default=""/>
+  <arg name="preload_stair_policy" default=""/>
+  <arg name="rl_device" default="hybrid"/>
+  <arg name="controller_dt" default="0.004"/>
+  <arg name="controller_cpu_affinity" default=""/>
+  <arg name="controller_startup_timeout" default="300"/>
+  <arg name="controller_clock_stall_timeout" default="120.0"/>
+  <arg name="controller_settle_seconds" default="0.0"/>
+  <arg name="gait_profile" default="trot"/>
+  <arg name="gait_period" default="0.55"/>
+  <arg name="gait_stance_ratio" default="0.65"/>
+  <arg name="gait_height" default="0.08"/>
+
+  <node pkg="simenv_bridge" type="classic_trotting_controller.py"
+        name="junior_ctrl" output="screen" required="true">
+    <env name="SIMENV_ROOT" value="$(optenv SIMENV_ROOT /workspace/SimEnv)"/>
+    <env name="SIMENV_DEVEL_SPACE" value="$(optenv SIMENV_DEVEL_SPACE devel)"/>
+    <env name="UNITREE_AUTO_START_RL" value="false"/>
+    <env name="UNITREE_AUTO_HOLD_STAND" value="true"/>
+    <env name="UNITREE_CPU_AFFINITY" value="$(arg controller_cpu_affinity)"/>
+    <env name="UNITREE_CTRL_DT" value="$(arg controller_dt)"/>
+    <env name="UNITREE_STARTUP_TIMEOUT" value="$(arg controller_startup_timeout)"/>
+    <env name="UNITREE_CLOCK_STALL_TIMEOUT" value="$(arg controller_clock_stall_timeout)"/>
+    <env name="UNITREE_CONTROLLER_SETTLE_SECONDS" value="$(arg controller_settle_seconds)"/>
+    <env name="UNITREE_RL_POLICY" value="$(arg rl_policy)"/>
+    <env name="UNITREE_RL_PRELOAD_PLANE_POLICY"
+         value="$(arg preload_plane_policy)"/>
+    <env name="UNITREE_RL_PRELOAD_STAIR_POLICY"
+         value="$(arg preload_stair_policy)"/>
+    <env name="UNITREE_RL_DEVICE" value="$(arg rl_device)"/>
+    <!-- Both policies are small MLPs.  Letting CPU libtorch fan each 50 Hz
+         plane inference across every host core starves Gazebo and stretches
+         physical stair time in wall-clock seconds. -->
+    <env name="OMP_NUM_THREADS" value="1"/>
+    <env name="MKL_NUM_THREADS" value="1"/>
+    <env name="UNITREE_DISABLE_AMP_LOG" value="1"/>
+    <env name="UNITREE_GAIT_PROFILE" value="$(arg gait_profile)"/>
+    <env name="UNITREE_GAIT_PERIOD" value="$(arg gait_period)"/>
+    <env name="UNITREE_GAIT_STANCE_RATIO" value="$(arg gait_stance_ratio)"/>
+    <env name="UNITREE_GAIT_HEIGHT" value="$(arg gait_height)"/>
+    <env name="COMPETITION_RESET_Z_OFFSET" value="0.05"/>
+    <env name="LD_LIBRARY_PATH"
+         value="$(optenv LIBTORCH_LIBRARY_PATH /opt/libtorch/lib):/opt/ros/noetic/lib:$(optenv LD_LIBRARY_PATH)"/>
+  </node>
+</launch>

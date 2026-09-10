@@ -1,0 +1,2179 @@
+#!/usr/bin/env python3
+"""Validate configuration and acceptance evidence for the three-floor RL task."""
+
+import argparse
+import json
+import math
+import os
+import sys
+
+
+CONFIG_SCHEMA = "scanplanner_three_floor_rl_mission_v1"
+SUMMARY_SCHEMA = "scanplanner_three_floor_rl_summary_v1"
+ACCEPTANCE_SCHEMA = "scanplanner_three_floor_rl_acceptance_v1"
+TIMING_SCHEMA = "scanplanner_mission_stage_timing_v1"
+RED_BALL_SCHEMA = "scanplanner_red_ball_detections_v1"
+REQUIRED_PROJECTED_GAP_RAD = math.radians(3.0)
+PROJECTED_GAP_TOLERANCE_RAD = 1.0e-9
+REQUIRED_SCAN_PAUSE_INTERVAL_RAD = 0.60
+REQUIRED_SCAN_PAUSE_DWELL_SEC = 0.60
+SCAN_PAUSE_END_MARGIN_RAD = 0.30
+
+
+def read_json(path):
+    with open(path, "r", encoding="utf-8") as stream:
+        return json.load(stream)
+
+
+def atomic_write_json(path, payload):
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    temporary = path + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as stream:
+        json.dump(payload, stream, ensure_ascii=False, indent=2, sort_keys=True)
+        stream.write("\n")
+    os.replace(temporary, path)
+
+
+def policy_kind(value):
+    text = str(value).lower()
+    if "stair" in text:
+        return "stair"
+    if "plane" in text or "flat" in text:
+        return "plane"
+    return "unknown"
+
+
+def sequence_contains(actual, required):
+    cursor = 0
+    for item in actual:
+        if cursor < len(required) and item == required[cursor]:
+            cursor += 1
+    return cursor == len(required)
+
+
+def route_length(waypoints):
+    return sum(
+        math.hypot(float(right["x"]) - float(left["x"]),
+                   float(right["y"]) - float(left["y"]))
+        for left, right in zip(waypoints, waypoints[1:])
+    )
+
+
+def _scan_observation_pause_count(turn_rad, interval_rad,
+                                  end_margin_rad=SCAN_PAUSE_END_MARGIN_RAD):
+    """Independently reproduce the sequencer's k*interval pause schedule."""
+    turn = max(0.0, float(turn_rad))
+    interval = float(interval_rad)
+    if interval <= 0.0:
+        return 0
+    return max(0, int(math.floor(
+        (turn - float(end_margin_rad)) / interval + 1.0e-9)))
+
+
+def _estimated_scan_pair_time(room, scan_points, settings):
+    """Recompute physical pair time without trusting coverage metadata."""
+    room_id = str(room["id"])
+    by_id = {str(scan["id"]): scan for scan in scan_points}
+    scan_a = by_id[room_id + "_scan_a"]
+    scan_b = by_id[room_id + "_scan_b"]
+    bounds = room["bounds"]
+    entry_x = 0.0
+    entry_y = 0.5 * (float(bounds["y_min"]) + float(bounds["y_max"]))
+    first_distance = math.hypot(
+        float(scan_a["pose"][0]) - entry_x,
+        float(scan_a["pose"][1]) - entry_y)
+    point_separation = math.hypot(
+        float(scan_b["pose"][0]) - float(scan_a["pose"][0]),
+        float(scan_b["pose"][1]) - float(scan_a["pose"][1]))
+    exit_distance = math.hypot(
+        entry_x - float(scan_b["pose"][0]),
+        entry_y - float(scan_b["pose"][1]))
+    floor_speed = float(settings.get("coverage_time_floor_speed_mps", 1.65))
+    speed_scale = float(settings.get("coverage_time_speed_scale", 2.60))
+    first_speed = max(0.1, min(
+        floor_speed,
+        speed_scale * float(scan_a["navigation_speed"])))
+    second_speed = max(0.1, min(
+        floor_speed,
+        speed_scale * float(scan_b["navigation_speed"])))
+    rotation_time = sum(
+        float(scan["scan_turn_rad"]) /
+        max(0.1, abs(float(scan["scan_yaw_rate"])))
+        for scan in (scan_a, scan_b))
+    interval = float(settings["scan_pause_interval_rad"])
+    dwell = float(settings["scan_pause_dwell_sec"])
+    pause_count = sum(
+        _scan_observation_pause_count(scan["scan_turn_rad"], interval)
+        for scan in (scan_a, scan_b))
+    pause_time = pause_count * dwell
+    estimated = (
+        first_distance / first_speed +
+        point_separation / second_speed +
+        exit_distance / max(0.1, floor_speed) +
+        rotation_time +
+        sum(float(scan["scan_settle_sec"])
+            for scan in (scan_a, scan_b)) +
+        pause_time)
+    return estimated, pause_count, pause_time
+
+
+def oriented_box_clearance(point_x, point_y, pose, size):
+    """Return planar clearance from a point to a yawed furniture rectangle."""
+    center_x, center_y = float(pose[0]), float(pose[1])
+    yaw = float(pose[5]) if len(pose) > 5 else 0.0
+    dx = float(point_x) - center_x
+    dy = float(point_y) - center_y
+    cosine = math.cos(yaw)
+    sine = math.sin(yaw)
+    local_x = cosine * dx + sine * dy
+    local_y = -sine * dx + cosine * dy
+    outside_x = max(abs(local_x) - 0.5 * float(size[0]), 0.0)
+    outside_y = max(abs(local_y) - 0.5 * float(size[1]), 0.0)
+    return math.hypot(outside_x, outside_y)
+
+
+def _segment_intersects_inflated_box(x0, y0, x1, y1, pose, size, clearance):
+    """Independently test a segment against an inflated yawed rectangle."""
+    center_x, center_y = float(pose[0]), float(pose[1])
+    yaw = float(pose[5]) if len(pose) > 5 else 0.0
+    cosine, sine = math.cos(yaw), math.sin(yaw)
+
+    def local(x, y):
+        dx, dy = float(x) - center_x, float(y) - center_y
+        return (cosine * dx + sine * dy, -sine * dx + cosine * dy)
+
+    start_x, start_y = local(x0, y0)
+    end_x, end_y = local(x1, y1)
+    delta_x, delta_y = end_x - start_x, end_y - start_y
+    half_x = 0.5 * float(size[0]) + float(clearance)
+    half_y = 0.5 * float(size[1]) + float(clearance)
+    lower, upper = 0.0, 1.0
+    for origin, delta, half_extent in (
+            (start_x, delta_x, half_x), (start_y, delta_y, half_y)):
+        if abs(delta) < 1.0e-12:
+            if abs(origin) > half_extent:
+                return False
+            continue
+        first = (-half_extent - origin) / delta
+        second = (half_extent - origin) / delta
+        if first > second:
+            first, second = second, first
+        lower = max(lower, first)
+        upper = min(upper, second)
+        if lower > upper:
+            return False
+    return True
+
+
+def _line_of_sight_clear(x0, y0, x1, y1, room, clearance):
+    """Independently replicate the randomizer's furniture LOS test."""
+    for furniture in room.get("furniture", []):
+        pose = furniture.get("pose", [])
+        size = furniture.get("size", [])
+        if len(pose) < 2 or len(size) < 2:
+            continue
+        if _segment_intersects_inflated_box(
+                x0, y0, x1, y1, pose, size, clearance):
+            return False
+    return True
+
+
+def _scan_observes_ball(x, y, scan, room, settings):
+    """Recompute one scan's robust red-ball visibility from first principles."""
+    sx, sy, _, yaw = [float(value) for value in scan["pose"]]
+    distance = math.hypot(float(x) - sx, float(y) - sy)
+    minimum_range = float(settings.get("red_ball_scan_minimum_range_m", 1.15))
+    maximum_range = float(settings.get("red_ball_scan_maximum_range_m", 5.25))
+    if distance < minimum_range or distance > maximum_range:
+        return False
+    bearing = math.atan2(float(y) - sy, float(x) - sx)
+    if float(scan["scan_yaw_rate"]) >= 0.0:
+        progress = (bearing - yaw) % (2.0 * math.pi)
+    else:
+        progress = (yaw - bearing) % (2.0 * math.pi)
+    turn = float(scan["scan_turn_rad"])
+    margin = float(settings.get("red_ball_scan_heading_margin_rad", 0.35))
+    if not margin <= progress <= turn - margin:
+        return False
+    return _line_of_sight_clear(
+        sx, sy, float(x), float(y), room,
+        float(settings.get("red_ball_line_of_sight_clearance_m", 0.22)))
+
+
+def _safe_asin(ratio):
+    return math.asin(max(-1.0, min(1.0, float(ratio))))
+
+
+def _bearing_separation_rad(origin_x, origin_y, first_x, first_y,
+                            second_x, second_y):
+    first = math.atan2(float(first_y) - float(origin_y),
+                       float(first_x) - float(origin_x))
+    second = math.atan2(float(second_y) - float(origin_y),
+                        float(second_x) - float(origin_x))
+    return abs(math.atan2(math.sin(second - first), math.cos(second - first)))
+
+
+def _required_bearing_separation_rad(radius_m, first_range_m,
+                                     second_range_m, minimum_gap_rad):
+    return (_safe_asin(float(radius_m) / max(float(first_range_m), 1.0e-9)) +
+            _safe_asin(float(radius_m) / max(float(second_range_m), 1.0e-9)) +
+            float(minimum_gap_rad))
+
+
+def _red_distractor_projection_clear(item, room, distractors, settings):
+    """Independently audit sphere/box HSV silhouette separation."""
+    x, y, z = [float(value) for value in item["pose"][:3]]
+    uncertainty = float(settings[
+        "red_ball_arrival_position_uncertainty_m"])
+    required_gap = float(settings[
+        "red_ball_distractor_projected_gap_rad"])
+    sphere_radius = float(settings["red_ball_radius_m"])
+    for scan in room.get("scan_points", []):
+        sx, sy = float(scan["pose"][0]), float(scan["pose"][1])
+        origins = ((sx, sy), (sx + uncertainty, sy),
+                   (sx - uncertainty, sy), (sx, sy + uncertainty),
+                   (sx, sy - uncertainty))
+        for origin_x, origin_y in origins:
+            sphere_range = math.hypot(x - origin_x, y - origin_y)
+            for box in distractors:
+                pose, size = box["pose"], box["size"]
+                if abs(float(pose[2]) - z) > 0.45:
+                    continue
+                box_range = math.hypot(
+                    float(pose[0]) - origin_x,
+                    float(pose[1]) - origin_y)
+                box_radius = 0.5 * math.hypot(
+                    float(size[0]), float(size[1]))
+                required = (_safe_asin(sphere_radius / sphere_range) +
+                            _safe_asin(box_radius / box_range) +
+                            required_gap)
+                separation = _bearing_separation_rad(
+                    origin_x, origin_y, x, y,
+                    float(pose[0]), float(pose[1]))
+                if separation + 1.0e-12 < required:
+                    return False
+    return True
+
+
+def validate_layout_clearance(config, layout):
+    """Validate every room-scan pose against the generated collision layout."""
+    errors = []
+    try:
+        minimum_clearance = float(
+            config.get("room_scan_minimum_furniture_clearance_m", 0.70)
+        )
+    except (TypeError, ValueError):
+        return ["room_scan_minimum_furniture_clearance_m must be numeric"]
+    if not 0.45 <= minimum_clearance <= 2.0:
+        errors.append(
+            "room_scan_minimum_furniture_clearance_m must be between 0.45 and 2.0"
+        )
+        return errors
+
+    metadata_floors = {
+        int(item.get("floor_index")): item
+        for item in layout.get("floors", [])
+        if isinstance(item, dict) and item.get("floor_index") is not None
+    }
+    for floor in config.get("floors", []):
+        floor_index = int(floor.get("floor_index", -1))
+        metadata_floor = metadata_floors.get(floor_index)
+        if metadata_floor is None:
+            errors.append(
+                "layout metadata is missing floor_index {}".format(floor_index)
+            )
+            continue
+        rooms = {
+            str(item.get("id")): item
+            for item in metadata_floor.get("rooms", [])
+            if isinstance(item, dict) and item.get("id")
+        }
+        waypoints = [item for item in floor.get("waypoints", [])
+                     if isinstance(item, dict)]
+        for room_id in floor.get("expected_rooms", []):
+            room_id = str(room_id)
+            metadata_room = rooms.get(room_id)
+            if metadata_room is None:
+                errors.append("layout metadata is missing room {}".format(room_id))
+                continue
+            scans = [item for item in waypoints
+                     if (item.get("scan") is True and
+                         str(item.get("note")) in
+                         (room_id + "_scan_a", room_id + "_scan_b"))]
+            # Retain clearance validation for the immutable template config;
+            # production run-local configs always use the two explicit scans.
+            if not scans:
+                scans = [item for item in waypoints
+                         if str(item.get("note")) == room_id + "_center"]
+            if not scans:
+                continue
+            for scan in scans:
+                scan_note = str(scan.get("note"))
+                x, y = float(scan["x"]), float(scan["y"])
+                bounds = metadata_room.get("bounds", {})
+                try:
+                    wall_clearance = min(
+                        x - float(bounds["x_min"]),
+                        float(bounds["x_max"]) - x,
+                        y - float(bounds["y_min"]),
+                        float(bounds["y_max"]) - y,
+                    )
+                except (KeyError, TypeError, ValueError):
+                    errors.append("layout room {} has invalid bounds".format(room_id))
+                    continue
+                if wall_clearance < minimum_clearance:
+                    errors.append(
+                        "{} has only {:.3f} m room-wall clearance"
+                        .format(scan_note, wall_clearance)
+                    )
+
+                nearest = None
+                for furniture in metadata_room.get("furniture", []):
+                    pose = furniture.get("pose", [])
+                    size = furniture.get("size", [])
+                    if len(pose) < 2 or len(size) < 2:
+                        errors.append(
+                            "layout furniture {} has invalid pose/size".format(
+                                furniture.get("id", "unknown")
+                            )
+                        )
+                        continue
+                    clearance = oriented_box_clearance(x, y, pose, size)
+                    if nearest is None or clearance < nearest[0]:
+                        nearest = (clearance, str(furniture.get("id", "unknown")))
+                if nearest is not None and nearest[0] < minimum_clearance:
+                    errors.append(
+                        "{} has only {:.3f} m clearance from {} (minimum {:.3f} m)"
+                        .format(scan_note, nearest[0], nearest[1], minimum_clearance)
+                    )
+            if len(scans) == 2:
+                separation = math.hypot(
+                    float(scans[0]["x"]) - float(scans[1]["x"]),
+                    float(scans[0]["y"]) - float(scans[1]["y"]))
+                required_separation = float(config.get(
+                    "scene_randomization", {}).get(
+                        "scan_point_minimum_separation_m", 1.20))
+                if separation < required_separation:
+                    errors.append(
+                        "{} scan poses are only {:.3f} m apart (minimum {:.3f} m)"
+                        .format(room_id, separation, required_separation))
+                path_minimum = float(config.get(
+                    "scene_randomization", {}).get(
+                        "scan_path_minimum_furniture_clearance_m", 0.50))
+                path_clearance = float("inf")
+                for step in range(1, 40):
+                    ratio = step / 40.0
+                    path_x = (float(scans[0]["x"]) + ratio *
+                              (float(scans[1]["x"]) - float(scans[0]["x"])))
+                    path_y = (float(scans[0]["y"]) + ratio *
+                              (float(scans[1]["y"]) - float(scans[0]["y"])))
+                    for furniture in metadata_room.get("furniture", []):
+                        pose = furniture.get("pose", [])
+                        size = furniture.get("size", [])
+                        if len(pose) >= 2 and len(size) >= 2:
+                            path_clearance = min(
+                                path_clearance,
+                                oriented_box_clearance(
+                                    path_x, path_y, pose, size))
+                if path_clearance < path_minimum:
+                    errors.append(
+                        "{} scan path has only {:.3f} m furniture clearance "
+                        "(minimum {:.3f} m)".format(
+                            room_id, path_clearance, path_minimum))
+    return errors
+
+
+def _planned_oblique_geometry(scans, limits, room_type, obstacle):
+    roles = {str(item.get("role") or item.get("viewpoint_role")): item
+             for item in scans}
+    deep, near = roles.get("G3", {}), roles.get("G4", {})
+    try:
+        deep_depth = float(deep["door_relative_depth_m"])
+        near_depth = float(near["door_relative_depth_m"])
+        deep_lateral = float(deep["door_relative_lateral_m"])
+        near_lateral = float(near["door_relative_lateral_m"])
+        depth_delta = deep_depth - near_depth
+        lateral_delta = abs(deep_lateral - near_lateral)
+        angle = math.degrees(math.atan2(
+            lateral_delta, max(0.0, depth_delta)))
+        central_half_width = float(limits["central_half_width_m"])
+        passed = bool(
+            str(deep.get("viewpoint_semantic")) == "deep" and
+            str(near.get("viewpoint_semantic")) == "near" and
+            float(limits["g3_depth_minimum"]) <= deep_depth <=
+            float(limits["g3_depth_maximum"]) and
+            float(limits["g4_depth_minimum"]) <= near_depth <=
+            float(limits["g4_depth_maximum"]) and
+            depth_delta >= float(limits["minimum_depth_delta"]) and
+            lateral_delta >= float(limits["minimum_lateral_delta"]) and
+            abs(deep_lateral) <= central_half_width and
+            abs(near_lateral) <= central_half_width and
+            float(limits["angle_minimum"]) <= angle <=
+            float(limits["angle_maximum"]))
+        if obstacle is not None and room_type == "deep_obstacle":
+            front_limit = (float(obstacle["front_depth_m"]) -
+                           float(limits["obstacle_clearance_m"]))
+            passed = passed and deep_depth <= front_limit and near_depth <= front_limit
+        elif obstacle is not None and room_type == "shallow_obstacle":
+            passed = passed and bool(
+                deep_depth >= float(obstacle["back_depth_m"]) +
+                float(limits["obstacle_clearance_m"]) and
+                (deep_lateral - float(obstacle["lateral_m"])) *
+                (near_lateral - float(obstacle["lateral_m"])) < 0.0)
+        return passed, angle
+    except (KeyError, TypeError, ValueError):
+        return False, None
+
+
+def validate_physical_layout(config, layout):
+    errors = []
+    settings = config.get("scene_randomization", {})
+    truth = layout.get("danger_red_spheres", [])
+    official_positions = (
+        layout.get("metadata", {}).get("danger_position_source") ==
+        "official_generator")
+    if not 3 <= len(truth) <= 6:
+        errors.append("runtime scene must contain 3--6 total danger sources")
+    if (not official_positions and
+            len({str(item.get("room_id")) for item in truth}) != len(truth)):
+        errors.append("sparse danger sources must occupy distinct random rooms")
+    observed_types = set()
+    for floor in layout.get("floors", []):
+        for room in floor.get("rooms", []):
+            room_id = str(room.get("id"))
+            contract = room.get("room_contract", {})
+            room_type = str(contract.get("room_type"))
+            policy = str(contract.get("viewpoint_policy"))
+            expected_policy = {
+                "open": "open_middle_deep_then_near_oblique",
+                "shallow_obstacle": "front_obstacle_side_bypass_oblique",
+                "deep_obstacle": "deep_obstacle_front_oblique_pair",
+            }.get(room_type)
+            if policy != expected_policy:
+                errors.append("{} has invalid geometry-derived policy".format(room_id))
+                continue
+            observed_types.add(room_type)
+            scans = contract.get("viewpoints", [])
+            limits = contract.get("actual_geometry_limits") or {}
+            fallback_level = str(contract.get(
+                "viewpoint_fallback_level", "primary"))
+            if fallback_level == "primary":
+                fallback_contract_ok = bool(
+                    float(limits.get("central_width_fraction", -1.0)) == 0.60 and
+                    float(limits.get("angle_minimum", -1.0)) == 20.0 and
+                    float(limits.get("angle_maximum", -1.0)) == 70.0 and
+                    contract.get("viewpoint_fallback_reason") is None)
+            elif fallback_level == "bounded_relaxation":
+                fallback_contract_ok = bool(
+                    float(limits.get("central_width_fraction", -1.0)) <= 0.70 and
+                    float(limits.get("angle_minimum", -1.0)) >= 15.0 and
+                    float(limits.get("angle_maximum", -1.0)) <= 75.0 and
+                    contract.get("viewpoint_fallback_reason") ==
+                    "primary_oblique_pair_infeasible")
+            else:
+                fallback_contract_ok = False
+            if not fallback_contract_ok:
+                errors.append("{} has an invalid oblique fallback contract".format(
+                    room_id))
+            required_planned_separation = float(settings.get(
+                "physical_viewpoint_minimum_separation_m", 2.45)
+                if fallback_level == "primary" else settings.get(
+                    "physical_viewpoint_fallback_minimum_separation_m", 2.30))
+            if ({item.get("role") for item in scans} != {"G3", "G4"} or
+                    float(contract.get("planned_viewpoint_separation_m", 0.0)) <
+                    required_planned_separation or
+                    any(float(item.get("scan_turn_rad", 0.0)) < math.radians(210.0)
+                        for item in scans)):
+                errors.append("{} layout does not contain a valid physical G3/G4 pair".format(
+                    room_id))
+            if len(scans) == 2:
+                geometry_ok, angle = _planned_oblique_geometry(
+                    scans, limits,
+                    room_type, contract.get("primary_obstacle"))
+                if not geometry_ok:
+                    errors.append(
+                        "{} planned oblique geometry is invalid (angle={})"
+                        .format(room_id, angle))
+                if (room_type == "open" and
+                        contract.get("large_doorway_obstacles")):
+                    errors.append("{} open room still has a large doorway blocker".format(
+                        room_id))
+                robustness = limits.get("dual_view_robustness") or {}
+                if (room_type == "open" and float(robustness.get(
+                        "minimum_dual_view_parallax_deg", 0.0)) < float(settings.get(
+                            "minimum_dual_view_parallax_deg",
+                            30.0))):
+                    errors.append("{} lacks the required dual-view parallax"
+                                  .format(room_id))
+            clearance = float(settings.get(
+                "scan_path_minimum_furniture_clearance_m", 0.50))
+            for path_name, path in contract.get("paths", {}).items():
+                for start, end in zip(path, path[1:]):
+                    for furniture in room.get("furniture", []):
+                        minimum = min(
+                            oriented_box_clearance(
+                                float(start[0]) + ratio * (
+                                    float(end[0]) - float(start[0])),
+                                float(start[1]) + ratio * (
+                                    float(end[1]) - float(start[1])),
+                                furniture["pose"], furniture["size"])
+                            for ratio in (step / 80.0 for step in range(81)))
+                        if minimum + 1.0e-6 < clearance:
+                            errors.append("{} {} intersects inflated furniture {}".format(
+                                room_id, path_name, furniture.get("id")))
+    if layout.get("metadata", {}).get("physical_two_view_contract") is not True:
+        errors.append("layout metadata is missing the physical two-view contract")
+    minimum_parallax = float(settings.get(
+        "minimum_dual_view_parallax_deg", 30.0))
+    minimum_range_margin = float(settings.get(
+        "red_ball_view_range_margin_m", 0.25))
+    red_distractors = layout.get("red_distractors") or []
+    if official_positions:
+        if not 4 <= len(red_distractors) <= 8:
+            errors.append(
+                "official runtime layout must record 4--8 distractors")
+    elif len(red_distractors) != 15:
+        errors.append("runtime layout must record all 15 fixed red distractors")
+    rooms_by_id = {
+        str(room.get("id")): room
+        for floor in layout.get("floors", [])
+        for room in floor.get("rooms", [])}
+    for item in truth:
+        if official_positions:
+            try:
+                room = rooms_by_id[str(item["room_id"])]
+                position = item.get("position") or item["pose"][:3]
+                x, y = float(position[0]), float(position[1])
+                bounds = room["bounds"]
+                valid_official = (
+                    str(item.get("model_name", item.get("id", ""))).startswith(
+                        "danger_red_sphere_") and
+                    item.get("placement_contract") ==
+                    "official_generator_position" and
+                    float(bounds["x_min"]) <= x <= float(bounds["x_max"]) and
+                    float(bounds["y_min"]) <= y <= float(bounds["y_max"])
+                )
+            except (KeyError, IndexError, TypeError, ValueError):
+                valid_official = False
+            if not valid_official:
+                errors.append(
+                    "{} has invalid official-generator placement metadata"
+                    .format(item.get("id", "danger source")))
+            continue
+
+        evidence = item.get("view_evidence") or []
+        if (item.get("placement_contract") !=
+                "dual_view_uncertainty_safe_RGBD_without_runtime_truth" or
+                len(evidence) != 2 or
+                len(item.get("visible_scan_ids") or []) != 2 or
+                float(item.get("dual_view_parallax_deg", 0.0)) <
+                minimum_parallax or
+                not all(bool(view.get("uncertainty_safe", False))
+                        for view in evidence) or
+                not all(float(view.get("range_margin_m", -1.0)) >=
+                        minimum_range_margin for view in evidence) or
+                not all(bool(view.get(
+                    "red_distractor_projection_safe", False)) and
+                    float(view.get("vertical_projection_slack_rad", -1.0)) >= 0.0
+                    for view in evidence)):
+            errors.append(
+                "{} does not satisfy the dual-view uncertainty-safe danger "
+                "placement contract".format(item.get("id", "danger source")))
+            continue
+        try:
+            room = rooms_by_id[str(item["room_id"])]
+            projection_clear = _red_distractor_projection_clear(
+                item, room, red_distractors, settings)
+        except (KeyError, IndexError, TypeError, ValueError,
+                ZeroDivisionError):
+            projection_clear = False
+        if not projection_clear:
+            errors.append(
+                "{} can merge with a red distractor under the arrival "
+                "uncertainty envelope".format(
+                    item.get("id", "danger source")))
+    return errors
+
+
+def validate_randomized_layout(config, layout):
+    """Require reproducible, distinct per-floor scenes and complete truth."""
+    if physical_contract_enabled(config):
+        return validate_physical_layout(config, layout)
+    errors = []
+    settings = config.get("scene_randomization", {})
+    effective = settings.get("effective_floor_seeds")
+    if effective is None:
+        return errors
+    try:
+        seeds = [int(value) for value in effective]
+    except (TypeError, ValueError):
+        return ["scene_randomization.effective_floor_seeds must be integers"]
+    if len(seeds) != 3 or len(set(seeds)) != 3:
+        errors.append("the three effective floor seeds must be pairwise distinct")
+    metadata = layout.get("metadata", {})
+    if metadata.get("scene_randomized") is not True:
+        errors.append("runtime layout must be marked scene_randomized")
+    if metadata.get("floor_seeds") != seeds:
+        errors.append("runtime layout floor seeds do not match the mission config")
+    if metadata.get("alternate_scan_turn_directions") is not True:
+        errors.append("runtime layout must record the balanced-turn policy")
+    try:
+        minimum_coverage = float(
+            metadata.get("minimum_room_scan_coverage_fraction"))
+        minimum_robust = float(
+            metadata.get("minimum_robust_detection_fraction"))
+        configured_minimum_coverage = float(settings.get(
+            "minimum_room_scan_coverage_fraction", 0.33))
+        configured_minimum_robust = float(settings.get(
+            "minimum_robust_detection_fraction", 0.05))
+        runtime_route = float(metadata.get("runtime_floor_route_m"))
+        maximum_runtime_route = float(settings.get(
+            "maximum_runtime_floor_route_m", 239.0))
+    except (TypeError, ValueError):
+        minimum_coverage = minimum_robust = runtime_route = -1.0
+        configured_minimum_coverage = 0.33
+        configured_minimum_robust = 0.05
+        maximum_runtime_route = 239.0
+    if minimum_coverage < configured_minimum_coverage:
+        errors.append("runtime layout does not meet the minimum room coverage")
+    if minimum_robust < configured_minimum_robust:
+        errors.append("runtime layout does not meet the robust detection coverage")
+    if not 0.0 < runtime_route <= maximum_runtime_route:
+        errors.append("runtime layout route does not meet the 600 s distance cap")
+
+    expected_per_floor = int(config.get("red_ball_detection", {}).get(
+        "expected_red_balls_per_floor", 6))
+    truth = layout.get("danger_red_spheres", [])
+    if not isinstance(truth, list):
+        truth = []
+    expected_total = expected_per_floor * 3
+    if len(truth) != expected_total:
+        errors.append("runtime layout must contain {} red-ball truth records".format(
+            expected_total))
+
+    red_xy = set()
+    room_red_counts = {}
+    floor_red_counts = {0: 0, 1: 0, 2: 0}
+    for item in truth:
+        try:
+            index = int(item["floor_index"])
+            room_id = str(item["room_id"])
+            pose = item["pose"]
+            coordinate = (round(float(pose[0]), 6), round(float(pose[1]), 6))
+        except (KeyError, IndexError, TypeError, ValueError):
+            errors.append("runtime layout contains an invalid red-ball truth record")
+            continue
+        if coordinate in red_xy:
+            errors.append("red-ball XY positions must differ across all floors")
+        red_xy.add(coordinate)
+        floor_red_counts[index] = floor_red_counts.get(index, 0) + 1
+        room_red_counts[room_id] = room_red_counts.get(room_id, 0) + 1
+        visible_scan_ids = item.get("visible_scan_ids")
+        if (not isinstance(visible_scan_ids, list) or not visible_scan_ids or
+                not all(str(value).startswith(room_id + "_scan_")
+                        for value in visible_scan_ids)):
+            errors.append(
+                "{} must record at least one robustly visible scan"
+                .format(item.get("id", "red ball")))
+    if any(floor_red_counts.get(index) != expected_per_floor for index in range(3)):
+        errors.append("every floor must contain exactly {} red balls".format(
+            expected_per_floor))
+
+    # Independently recompute every truth ball's valid scans from the scan
+    # poses, the configured range/heading margins and the configured
+    # line-of-sight clearance.  Recorded metadata alone is never trusted.
+    rooms_by_id = {
+        str(room.get("id")): room
+        for floor in layout.get("floors", [])
+        for room in floor.get("rooms", [])
+        if isinstance(room, dict)
+    }
+    scans_by_id = {
+        str(scan.get("id")): scan
+        for room in rooms_by_id.values()
+        for scan in room.get("scan_points", [])
+        if isinstance(scan, dict)
+    }
+    projected_gap = float(settings.get(
+        "red_ball_minimum_projected_gap_rad", REQUIRED_PROJECTED_GAP_RAD))
+    ball_radius = float(settings.get("red_ball_radius_m", 0.15))
+    balls_by_room = {}
+    for item in truth:
+        try:
+            room_id = str(item["room_id"])
+            pose = item["pose"]
+            x, y = float(pose[0]), float(pose[1])
+            recorded = [str(value) for value in item["visible_scan_ids"]]
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue
+        room = rooms_by_id.get(room_id)
+        ball_id = str(item.get("id", "red ball"))
+        if room is None:
+            errors.append("{} references unknown room {}".format(ball_id, room_id))
+            continue
+        recomputed = sorted(
+            str(scan["id"])
+            for scan in room.get("scan_points", [])
+            if isinstance(scan, dict) and
+            _scan_observes_ball(x, y, scan, room, settings))
+        if not recomputed:
+            errors.append(
+                "{} has no scan that observes it under the conservative "
+                "range/heading/line-of-sight visibility constraints".format(
+                    ball_id))
+        if sorted(recorded) != recomputed:
+            errors.append(
+                "{} visible_scan_ids {} do not equal the independently "
+                "recomputed valid scans {}".format(
+                    ball_id, sorted(recorded), recomputed))
+        balls_by_room.setdefault(room_id, []).append((ball_id, x, y, set(recorded)))
+    for room_id, balls in balls_by_room.items():
+        for first_index in range(len(balls)):
+            for second_index in range(first_index + 1, len(balls)):
+                first_id, first_x, first_y, first_scans = balls[first_index]
+                second_id, second_x, second_y, second_scans = balls[second_index]
+                for scan_id in sorted(first_scans & second_scans):
+                    scan = scans_by_id.get(scan_id)
+                    if scan is None:
+                        continue
+                    origin_x, origin_y = float(scan["pose"][0]), float(scan["pose"][1])
+                    separation = _bearing_separation_rad(
+                        origin_x, origin_y, first_x, first_y,
+                        second_x, second_y)
+                    required = _required_bearing_separation_rad(
+                        ball_radius,
+                        math.hypot(first_x - origin_x, first_y - origin_y),
+                        math.hypot(second_x - origin_x, second_y - origin_y),
+                        projected_gap)
+                    if separation + 1.0e-12 < required:
+                        errors.append(
+                            "{} and {} overlap in scan {} bearing space "
+                            "({:.6f} rad < required {:.6f} rad incl. the "
+                            "conservative projected-separation constraint)".format(
+                                first_id, second_id, scan_id,
+                                separation, required))
+
+    furniture_xy = set()
+    for floor in layout.get("floors", []):
+        index = int(floor.get("floor_index", -1))
+        if index in range(3) and int(floor.get("scene_seed", -1)) != seeds[index]:
+            errors.append("floor {} scene_seed does not match its effective seed".format(index))
+        for room in floor.get("rooms", []):
+            room_id = str(room.get("id", ""))
+            if room_red_counts.get(room_id, 0) < 1:
+                errors.append("{} must contain at least one red ball".format(room_id))
+            scan_points = room.get("scan_points", [])
+            if (not isinstance(scan_points, list) or len(scan_points) != 2 or
+                    {str(item.get("id")) for item in scan_points} !=
+                    {room_id + "_scan_a", room_id + "_scan_b"}):
+                errors.append("{} must record scan_a and scan_b metadata".format(room_id))
+            coverage = room.get("scan_coverage")
+            try:
+                total_cells = int(coverage["observable_cell_count"])
+                covered_cells = int(coverage["covered_cell_count"])
+                robust_cells = int(coverage["robust_detection_cell_count"])
+                coverage_fraction = float(coverage["coverage_fraction"])
+                robust_fraction = float(coverage["robust_detection_fraction"])
+                local_route = float(coverage["local_route_distance_m"])
+                combined_turn = float(coverage["combined_turn_rad"])
+                candidate_count = int(coverage["candidate_pair_count"])
+                recorded_pair_time = float(coverage[
+                    "estimated_pair_time_sec"])
+                recorded_pause_count = int(coverage[
+                    "observation_pause_count"])
+                recorded_pause_time = float(coverage[
+                    "observation_pause_time_sec"])
+            except (KeyError, TypeError, ValueError):
+                errors.append("{} has invalid scan coverage metadata".format(room_id))
+            else:
+                if (total_cells <= 0 or not 0 < robust_cells <= covered_cells <= total_cells or
+                        abs(coverage_fraction - covered_cells / float(total_cells)) > 1.0e-9 or
+                        coverage_fraction < configured_minimum_coverage or
+                        abs(robust_fraction - robust_cells / float(total_cells)) > 1.0e-9 or
+                        robust_fraction < configured_minimum_robust):
+                    errors.append(
+                        "{} scan pair does not meet the measured coverage floor"
+                        .format(room_id))
+                if (coverage.get("optimization") !=
+                        "maximum_covered_cells_within_time_constraints" or
+                        candidate_count <= 0):
+                    errors.append(
+                        "{} scan pair lacks constrained coverage optimization evidence"
+                        .format(room_id))
+                if local_route > float(settings.get(
+                        "scan_pair_maximum_local_route_m", 5.40)) + 1.0e-6:
+                    errors.append("{} scan pair exceeds its route-time cap".format(room_id))
+                if combined_turn > float(settings.get(
+                        "scan_pair_maximum_combined_turn_rad", 3.65)) + 1.0e-6:
+                    errors.append("{} scan pair exceeds its rotation-time cap".format(room_id))
+                try:
+                    expected_pair_time, expected_pause_count, expected_pause_time = (
+                        _estimated_scan_pair_time(room, scan_points, settings))
+                except (KeyError, IndexError, TypeError, ValueError):
+                    errors.append(
+                        "{} scan pair cannot be independently timed".format(
+                            room_id))
+                else:
+                    if recorded_pause_count != expected_pause_count:
+                        errors.append(
+                            "{} observation pause count does not match its turns"
+                            .format(room_id))
+                    if abs(recorded_pause_time - expected_pause_time) > 1.0e-9:
+                        errors.append(
+                            "{} observation pause time does not match its schedule"
+                            .format(room_id))
+                    if abs(recorded_pair_time - expected_pair_time) > 1.0e-6:
+                        errors.append(
+                            "{} estimated scan-pair time omits physical motion, "
+                            "settle, or observation-pause time".format(room_id))
+                expected_interval = float(settings.get(
+                    "scan_pause_interval_rad", -1.0))
+                expected_dwell = float(settings.get(
+                    "scan_pause_dwell_sec", -1.0))
+                for scan in scan_points:
+                    try:
+                        scan_interval = float(scan[
+                            "scan_pause_interval_rad"])
+                        scan_dwell = float(scan["scan_pause_dwell_sec"])
+                    except (KeyError, TypeError, ValueError):
+                        errors.append(
+                            "{} lacks its stationary observation schedule"
+                            .format(str(scan.get("id", room_id))))
+                        continue
+                    if (abs(scan_interval - expected_interval) > 1.0e-9 or
+                            abs(scan_dwell - expected_dwell) > 1.0e-9):
+                        errors.append(
+                            "{} stationary observation schedule differs from "
+                            "the mission configuration".format(
+                                str(scan.get("id", room_id))))
+            for furniture in room.get("furniture", []):
+                try:
+                    pose = furniture["pose"]
+                    coordinate = (round(float(pose[0]), 6), round(float(pose[1]), 6))
+                except (KeyError, IndexError, TypeError, ValueError):
+                    errors.append("{} contains invalid furniture pose metadata".format(room_id))
+                    continue
+                if coordinate in furniture_xy:
+                    errors.append("randomized furniture XY positions must be unique")
+                furniture_xy.add(coordinate)
+    return errors
+
+
+def _validate_wall_crossings(waypoints, errors, floor_number):
+    door_y_values = (14.865, 28.895)
+    for previous, current in zip(waypoints, waypoints[1:]):
+        x0, y0 = float(previous["x"]), float(previous["y"])
+        x1, y1 = float(current["x"]), float(current["y"])
+        dx = x1 - x0
+        if abs(dx) < 1e-9:
+            continue
+        for wall_x in (-1.1, 1.1):
+            fraction = (wall_x - x0) / dx
+            if 0.0 < fraction < 1.0:
+                crossing_y = y0 + fraction * (y1 - y0)
+                # The paired room partitions begin at the lobby boundary;
+                # x-crossings below y=7.85 are in the open entrance/stair
+                # lobby and are not room-wall penetrations.
+                if crossing_y < 7.85:
+                    continue
+                nearest = min(door_y_values, key=lambda value: abs(value - crossing_y))
+                if abs(crossing_y - nearest) > 0.75:
+                    errors.append(
+                        "floor {} route crosses room wall x={} at y={:.3f} outside a door"
+                        .format(floor_number, wall_x, crossing_y)
+                    )
+
+
+def physical_contract_enabled(config):
+    return "physical_viewpoint_scan_turn_rad" in config.get(
+        "scene_randomization", {})
+
+
+def validate_physical_config(config, require_runtime_files=False):
+    errors = []
+    runtime = config.get("runtime", {})
+    for key in ("world_file", "layout_metadata", "stair_model_sdf",
+                "plane_policy", "stair_policy"):
+        value = runtime.get(key)
+        if not isinstance(value, str) or not value:
+            errors.append("runtime.{} must be a non-empty path".format(key))
+        elif require_runtime_files and not os.path.isfile(value):
+            errors.append("runtime.{} does not exist: {}".format(key, value))
+    timing = config.get("task_timing", {})
+    if (timing.get("time_basis") != "ros_simulation_time" or
+            timing.get("preparation_excluded") is not True or
+            float(timing.get("maximum_exploration_duration_sec", -1)) != 600.0):
+        errors.append("task timing must be prep-excluded ROS simulation time with a 600 s cap")
+    detection = config.get("red_ball_detection", {})
+    if (detection.get("online_truth_forbidden") is not True or
+            detection.get("require_all_scene_red_balls") is not True or
+            list(detection.get("expected_total_range", [])) != [3, 6]):
+        errors.append("danger contract must require all of 3--6 sparse online RGB-D targets")
+    settings = config.get("scene_randomization", {})
+    try:
+        constants_ok = (
+            int(settings["red_ball_total_minimum"]) == 3 and
+            int(settings["red_ball_total_maximum"]) == 6 and
+            float(settings["physical_viewpoint_minimum_separation_m"]) >= 2.45 and
+            float(settings["physical_viewpoint_fallback_minimum_separation_m"]) >= 2.30 and
+            float(settings["physical_viewpoint_actual_minimum_separation_m"]) >= 2.20 and
+            float(settings["physical_viewpoint_fallback_actual_minimum_separation_m"]) >= 2.10 and
+            float(settings["minimum_dual_view_parallax_deg"]) >= 30.0 and
+            float(settings["minimum_dual_view_robust_fraction"]) > 0.0 and
+            float(settings["physical_viewpoint_scan_turn_rad"]) >= math.radians(210.0) and
+            float(settings["physical_viewpoint_navigation_speed"]) <= 0.90 and
+            float(settings["physical_viewpoint_transit_speed"]) <= 0.90 and
+            float(settings["physical_corridor_cruise_speed"]) <= 2.25 and
+            float(settings["physical_corridor_maximum_lateral_speed_mps"]) <= 0.45 and
+            1.25 <= float(settings["physical_plane_distance_gain"]) <= 1.45 and
+            float(settings["physical_stair_side_opening_speed_mps"]) <= 1.85 and
+            float(settings["physical_stair_side_opening_maximum_lateral_speed_mps"]) <= 0.35 and
+            float(settings["physical_stair_handoff_maximum_yaw_rate_rad_s"]) <= 1.00 and
+            float(settings["physical_stair_side_opening_settle_sec"]) >= 0.20 and
+            float(settings["physical_viewpoint_maximum_lateral_speed_mps"]) <= 0.55 and
+            float(settings["physical_viewpoint_maximum_yaw_rate_rad_s"]) <= 1.50 and
+            float(settings["scan_path_minimum_furniture_clearance_m"]) >= 0.50 and
+            float(settings["red_ball_wall_margin_m"]) >= 0.65 and
+            float(settings["red_ball_furniture_clearance_m"]) >= 0.45 and
+            float(settings["red_ball_line_of_sight_clearance_m"]) >= 0.35 and
+            float(settings["red_ball_robust_minimum_center_range_m"]) >= 1.15 and
+            float(settings["red_ball_robust_maximum_center_range_m"]) <= 3.80 and
+            float(settings["red_ball_view_range_margin_m"]) >= 0.25 and
+            float(settings["red_ball_arrival_position_uncertainty_m"]) >= 0.12 and
+            float(settings["red_ball_arrival_yaw_uncertainty_deg"]) >= 8.0 and
+            float(settings["red_ball_minimum_projected_radius_px"]) >= 10.0 and
+            float(settings["red_ball_distractor_projected_gap_rad"]) >=
+                math.radians(5.0) and
+            int(settings["recording_camera_vertical_pixels"]) == 240 and
+            float(settings["recording_camera_mount_forward_m"]) == 0.30 and
+            float(settings["recording_camera_mount_height_m"]) == 0.08 and
+            float(settings["red_ball_camera_pitch_uncertainty_deg"]) >= 3.0 and
+            float(settings["red_ball_vertical_edge_margin_deg"]) >= 2.0 and
+            0.0 < float(settings["open_near_view_depth_fraction_min"]) <
+                float(settings["open_near_view_depth_fraction_max"]) <= 0.50 and
+            0.50 < float(settings["open_deep_view_depth_fraction_min"]) <
+                float(settings["open_deep_view_depth_fraction_max"]) <= 0.70 and
+            float(settings["open_view_central_width_fraction"]) == 0.60 and
+            float(settings["room_view_line_angle_min_deg"]) == 20.0 and
+            float(settings["room_view_line_angle_max_deg"]) == 70.0 and
+            float(settings["room_view_minimum_depth_delta_m"]) >= 1.0 and
+            float(settings["room_view_minimum_lateral_delta_m"]) >= 0.8 and
+            float(settings["room_view_obstacle_clearance_m"]) >= 0.72 and
+            0.75 <= float(settings["red_ball_scan_minimum_range_m"]) <
+                float(settings["red_ball_scan_maximum_range_m"]) <= 7.0 and
+            float(settings["maximum_runtime_floor_route_m"]) <= 420.0)
+    except (KeyError, TypeError, ValueError):
+        constants_ok = False
+    if not constants_ok:
+        errors.append("physical viewpoint geometry/scan/sparse-danger constants are invalid")
+    floors = config.get("floors", [])
+    if len(floors) != 3 or [item.get("floor_number") for item in floors] != [1, 2, 3]:
+        errors.append("floors must be ordered F1/F2/F3")
+        return errors
+    runtime_randomized = settings.get("effective_floor_seeds") is not None
+    observed_types = set()
+    for floor in floors:
+        rooms = [str(value) for value in floor.get("expected_rooms", [])]
+        waypoints = floor.get("waypoints", [])
+        if len(rooms) != 4 or not waypoints:
+            errors.append("floor {} must contain four room contracts".format(
+                floor.get("floor_number")))
+            continue
+        if runtime_randomized:
+            for room_id in rooms:
+                owned = [item for item in waypoints
+                         if str(item.get("room_id", "")) == room_id]
+                phases = [str(item.get("room_phase", "")) for item in owned]
+                required = ("ENTRY", "G3", "G4", "RETURN", "EXIT")
+                indices = []
+                for phase in required:
+                    matches = [index for index, value in enumerate(phases)
+                               if value == phase]
+                    if len(matches) != 1:
+                        errors.append("{} must execute {} exactly once".format(
+                            room_id, phase))
+                    else:
+                        indices.append(matches[0])
+                if len(indices) == 5 and indices != sorted(indices):
+                    errors.append("{} phase order is not ENTRY->G3->G4->RETURN->EXIT".format(
+                        room_id))
+                scans = [item for item in owned
+                         if item.get("viewpoint_role") in ("G3", "G4")]
+                if {item.get("viewpoint_role") for item in scans} != {"G3", "G4"}:
+                    errors.append("{} is missing G3/G4 viewpoints".format(room_id))
+                    continue
+                room_type = str(scans[0].get("room_type"))
+                policy = str(scans[0].get("viewpoint_policy"))
+                expected_policy = {
+                    "open": "open_middle_deep_then_near_oblique",
+                    "shallow_obstacle": "front_obstacle_side_bypass_oblique",
+                    "deep_obstacle": "deep_obstacle_front_oblique_pair",
+                }.get(room_type)
+                if policy != expected_policy:
+                    errors.append("{} room type/policy mismatch".format(room_id))
+                else:
+                    observed_types.add(room_type)
+                baseline = math.hypot(
+                    float(scans[0]["x"]) - float(scans[1]["x"]),
+                    float(scans[0]["y"]) - float(scans[1]["y"]))
+                fallback_level = str(scans[0].get(
+                    "viewpoint_fallback_level", "primary"))
+                minimum_baseline = float(settings[
+                    "physical_viewpoint_minimum_separation_m"]
+                    if fallback_level == "primary" else settings[
+                        "physical_viewpoint_fallback_minimum_separation_m"])
+                if baseline < minimum_baseline:
+                    errors.append("{} G3/G4 physical baseline is too small".format(
+                        room_id))
+                geometry_ok, _angle = _planned_oblique_geometry(
+                    scans, scans[0].get("actual_geometry_limits") or {},
+                    room_type, scans[0].get("primary_obstacle"))
+                if not geometry_ok:
+                    errors.append("{} mission oblique geometry is invalid".format(
+                        room_id))
+                if any(float(item.get("tolerance", 1.0)) > 0.12
+                       for item in scans):
+                    errors.append("{} scan tolerance exceeds 0.12 m".format(
+                        room_id))
+                for scan in scans:
+                    if (scan.get("scan") is not True or
+                            scan.get("align_yaw") is not True or
+                            float(scan.get("scan_turn_rad", 0.0)) < math.radians(210.0)):
+                        errors.append("{} must physically align and scan >=210 degrees".format(
+                            scan.get("note")))
+                exit_item = next((item for item in owned
+                                  if item.get("room_phase") == "EXIT"), {})
+                if (exit_item.get("align_yaw") is not True or
+                        float(exit_item.get("speed", 1.0)) > 0.45):
+                    errors.append("{} EXIT must align to the door normal at limited speed".format(
+                        room_id))
+        else:
+            notes = [str(item.get("note", "")) for item in waypoints]
+            for room_id in rooms:
+                if notes.count(room_id + "_center") != 1:
+                    errors.append(
+                        "template floor must visit {}_center exactly once".format(
+                            room_id))
+        _validate_wall_crossings(waypoints, errors, floor.get("floor_number"))
+    if len(config.get("return_to_lobby", {}).get("waypoints", [])) < 2:
+        errors.append("return-to-origin route is incomplete")
+    if require_runtime_files:
+        layout_path = runtime.get("layout_metadata")
+        if isinstance(layout_path, str) and os.path.isfile(layout_path):
+            try:
+                errors.extend(validate_physical_layout(
+                    config, read_json(layout_path)))
+            except (OSError, ValueError, TypeError) as error:
+                errors.append("runtime physical layout is invalid: {}".format(error))
+    return errors
+
+
+def validate_config(config, require_runtime_files=False):
+    if physical_contract_enabled(config):
+        return validate_physical_config(config, require_runtime_files)
+    errors = []
+    if config.get("schema") != CONFIG_SCHEMA:
+        errors.append("config schema must be {}".format(CONFIG_SCHEMA))
+
+    runtime = config.get("runtime")
+    if not isinstance(runtime, dict):
+        errors.append("runtime must be an object")
+        runtime = {}
+    for key in ("world_file", "layout_metadata", "stair_model_sdf",
+                "plane_policy", "stair_policy"):
+        value = runtime.get(key)
+        if not isinstance(value, str) or not value:
+            errors.append("runtime.{} must be a non-empty path".format(key))
+        elif require_runtime_files and not os.path.isfile(value):
+            errors.append("runtime.{} does not exist: {}".format(key, value))
+    if policy_kind(runtime.get("plane_policy", "")) != "plane":
+        errors.append("runtime.plane_policy must identify the plane/flat policy")
+    if policy_kind(runtime.get("stair_policy", "")) != "stair":
+        errors.append("runtime.stair_policy must identify the stair policy")
+    if runtime.get("plane_policy") == runtime.get("stair_policy"):
+        errors.append("plane and stair policies must be different files")
+
+    spawn = config.get("spawn_pose")
+    if not isinstance(spawn, dict):
+        errors.append("spawn_pose must be an object")
+        spawn = {}
+    for key in ("x", "y", "z", "yaw", "xy_tolerance_m", "z_tolerance_m"):
+        try:
+            if not math.isfinite(float(spawn[key])):
+                raise ValueError
+        except (KeyError, TypeError, ValueError):
+            errors.append("spawn_pose.{} must be finite".format(key))
+    if float(spawn.get("y", 0.0)) > -2.4:
+        errors.append("spawn_pose must be below the main-entrance apron (y <= -2.4)")
+
+    timing = config.get("task_timing")
+    if not isinstance(timing, dict):
+        errors.append("task_timing must be an object")
+        timing = {}
+    if timing.get("preparation_excluded") is not True:
+        errors.append("task_timing.preparation_excluded must be true")
+    try:
+        budget = float(timing.get("maximum_exploration_duration_sec"))
+    except (TypeError, ValueError):
+        budget = -1.0
+    if budget != 600.0:
+        errors.append("task_timing maximum must be exactly 600 seconds")
+    required_stages = timing.get("required_stages")
+    expected_stages = [
+        "entrance_step_stair_rl",
+        "floor_1_exploration", "stair_f1_to_f2",
+        "floor_2_exploration", "stair_f2_to_f3",
+        "floor_3_exploration", "stair_f3_to_f1_descent",
+        "return_to_first_floor_lobby",
+    ]
+    if required_stages != expected_stages:
+        errors.append("task_timing.required_stages must define the full mission order")
+
+    detection = config.get("red_ball_detection")
+    if not isinstance(detection, dict):
+        errors.append("red_ball_detection must be an object")
+        detection = {}
+    if detection.get("online_truth_forbidden") is not True:
+        errors.append("red_ball_detection.online_truth_forbidden must be true")
+    try:
+        minimum_detections = int(detection.get("minimum_confirmed_detections"))
+    except (TypeError, ValueError):
+        minimum_detections = 0
+    try:
+        expected_scene_red_balls = int(detection.get("expected_scene_red_balls"))
+        expected_per_floor = int(detection.get("expected_red_balls_per_floor"))
+    except (TypeError, ValueError):
+        expected_scene_red_balls = expected_per_floor = 0
+    if (minimum_detections != 18 or expected_scene_red_balls != 18 or
+            expected_per_floor != 6):
+        errors.append("red-ball acceptance must require all 18 balls (6 per floor)")
+    if detection.get("require_all_scene_red_balls") is not True:
+        errors.append("red_ball_detection.require_all_scene_red_balls must be true")
+    try:
+        matching_tolerance = float(detection.get("matching_tolerance_m"))
+    except (TypeError, ValueError):
+        matching_tolerance = -1.0
+    if not 0.35 <= matching_tolerance <= 1.0:
+        errors.append("red_ball_detection.matching_tolerance_m must be within [0.35, 1.0]")
+
+    randomization = config.get("scene_randomization")
+    if not isinstance(randomization, dict):
+        errors.append("scene_randomization must be an object")
+        randomization = {}
+    try:
+        base_seeds = [int(value) for value in randomization.get("floor_seeds", [])]
+    except (TypeError, ValueError):
+        base_seeds = []
+    if len(base_seeds) != 3 or len(set(base_seeds)) != 3:
+        errors.append("scene_randomization.floor_seeds must contain three distinct seeds")
+    effective_seeds = randomization.get("effective_floor_seeds")
+    runtime_randomized = effective_seeds is not None
+    if runtime_randomized:
+        try:
+            effective_seeds = [int(value) for value in effective_seeds]
+        except (TypeError, ValueError):
+            effective_seeds = []
+        if len(effective_seeds) != 3 or len(set(effective_seeds)) != 3:
+            errors.append("effective_floor_seeds must contain three distinct seeds")
+    try:
+        if int(randomization.get("red_balls_per_floor")) != 6:
+            raise ValueError
+        minimum_separation = float(randomization.get(
+            "scan_point_minimum_separation_m"))
+        maximum_separation = float(randomization.get(
+            "scan_point_maximum_separation_m"))
+        if not 0.75 <= minimum_separation <= maximum_separation <= 1.60:
+            raise ValueError
+        if float(randomization.get(
+                "scan_path_minimum_furniture_clearance_m")) < 0.50:
+            raise ValueError
+        if randomization.get("alternate_scan_turn_directions") is not True:
+            raise ValueError
+        if not 0.80 <= float(randomization.get(
+                "scan_yaw_rate_rad_s")) <= 1.00:
+            raise ValueError
+        if abs(float(randomization.get(
+                "scan_pause_interval_rad")) -
+                REQUIRED_SCAN_PAUSE_INTERVAL_RAD) > 1.0e-9:
+            raise ValueError
+        if abs(float(randomization.get(
+                "scan_pause_dwell_sec")) -
+                REQUIRED_SCAN_PAUSE_DWELL_SEC) > 1.0e-9:
+            raise ValueError
+        if not 0.20 <= float(randomization.get("scan_a_settle_sec")) <= 0.30:
+            raise ValueError
+        if not 0.0 <= float(randomization.get("scan_b_settle_sec")) <= 0.25:
+            raise ValueError
+        if not 0.0 <= float(randomization.get(
+                "last_room_scan_settle_sec")) <= 0.40:
+            raise ValueError
+        minimum_detection_range = float(randomization.get(
+            "red_ball_scan_minimum_range_m"))
+        maximum_detection_range = float(randomization.get(
+            "red_ball_scan_maximum_range_m"))
+        if not 0.75 <= minimum_detection_range <= 1.25:
+            raise ValueError
+        if not 5.0 <= maximum_detection_range <= 5.25:
+            raise ValueError
+        if not minimum_detection_range < maximum_detection_range:
+            raise ValueError
+        if float(randomization.get("red_ball_wall_margin_m")) < 0.65:
+            raise ValueError
+        if float(randomization.get("red_ball_furniture_clearance_m")) < 0.45:
+            raise ValueError
+        if float(randomization.get(
+                "red_ball_line_of_sight_clearance_m")) < 0.22:
+            raise ValueError
+        if (float(randomization.get(
+                "red_ball_minimum_projected_gap_rad")) +
+                PROJECTED_GAP_TOLERANCE_RAD < REQUIRED_PROJECTED_GAP_RAD):
+            raise ValueError
+        if not 0.25 <= float(randomization.get(
+                "red_ball_scan_heading_margin_rad")) <= 0.45:
+            raise ValueError
+        if not 1.00 <= float(randomization.get(
+                "camera_horizontal_fov_rad")) <= 1.10:
+            raise ValueError
+        if not 6.00 <= float(randomization.get(
+                "scan_coverage_maximum_range_m")) <= 6.50:
+            raise ValueError
+        if float(randomization.get(
+                "minimum_room_scan_coverage_fraction")) < 0.33:
+            raise ValueError
+        if float(randomization.get(
+                "minimum_robust_detection_fraction")) < 0.05:
+            raise ValueError
+        if float(randomization.get(
+                "scan_pair_maximum_local_route_m")) > 5.40:
+            raise ValueError
+        if float(randomization.get(
+                "scan_pair_maximum_combined_turn_rad")) > 3.65:
+            raise ValueError
+        if float(randomization.get(
+                "maximum_runtime_floor_route_m")) > 239.0:
+            raise ValueError
+        if float(randomization.get(
+                "scan_candidate_maximum_y_offset_m")) > 0.60:
+            raise ValueError
+        if not 0.45 <= float(randomization.get(
+                "scan_a_navigation_speed")) <= 0.50:
+            raise ValueError
+        if not 0.30 <= float(randomization.get(
+                "scan_b_navigation_speed")) <= 0.35:
+            raise ValueError
+    except (TypeError, ValueError):
+        errors.append(
+            "scene randomization must use 6 balls/floor, two 0.8-1.6 m "
+            "coverage-optimized scan points, >=0.50 m path clearance, "
+            "balanced <=1.00 rad/s turns with 0.60 rad/0.60 s stationary "
+            "observations, robust RGB sectors, <=5.40 m "
+            "local room routes, a <=239 m runtime floor route, and the "
+            "conservative red-ball wall/furniture/line-of-sight clearances "
+            "with a 3-degree projected silhouette gap")
+
+    floors = config.get("floors")
+    if not isinstance(floors, list) or len(floors) != 3:
+        errors.append("floors must contain exactly three entries")
+        floors = []
+    observed_numbers = []
+    for floor in floors:
+        number = floor.get("floor_number")
+        observed_numbers.append(number)
+        expected_rooms = floor.get("expected_rooms")
+        waypoints = floor.get("waypoints")
+        if not isinstance(expected_rooms, list) or len(expected_rooms) != 4:
+            errors.append("floor {} must declare four expected rooms".format(number))
+            expected_rooms = []
+        if not isinstance(waypoints, list) or not waypoints:
+            errors.append("floor {} waypoints must not be empty".format(number))
+            continue
+        notes = [str(item.get("note", "")) for item in waypoints]
+        runtime_room_scan_signs = []
+        for room in expected_rooms:
+            room = str(room)
+            if runtime_randomized:
+                required_scans = (room + "_scan_a", room + "_scan_b")
+                for scan_note in required_scans:
+                    if notes.count(scan_note) != 1:
+                        errors.append(
+                            "floor {} must visit {} exactly once".format(
+                                number, scan_note))
+                if notes.count(room + "_center") != 0:
+                    errors.append("runtime route must not retain {}_center".format(room))
+                try:
+                    room_index = int(room.rsplit("_", 1)[1])
+                except (IndexError, ValueError):
+                    room_index = 0
+                corridor_entry = room + "_corridor_entry"
+                expected_corridor_entries = 1 if room_index % 2 == 1 else 0
+                if notes.count(corridor_entry) != expected_corridor_entries:
+                    errors.append(
+                        "floor {} must use a door-centre transition before {}"
+                        .format(number, room))
+                scan_waypoints = [item for item in waypoints
+                                  if str(item.get("note")) in required_scans]
+                if len(scan_waypoints) == 2:
+                    yaw_rates = []
+                    for scan in scan_waypoints:
+                        if scan.get("scan") is not True:
+                            errors.append("{} must be marked as a room scan".format(
+                                scan.get("note")))
+                        if scan.get("align_yaw") is not False:
+                            errors.append("{} must avoid a separate heading-alignment turn".format(
+                                scan.get("note")))
+                        try:
+                            turn = float(scan.get("scan_turn_rad"))
+                            yaw_rate = float(scan.get("scan_yaw_rate"))
+                        except (TypeError, ValueError):
+                            turn, yaw_rate = 0.0, 0.0
+                        if not 0.35 <= turn <= 2.75:
+                            errors.append("{} scan turn is outside [0.35, 2.75] rad".format(
+                                scan.get("note")))
+                        if not 0.80 <= abs(yaw_rate) <= 1.00:
+                            errors.append("{} scan yaw rate is outside the safe envelope".format(
+                                scan.get("note")))
+                        expected_speed_maximum = (
+                            0.35 if str(scan.get("note", "")).endswith("_scan_b")
+                            else 0.55)
+                        if float(scan.get("speed", 1.0)) > expected_speed_maximum:
+                            errors.append(
+                                "{} approach speed exceeds the physical short-path cap"
+                                .format(scan.get("note")))
+                        try:
+                            settle = float(scan.get("scan_settle_sec", 0.0))
+                        except (TypeError, ValueError):
+                            settle = float("inf")
+                        if not 0.0 <= settle <= 0.40:
+                            errors.append("{} scan settle exceeds the 600 s tune".format(
+                                scan.get("note")))
+                        try:
+                            pause_interval = float(scan.get(
+                                "scan_pause_interval_rad"))
+                            pause_dwell = float(scan.get(
+                                "scan_pause_dwell_sec"))
+                        except (TypeError, ValueError):
+                            pause_interval = pause_dwell = -1.0
+                        if (abs(pause_interval -
+                                REQUIRED_SCAN_PAUSE_INTERVAL_RAD) > 1.0e-9 or
+                                abs(pause_dwell -
+                                    REQUIRED_SCAN_PAUSE_DWELL_SEC) > 1.0e-9):
+                            errors.append(
+                                "{} must use the configured 0.60 rad/0.60 s "
+                                "stationary observation schedule".format(
+                                    scan.get("note")))
+                        yaw_rates.append(yaw_rate)
+                    if yaw_rates[0] * yaw_rates[1] <= 0.0:
+                        errors.append(
+                            "{} scan_a and scan_b must form one continuous turn"
+                            .format(room))
+                    else:
+                        runtime_room_scan_signs.append(
+                            1 if yaw_rates[0] > 0.0 else -1)
+                    combined_turn = sum(float(scan.get(
+                        "scan_turn_rad", 0.0)) for scan in scan_waypoints)
+                    if not 2.80 <= combined_turn <= 3.65:
+                        errors.append(
+                            "{} combined scan turn is outside the coverage/time envelope"
+                            .format(room))
+            else:
+                center = room + "_center"
+                if notes.count(center) != 1:
+                    errors.append(
+                        "template floor {} must visit {} exactly once".format(
+                            number, center))
+        if runtime_randomized and len(runtime_room_scan_signs) == 4:
+            if sum(runtime_room_scan_signs) != 0:
+                errors.append(
+                    "floor {} room scans must use two turns in each direction"
+                    .format(number))
+        if number == 3:
+            descent_handoff = next((
+                item for item in waypoints
+                if str(item.get("note")) ==
+                "floor_2_descent_landing_handoff"), None)
+            if (descent_handoff is None or
+                    descent_handoff.get("controller") != "direct_plane_rl" or
+                    descent_handoff.get("align_yaw") is not True or
+                    not 0.18 <= float(descent_handoff.get(
+                        "heading_tolerance", -1.0)) <= 0.22 or
+                    float(descent_handoff.get("speed", 0.0)) < 0.55):
+                errors.append(
+                    "the third-floor descent threshold must be aligned by plane "
+                    "RL before the descent manager hot-switches to stair RL")
+        z_expected = float(floor.get("z", 0.0))
+        for index, waypoint in enumerate(waypoints):
+            for key in ("x", "y", "z", "yaw", "speed"):
+                try:
+                    value = float(waypoint[key])
+                except (KeyError, TypeError, ValueError):
+                    errors.append(
+                        "floor {} waypoint {} has invalid {}".format(number, index, key)
+                    )
+                    continue
+                if not math.isfinite(value):
+                    errors.append(
+                        "floor {} waypoint {} {} is non-finite".format(number, index, key)
+                    )
+            if abs(float(waypoint.get("z", z_expected)) - z_expected) > 1e-6:
+                errors.append(
+                    "floor {} waypoint {} has the wrong floor z".format(number, index)
+                )
+            speed = float(waypoint.get("speed", 0.0))
+            # With the production 2.60 scale, a 0.70 request is clipped by the
+            # sequencer's physically verified 1.65 m/s flat-floor cap.
+            if not 0.05 <= speed <= 0.70:
+                errors.append(
+                    "floor {} waypoint {} speed {:.3f} is outside the plane RL envelope"
+                    .format(number, index, speed)
+                )
+            if "tolerance" in waypoint:
+                try:
+                    tolerance = float(waypoint["tolerance"])
+                except (TypeError, ValueError):
+                    tolerance = float("nan")
+                if not math.isfinite(tolerance) or not 0.10 <= tolerance <= 0.70:
+                    errors.append(
+                        "floor {} waypoint {} tolerance must be within [0.10, 0.70] m"
+                        .format(number, index)
+                    )
+        for previous, current in zip(waypoints, waypoints[1:]):
+            distance = math.hypot(
+                float(current["x"]) - float(previous["x"]),
+                float(current["y"]) - float(previous["y"]),
+            )
+            if distance > 21.0:
+                errors.append(
+                    "floor {} has an unsafe {:.2f} m waypoint jump".format(number, distance)
+                )
+        _validate_wall_crossings(waypoints, errors, number)
+    if observed_numbers != [1, 2, 3]:
+        errors.append("floor_number order must be [1, 2, 3]")
+    if runtime_randomized:
+        runtime_route = sum(route_length(floor.get("waypoints", []))
+                            for floor in floors)
+        maximum_route = float(randomization.get(
+            "maximum_runtime_floor_route_m", 239.0))
+        if runtime_route > maximum_route + 1.0e-6:
+            errors.append(
+                "runtime floor route {:.2f} m exceeds the {:.2f} m time cap"
+                .format(runtime_route, maximum_route))
+
+    return_section = config.get("return_to_lobby")
+    if not isinstance(return_section, dict):
+        errors.append("return_to_lobby must be an object")
+        return_section = {}
+    bounds = return_section.get("lobby_bounds")
+    if not isinstance(bounds, dict) or not all(
+        key in bounds for key in ("x_min", "x_max", "y_min", "y_max")
+    ):
+        errors.append("return_to_lobby.lobby_bounds is incomplete")
+        bounds = None
+    waypoints = return_section.get("waypoints")
+    if not isinstance(waypoints, list) or len(waypoints) < 2:
+        errors.append("return_to_lobby requires a stair-exit and lobby waypoint")
+    elif bounds is not None:
+        final = waypoints[-1]
+        if not (
+            float(bounds["x_min"]) <= float(final["x"]) <= float(bounds["x_max"])
+            and float(bounds["y_min"]) <= float(final["y"]) <= float(bounds["y_max"])
+        ):
+            errors.append("final return waypoint is outside the first-floor lobby")
+        if str(final.get("note")) != "first_floor_lobby_center":
+            errors.append("final return waypoint must be first_floor_lobby_center")
+    if return_section.get("trigger_token") != "FIRST_FLOOR_RETURNED":
+        errors.append("return trigger must be FIRST_FLOOR_RETURNED")
+    if require_runtime_files:
+        layout_path = runtime.get("layout_metadata")
+        if isinstance(layout_path, str) and os.path.isfile(layout_path):
+            try:
+                layout = read_json(layout_path)
+                errors.extend(validate_layout_clearance(config, layout))
+                errors.extend(validate_randomized_layout(config, layout))
+            except (OSError, ValueError, TypeError) as error:
+                errors.append("runtime.layout_metadata is invalid: {}".format(error))
+    return errors
+
+
+def _tour_check(path, floor_config, failures, checks):
+    floor = int(floor_config["floor_number"])
+    label = "floor_{}_tour".format(floor)
+    if not os.path.isfile(path):
+        failures.append("{} missing: {}".format(label, path))
+        checks[label] = False
+        return
+    try:
+        payload = read_json(path)
+    except (OSError, ValueError) as error:
+        failures.append("{} invalid: {}".format(label, error))
+        checks[label] = False
+        return
+    success = payload.get("success") is True
+    records = payload.get("waypoints", [])
+    expected_scans = {
+        str(item.get("note")): float(item.get("scan_turn_rad", 2.25))
+        for item in floor_config.get("waypoints", [])
+        if item.get("scan") is True
+    }
+    if not expected_scans:
+        expected_scans = {
+            str(room) + "_center": 2.32
+            for room in floor_config.get("expected_rooms", [])
+        }
+    successful_scans = set()
+    for item in records:
+        try:
+            rotation = float(item.get("scan_rotation_rad", 0.0))
+        except (TypeError, ValueError):
+            rotation = 0.0
+        if (
+            item.get("success") is True
+            and item.get("scan_completed") is True
+            and str(item.get("note")) in expected_scans
+            and rotation >= max(
+                0.35, expected_scans[str(item.get("note"))] - 0.12)
+        ):
+            successful_scans.add(str(item.get("note")))
+    missing = sorted(set(expected_scans) - successful_scans)
+    scanplanner_ok = (
+        payload.get("planner") == "SCAN-Planner" and
+        payload.get("motion_backend") == "plane_rl"
+    )
+    checks[label] = success and not missing and scanplanner_ok
+    if not success:
+        failures.append(
+            "{} did not succeed (termination_reason={})".format(
+                label, payload.get("termination_reason")
+            )
+        )
+    if missing:
+        failures.append(
+            "{} missing successful configured room sweeps: {}".format(
+                label, missing)
+        )
+    if not scanplanner_ok:
+        failures.append(
+            "{} was not executed by SCAN-Planner + plane_rl (planner={!r}, backend={!r})"
+            .format(label, payload.get("planner"), payload.get("motion_backend"))
+        )
+    if int(floor) == 1:
+        expected_entrance = {
+            "main_entrance_step_below",
+            "main_entrance_apron",
+            "main_entrance_threshold_clear",
+        }
+        entrance_records = {
+            str(item.get("note")): item for item in records
+            if str(item.get("note")) in expected_entrance
+        }
+        entrance_ok = (
+            set(entrance_records) == expected_entrance and
+            payload.get("entrance_motion_backend") == "stair_rl" and
+            policy_kind(payload.get("entrance_policy", "")) == "stair" and
+            all(item.get("success") is True and
+                item.get("controller") == "direct_forward_stair_rl" and
+                policy_kind(item.get("policy", "")) == "stair"
+                for item in entrance_records.values())
+        )
+        checks["main_entrance_step_stair_rl"] = entrance_ok
+        if not entrance_ok:
+            failures.append(
+                "main-entrance step records do not prove stair-RL traversal")
+
+
+def _phase_check(path, expected, label, failures, checks):
+    if not os.path.isfile(path):
+        failures.append("{} missing: {}".format(label, path))
+        checks[label] = False
+        return
+    try:
+        phase = read_json(path).get("phase")
+    except (OSError, ValueError) as error:
+        failures.append("{} invalid: {}".format(label, error))
+        checks[label] = False
+        return
+    checks[label] = phase == expected
+    if phase != expected:
+        failures.append("{} phase {!r} != {!r}".format(label, phase, expected))
+
+
+def _timing_check(config, results_dir, failures, checks):
+    timing_config = config["task_timing"]
+    path = os.path.join(results_dir, timing_config["output_file"])
+    if not os.path.isfile(path):
+        failures.append("mission stage timing missing: {}".format(path))
+        checks["mission_within_configured_budget"] = False
+        checks["all_stage_times_recorded"] = False
+        return None
+    try:
+        payload = read_json(path)
+    except (OSError, ValueError) as error:
+        failures.append("mission stage timing invalid: {}".format(error))
+        checks["mission_within_configured_budget"] = False
+        checks["all_stage_times_recorded"] = False
+        return None
+
+    try:
+        duration = float(payload.get("total_duration_sec"))
+    except (TypeError, ValueError):
+        duration = float("inf")
+    budget = float(timing_config["maximum_exploration_duration_sec"])
+    budget_ok = (
+        payload.get("schema") == TIMING_SCHEMA and
+        payload.get("status") == "completed" and
+        payload.get("preparation_excluded") is True and
+        payload.get("budget_met") is True and
+        0.0 < duration <= budget
+    )
+    checks["mission_within_configured_budget"] = budget_ok
+    if not budget_ok:
+        failures.append(
+            "mission timing did not prove a completed prep-excluded run <= {:.1f}s "
+            "(schema={}, status={}, duration={}, budget_met={})".format(
+                budget, payload.get("schema"), payload.get("status"),
+                payload.get("total_duration_sec"), payload.get("budget_met")))
+
+    stages = payload.get("stages", [])
+    names = [item.get("name") for item in stages if isinstance(item, dict)]
+    required = list(timing_config["required_stages"])
+    durations_ok = all(
+        isinstance(item, dict) and
+        isinstance(item.get("duration_sec"), (int, float)) and
+        float(item["duration_sec"]) >= 0.0 and
+        isinstance(item.get("sim_duration_sec"), (int, float)) and
+        float(item["sim_duration_sec"]) >= 0.0
+        for item in stages
+    )
+    stages_ok = names == required and durations_ok
+    checks["all_stage_times_recorded"] = stages_ok
+    if not stages_ok:
+        failures.append(
+            "timed stage sequence {} != required {} or contains invalid durations"
+            .format(names, required))
+    return payload
+
+
+def _spawn_check(config, timing, failures, checks):
+    expected = config["spawn_pose"]
+    pose = timing.get("spawn_truth_pose_at_start") if timing else None
+    try:
+        xy_error = math.hypot(
+            float(pose[0]) - float(expected["x"]),
+            float(pose[1]) - float(expected["y"]),
+        )
+        z_error = abs(float(pose[2]) - float(expected["z"]))
+        spawn_ok = (
+            len(pose) >= 4 and
+            xy_error <= float(expected["xy_tolerance_m"]) and
+            z_error <= float(expected["z_tolerance_m"]) and
+            float(pose[1]) <= -2.4
+        )
+    except (IndexError, TypeError, ValueError):
+        spawn_ok = False
+        xy_error = z_error = float("inf")
+    checks["spawn_below_main_entrance_step"] = spawn_ok
+    if not spawn_ok:
+        failures.append(
+            "exploration start truth pose does not prove the configured door-step spawn: "
+            "pose={!r}, xy_error={}, z_error={}".format(pose, xy_error, z_error))
+
+
+def _maximum_truth_matching(detections, truth, tolerance):
+    """Return a same-floor truth -> detection one-to-one spatial matching.
+
+    An open doorway can expose a neighbouring room's sphere before that room's
+    own scan starts.  The online detector cannot consult layout truth, so its
+    first scan label is evidence provenance, not room classification.
+    """
+    adjacency = {}
+    for detection_index, detection in enumerate(detections):
+        candidates = []
+        for truth_index, expected in enumerate(truth):
+            if int(detection["floor"]) != int(expected["floor_index"]) + 1:
+                continue
+            distance = math.hypot(
+                float(detection["position"][0]) - float(expected["pose"][0]),
+                float(detection["position"][1]) - float(expected["pose"][1]))
+            if distance <= tolerance:
+                candidates.append((distance, truth_index))
+        adjacency[detection_index] = [item[1] for item in sorted(candidates)]
+
+    truth_to_detection = {}
+
+    def augment(detection_index, visited):
+        for truth_index in adjacency[detection_index]:
+            if truth_index in visited:
+                continue
+            visited.add(truth_index)
+            previous = truth_to_detection.get(truth_index)
+            if previous is None or augment(previous, visited):
+                truth_to_detection[truth_index] = detection_index
+                return True
+        return False
+
+    for detection_index in sorted(adjacency, key=lambda value: len(adjacency[value])):
+        augment(detection_index, set())
+    return truth_to_detection
+
+
+def _red_ball_check(config, results_dir, timing, failures, checks):
+    detection_config = config["red_ball_detection"]
+    path = os.path.join(results_dir, detection_config["output_file"])
+    if not os.path.isfile(path):
+        failures.append("red-ball detection record missing: {}".format(path))
+        checks["red_ball_detections_recorded"] = False
+        return
+    try:
+        payload = read_json(path)
+    except (OSError, ValueError) as error:
+        failures.append("red-ball detection record invalid: {}".format(error))
+        checks["red_ball_detections_recorded"] = False
+        return
+    detections = payload.get("detections", [])
+    minimum = int(detection_config["minimum_confirmed_detections"])
+    required_fields = (
+        "track_id", "position", "first_confirmed_elapsed_sec",
+        "stage", "floor", "evidence_frames", "waypoint", "scan_active",
+        "room_id", "viewpoint_role",
+    )
+    scan_labels = {
+        str(waypoint.get("note"))
+        for floor in config.get("floors", [])
+        for waypoint in floor.get("waypoints", [])
+        if waypoint.get("scan") is True
+    }
+
+    def valid_event(item):
+        try:
+            return (
+                isinstance(item, dict) and
+                all(field in item for field in required_fields) and
+                isinstance(item.get("position"), list) and
+                len(item["position"]) == 3 and
+                all(math.isfinite(float(value)) for value in item["position"]) and
+                1 <= int(item.get("floor")) <= 3 and
+                float(item.get("first_confirmed_elapsed_sec")) >= 0.0 and
+                int(item.get("evidence_frames")) >= int(
+                    detection_config.get("confirmation_frames", 3)) and
+                item.get("scan_active") is True and
+                str(item.get("waypoint")) in scan_labels and
+                str(item.get("viewpoint_role")) in ("G3", "G4") and
+                str(item.get("stage")) == "floor_{}_exploration".format(
+                    int(item.get("floor")))
+            )
+        except (TypeError, ValueError):
+            return False
+
+    events_ok = isinstance(detections, list) and all(
+        valid_event(item) for item in detections)
+    try:
+        timing_duration = float(timing.get("total_duration_sec"))
+    except (AttributeError, TypeError, ValueError):
+        timing_duration = float(config.get("task_timing", {}).get(
+            "maximum_exploration_duration_sec", 600.0))
+    record_ok = (
+        payload.get("schema") == RED_BALL_SCHEMA and
+        payload.get("status") == "completed" and
+        payload.get("preparation_excluded") is True and
+        int(payload.get("frames_processed", 0)) > 0 and
+        int(payload.get("confirmed_count", -1)) == len(detections) and
+        len(detections) >= minimum and
+        len(detections) == int(detection_config["expected_scene_red_balls"]) and
+        events_ok and
+        all(float(item["first_confirmed_elapsed_sec"]) <= timing_duration
+            for item in detections)
+    )
+    checks["red_ball_detections_recorded"] = record_ok
+    checks["red_ball_evidence_only_during_room_scans"] = events_ok
+    if not record_ok:
+        failures.append(
+            "red-ball record did not contain >= {} valid timed confirmations "
+            "(schema={}, status={}, frames={}, confirmed={})".format(
+                minimum, payload.get("schema"), payload.get("status"),
+                payload.get("frames_processed"), len(detections)))
+
+    layout_path = os.path.join(results_dir, "layout_metadata.json")
+    if not os.path.isfile(layout_path):
+        layout_path = config.get("runtime", {}).get("layout_metadata", "")
+    try:
+        layout = read_json(layout_path)
+        truth = layout.get("danger_red_spheres", [])
+    except (OSError, ValueError, TypeError) as error:
+        failures.append("randomized red-ball truth metadata invalid: {}".format(error))
+        checks["all_scene_red_balls_detected"] = False
+        checks["every_room_red_ball_detected"] = False
+        return
+    expected_count = int(detection_config["expected_scene_red_balls"])
+    truth_ok = isinstance(truth, list) and len(truth) == expected_count
+    if not truth_ok:
+        failures.append("runtime truth contains {} red balls, expected {}".format(
+            len(truth) if isinstance(truth, list) else "invalid", expected_count))
+        checks["all_scene_red_balls_detected"] = False
+        checks["every_room_red_ball_detected"] = False
+        return
+    try:
+        matching = _maximum_truth_matching(
+            [item for item in detections if valid_event(item)], truth,
+            float(detection_config["matching_tolerance_m"]))
+    except (KeyError, IndexError, TypeError, ValueError) as error:
+        failures.append("red-ball truth matching failed: {}".format(error))
+        matching = {}
+    missing_truth = [str(truth[index].get("id", index))
+                     for index in range(len(truth)) if index not in matching]
+    all_truth_matched = not missing_truth
+    matched_rooms = {str(truth[index].get("room_id")) for index in matching}
+    expected_rooms = {str(item.get("room_id")) for item in truth}
+    missing_rooms = sorted(expected_rooms - matched_rooms)
+    every_room_matched = not missing_rooms
+    false_positive_count = max(0, len(detections) - len(matching))
+    checks["all_scene_red_balls_detected"] = all_truth_matched
+    checks["every_selected_danger_room_detected"] = every_room_matched
+    checks["zero_false_positive_dangers"] = false_positive_count == 0
+    checks["zero_false_negative_dangers"] = not missing_truth
+    if missing_truth:
+        failures.append(
+            "room-scan detections did not match all randomized red balls: {}"
+            .format(missing_truth))
+    if missing_rooms:
+        failures.append(
+            "selected danger rooms without a matched RGB-D detection: {}".format(
+                missing_rooms))
+    if false_positive_count:
+        failures.append("RGB-D detector produced {} false/duplicate positives".format(
+            false_positive_count))
+
+
+def bounded_room_recovery(room):
+    """Validate independently bounded audit refresh and danger rescan work."""
+    refresh_waypoints = set()
+    audits_by_waypoint = {}
+    for audit in room.get("runtime_3d_audits", []):
+        audits_by_waypoint.setdefault(
+            str(audit.get("waypoint")), []).append(bool(audit.get("passed")))
+    for waypoint, outcomes in audits_by_waypoint.items():
+        if any(not value for value in outcomes[:-1]) and outcomes[-1]:
+            refresh_waypoints.add(waypoint)
+    total_extra = int(room.get("extra_scan_count", 0))
+    audit_refreshes = int(room.get(
+        "runtime_audit_refresh_count", len(refresh_waypoints)))
+    danger_rescans = int(room.get(
+        "danger_rescan_count", max(0, total_extra - audit_refreshes)))
+    return bool(
+        audit_refreshes <= 1 and danger_rescans <= 1 and
+        total_extra == audit_refreshes + danger_rescans and
+        int(room.get("geometry_correction_count", 0)) <= 1 and
+        int(room.get("replan_count", 0)) <= 2 and
+        int(room.get("recovery_count", 0)) <= 2)
+
+
+def _physical_two_view_check(config, results_dir, failures, checks):
+    path = os.path.join(results_dir, "physical_two_view_room_evidence.json")
+    if not os.path.isfile(path):
+        failures.append("physical two-view room evidence is missing")
+        checks["all_12_physical_two_view_contracts"] = False
+        return
+    try:
+        payload = read_json(path)
+    except (OSError, ValueError) as error:
+        failures.append("physical two-view evidence is invalid: {}".format(error))
+        checks["all_12_physical_two_view_contracts"] = False
+        return
+    rooms = payload.get("rooms", [])
+    minimum_rotation = math.radians(210.0)
+    required_ids = {str(room) for floor in config.get("floors", [])
+                    for room in floor.get("expected_rooms", [])}
+    observed_ids = {str(room.get("room_id")) for room in rooms
+                    if isinstance(room, dict)}
+    records_ok = payload.get("status") == "completed" and observed_ids == required_ids
+    exit_ok = True
+    scan_ok = True
+    geometry_ok = True
+    runtime_audit_ok = True
+    bounded_recovery_ok = True
+    for room in rooms:
+        phases = room.get("phases", {})
+        viewpoints = room.get("viewpoints", {})
+        phase_times = []
+        for phase in ("ENTRY", "G3", "G4", "RETURN", "EXIT"):
+            item = phases.get(phase, {})
+            try:
+                start = float(item["start_ros_sim_time"])
+                end = float(item["end_ros_sim_time"])
+                phase_times.append((start, end))
+                if end < start:
+                    records_ok = False
+            except (KeyError, TypeError, ValueError):
+                records_ok = False
+        if len(phase_times) == 5:
+            for previous, current in zip(phase_times, phase_times[1:]):
+                if current[0] < previous[1] - 0.05:
+                    records_ok = False
+        scan_ok = scan_ok and all(
+            bool(viewpoints.get(role, {}).get("scan_completed")) and
+            float(viewpoints.get(role, {}).get("scan_rotation_rad", 0.0)) >= minimum_rotation
+            for role in ("G3", "G4"))
+        exit_ok = exit_ok and bool(
+            (room.get("door_plane_exit_evidence") or {}).get(
+                "physically_crossed"))
+        geometry_ok = geometry_ok and bool(
+            room.get("separation_ok") and room.get("room_geometry_ok") and
+            room.get("physical_two_view_contract_met"))
+        if room.get("viewpoint_policy") in {
+                "open_middle_deep_then_near_oblique",
+                "deep_obstacle_front_oblique_pair",
+                "front_obstacle_side_bypass_oblique"}:
+            semantic_ok = bool(
+                viewpoints.get("G3", {}).get("viewpoint_semantic") == "deep" and
+                viewpoints.get("G4", {}).get("viewpoint_semantic") == "near")
+            explicit_geometry_ok = bool(
+                room.get("depth_ok") and
+                room.get("lateral_and_central_band_ok") and
+                room.get("angle_ok") and
+                room.get("obstacle_relation_ok"))
+            correction_ok = int(room.get(
+                "geometry_correction_count", 0)) <= 1
+            geometry_ok = geometry_ok and semantic_ok and explicit_geometry_ok
+            bounded_recovery_ok = bounded_recovery_ok and correction_ok
+        latest = {}
+        for audit in room.get("runtime_3d_audits", []):
+            latest[str(audit.get("waypoint"))] = audit
+        runtime_audit_ok = runtime_audit_ok and bool(latest) and all(
+            bool(item.get("passed")) for item in latest.values())
+        # A short low-angle point-cloud refresh and a full camera danger
+        # rescan are different bounded mechanisms.  Older evidence combined
+        # both in ``extra_scan_count``; the helper reconstructs their split
+        # from the immutable audit sequence.
+        bounded_recovery_ok = (
+            bounded_recovery_ok and bounded_room_recovery(room))
+    checks["all_12_physical_two_view_contracts"] = records_ok and geometry_ok
+    checks["all_24_viewpoints_scanned_at_least_210deg"] = scan_ok
+    checks["all_12_rooms_physically_exited"] = exit_ok
+    checks["all_room_paths_passed_live_3d_audit"] = runtime_audit_ok
+    checks["room_recovery_is_bounded"] = bounded_recovery_ok
+    if not records_ok or not geometry_ok:
+        failures.append("not all 12 rooms proved their geometry-specific physical G3/G4 contract")
+    if not scan_ok:
+        failures.append("not all 24 physical viewpoints completed >=210 degree scans")
+    if not exit_ok:
+        failures.append("one or more rooms lack Gazebo door-plane EXIT evidence")
+    if not runtime_audit_ok:
+        failures.append("one or more room path segments lack a passing fresh 3-D audit")
+    if not bounded_recovery_ok:
+        failures.append("room local-rescan/replan/recovery count exceeded its bound")
+
+    detections_path = os.path.join(results_dir, "red_ball_detections.json")
+    detections = []
+    try:
+        detections = read_json(detections_path).get("detections", [])
+    except (OSError, ValueError, TypeError):
+        pass
+    by_room = {}
+    for item in detections:
+        by_room.setdefault(str(item.get("room_id")), []).append(int(
+            item.get("track_id", -1)))
+    enriched = []
+    for room in rooms:
+        item = dict(room)
+        item["danger_detection_track_ids"] = by_room.get(
+            str(room.get("room_id")), [])
+        enriched.append(item)
+    atomic_write_json(os.path.join(
+        results_dir, "physical_two_view_acceptance.json"), {
+            "schema": "scanplanner_physical_two_view_acceptance_v1",
+            "passed": all(checks.get(key, False) for key in (
+                "all_12_physical_two_view_contracts",
+                "all_24_viewpoints_scanned_at_least_210deg",
+                "all_12_rooms_physically_exited",
+                "all_room_paths_passed_live_3d_audit",
+                "room_recovery_is_bounded")),
+            "time_basis": "ros_simulation_time",
+            "rooms": enriched,
+        })
+
+
+def check_results(config, results_dir):
+    failures = []
+    checks = {}
+    result_layout_path = os.path.join(results_dir, "layout_metadata.json")
+    try:
+        result_layout = read_json(result_layout_path)
+        randomization_errors = validate_randomized_layout(config, result_layout)
+    except (OSError, ValueError, TypeError) as error:
+        randomization_errors = [
+            "result layout metadata is missing or invalid: {}".format(error)]
+    checks["distinct_reproducible_floor_scenes"] = not randomization_errors
+    failures.extend(randomization_errors)
+    floors = config["floors"]
+    tour_paths = (
+        os.path.join(results_dir, "tour_summary.json"),
+        os.path.join(results_dir, "second_floor", "tour_summary.json"),
+        os.path.join(results_dir, "third_floor", "tour_summary.json"),
+    )
+    for floor, path in zip(floors, tour_paths):
+        _tour_check(
+            path,
+            floor,
+            failures,
+            checks,
+        )
+
+    logs = os.path.join(results_dir, "logs")
+    _phase_check(
+        os.path.join(logs, "stair_transition.json"),
+        "SECOND_FLOOR_HANDOFF_COMPLETE",
+        "first_to_second_stair",
+        failures,
+        checks,
+    )
+    _phase_check(
+        os.path.join(logs, "second_to_third_floor_stair_transition.json"),
+        "THIRD_FLOOR_HANDOFF_COMPLETE",
+        "second_to_third_stair",
+        failures,
+        checks,
+    )
+    _phase_check(
+        os.path.join(logs, "stair_descent.json"),
+        "FIRST_FLOOR_RETURNED",
+        "third_to_first_descent",
+        failures,
+        checks,
+    )
+    _phase_check(
+        os.path.join(results_dir, "first_floor_returned.json"),
+        "FIRST_FLOOR_RETURNED",
+        "first_floor_return_marker",
+        failures,
+        checks,
+    )
+
+    timing = _timing_check(config, results_dir, failures, checks)
+    _spawn_check(config, timing, failures, checks)
+    _red_ball_check(config, results_dir, timing, failures, checks)
+    if physical_contract_enabled(config):
+        _physical_two_view_check(config, results_dir, failures, checks)
+
+    summary_path = os.path.join(results_dir, "three_floor_rl_mission_summary.json")
+    summary = None
+    if not os.path.isfile(summary_path):
+        failures.append("mission summary missing: {}".format(summary_path))
+        checks["mission_summary"] = False
+    else:
+        try:
+            summary = read_json(summary_path)
+        except (OSError, ValueError) as error:
+            failures.append("mission summary invalid: {}".format(error))
+            checks["mission_summary"] = False
+    if summary is not None:
+        summary_ok = summary.get("schema") == SUMMARY_SCHEMA and summary.get("status") == "completed"
+        checks["mission_summary"] = summary_ok
+        if not summary_ok:
+            failures.append(
+                "mission summary is not completed (schema={}, status={}, reason={})"
+                .format(summary.get("schema"), summary.get("status"),
+                        summary.get("failure_reason"))
+            )
+
+        kinds = []
+        for event in summary.get("policy_events", []):
+            kind = policy_kind(event.get("policy", event.get("status", "")))
+            if kind != "unknown" and (not kinds or kinds[-1] != kind):
+                kinds.append(kind)
+        required = [
+            "stair", "plane", "stair", "plane",
+            "stair", "plane", "stair", "plane",
+        ]
+        switch_ok = sequence_contains(kinds, required)
+        checks["rl_policy_switch_sequence"] = switch_ok
+        if not switch_ok:
+            failures.append(
+                "RL policy sequence {} does not contain {}".format(kinds, required)
+            )
+
+        pose = summary.get("final_truth_pose")
+        bounds = config["return_to_lobby"]["lobby_bounds"]
+        pose_ok = (
+            isinstance(pose, list) and len(pose) >= 3
+            and float(bounds["x_min"]) <= float(pose[0]) <= float(bounds["x_max"])
+            and float(bounds["y_min"]) <= float(pose[1]) <= float(bounds["y_max"])
+            and -0.2 <= float(pose[2]) <= 1.2
+        )
+        checks["final_pose_in_first_floor_lobby"] = pose_ok
+        if not pose_ok:
+            failures.append("final truth pose is not in the first-floor lobby: {!r}".format(pose))
+
+        expected_return = len(config["return_to_lobby"]["waypoints"])
+        actual_return = len(summary.get("return_waypoints", []))
+        return_ok = actual_return == expected_return
+        checks["lobby_return_route_complete"] = return_ok
+        if not return_ok:
+            failures.append(
+                "lobby return reached {} of {} waypoints".format(actual_return, expected_return)
+            )
+
+    return {
+        "schema": ACCEPTANCE_SCHEMA,
+        "passed": not failures,
+        "results_dir": os.path.abspath(results_dir),
+        "checks": checks,
+        "failure_reasons": failures,
+    }
+
+
+def build_parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--validate-config", action="store_true")
+    parser.add_argument("--require-runtime-files", action="store_true")
+    parser.add_argument("--emit-waypoints", type=int, choices=(1, 2, 3))
+    parser.add_argument(
+        "--emit-runtime",
+        choices=("world_file", "layout_metadata", "stair_model_sdf",
+                 "plane_policy", "stair_policy"),
+    )
+    parser.add_argument("--results")
+    parser.add_argument("--output")
+    return parser
+
+
+def main():
+    args = build_parser().parse_args()
+    try:
+        config = read_json(args.config)
+    except (OSError, ValueError) as error:
+        print("invalid config: {}".format(error), file=sys.stderr)
+        return 2
+    errors = validate_config(config, require_runtime_files=args.require_runtime_files)
+    if errors:
+        for error in errors:
+            print("config error: {}".format(error), file=sys.stderr)
+        return 2
+
+    if args.emit_waypoints is not None:
+        floor = next(
+            item for item in config["floors"]
+            if int(item["floor_number"]) == args.emit_waypoints
+        )
+        print(json.dumps(floor["waypoints"], separators=(",", ":"), sort_keys=True))
+        return 0
+    if args.emit_runtime is not None:
+        print(config["runtime"][args.emit_runtime])
+        return 0
+    if args.results:
+        acceptance = check_results(config, args.results)
+        output = args.output or os.path.join(
+            args.results, "three_floor_rl_acceptance.json"
+        )
+        atomic_write_json(output, acceptance)
+        print(json.dumps(acceptance, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if acceptance["passed"] else 1
+    if args.validate_config:
+        total = sum(route_length(floor["waypoints"]) for floor in config["floors"])
+        print("valid three-floor RL mission: 3 floors, 12 rooms, {:.1f} m floor route".format(total))
+        return 0
+    print("choose --validate-config, --emit-waypoints, --emit-runtime, or --results", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

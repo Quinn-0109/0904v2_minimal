@@ -1,0 +1,8 @@
+prefix=/workspace/0904_v2/SimEnv-master/.portable/devel
+
+Name: livox_laser_simulation
+Description: Description of livox_laser_simulation
+Version: 0.0.0
+Cflags: -I/workspace/0904_v2/SimEnv-master/src/Mid360_imu_sim/include
+Libs: -L${prefix}/lib -llivox_laser_simulation
+Requires: tf

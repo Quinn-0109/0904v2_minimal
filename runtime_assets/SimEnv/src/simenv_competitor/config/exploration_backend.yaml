@@ -1,0 +1,30 @@
+explorer_backend: fuel_lite
+explorer_fallback_order:
+  - fuel_lite
+  - astar_frontier
+
+ufo_cloud_range: 8.0
+ufo_cloud_min_z: -0.5
+ufo_cloud_max_z: 2.5
+ufo_output_timeout: 5.0
+ufo_failure_limit: 3
+fallback_recover_after_seconds: 30.0
+
+corridor_semantics_enabled: true
+corridor_search_radius: 8.0
+corridor_minimum_width: 1.0
+corridor_maximum_width: 4.0
+corridor_minimum_visible_length: 4.0
+corridor_confirmation_frames: 3
+corridor_path_selection_window: 1.0
+corridor_semantic_startup_wait: 6.0
+
+min_effective_waypoint_distance: 0.6
+max_local_execution_horizon: 3.0
+waypoint_spacing: 0.45
+scan_lite_unknown_policy: penalize
+
+velocity_stall_timeout: 5.0
+velocity_linear_threshold: 0.03
+velocity_angular_threshold: 0.05
+velocity_displacement_threshold: 0.05

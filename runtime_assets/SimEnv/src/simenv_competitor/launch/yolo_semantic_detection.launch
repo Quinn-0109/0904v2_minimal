@@ -1,0 +1,47 @@
+<launch>
+  <arg name="output_dir"
+       default="$(find simenv_competitor)/../../results/yolo_semantic_detection_run1"/>
+  <arg name="model_path"
+       default="$(find simenv_competitor)/../../model/red_ball_yolov8s/weights/best.pt"/>
+  <arg name="python_site_packages"
+       default="/root/miniconda3/lib/python3.8/site-packages"/>
+  <arg name="python_executable"
+       default="/root/miniconda3/bin/python3"/>
+  <arg name="device" default="auto"/>
+  <arg name="confidence" default="0.35"/>
+  <arg name="processing_rate_hz" default="2.0"/>
+  <arg name="room_only_gate" default="true"/>
+  <arg name="publish_red_ball_observations" default="true"/>
+  <arg name="odom_topic" default="/simenv/fastlio_stabilized_odometry"/>
+  <arg name="rgb_topic" default="/real_sense/rgb/image_raw"/>
+  <arg name="depth_topic" default="/real_sense/depth/image_raw"/>
+  <arg name="camera_info_topic" default="/real_sense/rgb/camera_info"/>
+
+  <node pkg="simenv_competitor" type="yolo_semantic_detector.py"
+        name="yolo_semantic_detector" output="screen" required="false"
+        launch-prefix="$(arg python_executable)">
+    <env name="PYTHONPATH"
+         value="$(arg python_site_packages):/opt/ros/noetic/lib/python3/dist-packages:/usr/lib/python3/dist-packages"/>
+    <env name="LD_LIBRARY_PATH"
+         value="$(arg python_site_packages)/torch/lib:$(env LD_LIBRARY_PATH)"/>
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="model_path" value="$(arg model_path)"/>
+    <param name="python_site_packages" value="$(arg python_site_packages)"/>
+    <param name="device" value="$(arg device)"/>
+    <param name="confidence" value="$(arg confidence)"/>
+    <param name="processing_rate_hz" value="$(arg processing_rate_hz)"/>
+    <param name="red_ball_min_confidence" value="0.70"/>
+    <param name="room_only_gate" value="$(arg room_only_gate)"/>
+    <param name="publish_red_ball_observations"
+           value="$(arg publish_red_ball_observations)"/>
+    <param name="odom_topic" value="$(arg odom_topic)"/>
+    <param name="rgb_topic" value="$(arg rgb_topic)"/>
+    <param name="depth_topic" value="$(arg depth_topic)"/>
+    <param name="camera_info_topic" value="$(arg camera_info_topic)"/>
+    <param name="maximum_pose_sync_error_sec" value="0.20"/>
+    <param name="maximum_depth_sync_error_sec" value="0.25"/>
+    <param name="maximum_pose_jump_m" value="0.75"/>
+    <param name="pose_jump_hold_seconds" value="1.0"/>
+    <param name="max_depth" value="8.0"/>
+  </node>
+</launch>

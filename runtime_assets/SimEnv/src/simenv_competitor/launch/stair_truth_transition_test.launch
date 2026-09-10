@@ -1,0 +1,33 @@
+<launch>
+  <!-- Isolated acceptance test for the stair-only truth bridge.  It starts on
+       the F1-side landing, guides to the physical first tread, then validates
+       both flights and second-floor height.  No first-floor manager/executor
+       runs in this launch. -->
+  <arg name="output_dir" default="$(find simenv_competitor)/../../results/stair_truth_transition_test_run1"/>
+  <arg name="ascent_timeout_sec" default="55.0"/>
+  <env name="GAZEBO_MODEL_PATH"
+       value="$(find simenv_competitor)/../../generated_building/models:$(optenv GAZEBO_MODEL_PATH)"/>
+  <include file="$(find simenv_competitor)/launch/baseline_fastlio_exploration.launch">
+    <arg name="output_dir" value="$(arg output_dir)"/>
+    <arg name="world_file" value="$(find simenv_competitor)/../../generated_building/stair_test/competition_scene.world"/>
+    <arg name="offline_stair_model_sdf" value="$(find simenv_competitor)/../../generated_building/stair_test/competition_scene.world"/>
+    <arg name="rl_policy" value="$(find unitree_guide)/../../logs/policy_act_inference_stair.pt"/>
+    <arg name="maximum_duration" value="120.0"/>
+    <arg name="maximum_goals" value="1"/>
+    <arg name="enable_realsense" value="false"/>
+    <arg name="robot_spawn_x" value="-4.015"/>
+    <arg name="robot_spawn_y" value="1.50"/>
+    <arg name="robot_spawn_z" value="0.09"/>
+    <arg name="robot_spawn_yaw" value="1.5708"/>
+    <arg name="stair_auto_start" value="true"/>
+    <arg name="stair_truth_entry_guide" value="true"/>
+    <arg name="stair_policy_preloaded" value="true"/>
+    <arg name="stair_skip_approach" value="false"/>
+    <arg name="stair_ascent_timeout_sec" value="$(arg ascent_timeout_sec)"/>
+    <arg name="stair_ascent_speed_mps" value="0.80"/>
+    <arg name="stair_ascent_maximum_speed_mps" value="0.80"/>
+    <arg name="stair_world_frame_ascent" value="true"/>
+    <arg name="two_flight_stair" value="true"/>
+    <arg name="enable_goal_executor" value="false"/>
+  </include>
+</launch>

@@ -1,0 +1,175 @@
+<launch>
+  <!-- Official TARE is the sole exploration decision maker.  The refiner
+       below only validates its waypoint or falls back to a pose from
+       Official TARE's own published exploration path. -->
+  <arg name="world_frame" default="map"/>
+  <arg name="scenario" default="indoor"/>
+  <arg name="output_dir"
+       default="$(find simenv_competitor)/../../results/tare_far_exploration"/>
+
+  <node pkg="simenv_competitor" type="tare_interface.py"
+        name="tare_interface" output="screen" required="true">
+    <param name="world_frame" value="$(arg world_frame)"/>
+    <param name="map_topic" value="/simenv/voxel_floor_projection"/>
+    <param name="odom_topic" value="/Odometry"/>
+    <param name="registered_scan_topic" value="/cloud_registered"/>
+    <param name="local_terrain_radius" value="15.0"/>
+    <param name="free_cell_stride" value="2"/>
+    <param name="occupied_cell_stride" value="1"/>
+    <param name="occupied_threshold" value="50"/>
+    <param name="synthetic_terrain_enabled" value="false"/>
+    <!-- This limits the scan used by TARE/terrain_analysis, not the FAST-LIO
+         mapping cloud.  It prevents remote rays through a doorway from
+         completing a room before the robot has entered it. -->
+    <param name="scan_max_range" value="4.2"/>
+  </node>
+
+  <!-- Use the actual CMU ground terrain-analysis pipeline.  The previous
+       OccupancyGrid conversion dropped unknown cells and placed every terrain
+       point at one synthetic height, so TARE never formed valid viewpoints
+       through room openings. -->
+  <node pkg="terrain_analysis" type="terrainAnalysis"
+        name="terrain_analysis" output="screen" required="true">
+    <remap from="/state_estimation" to="/tare/state_estimation_at_scan"/>
+    <remap from="/registered_scan" to="/tare/registered_scan"/>
+    <remap from="/terrain_map" to="/tare/terrain_map"/>
+    <param name="scanVoxelSize" type="double" value="0.10"/>
+    <param name="decayTime" type="double" value="4.0"/>
+    <param name="noDecayDis" type="double" value="3.0"/>
+    <param name="clearingDis" type="double" value="8.0"/>
+    <param name="useSorting" type="bool" value="true"/>
+    <param name="quantileZ" type="double" value="0.20"/>
+    <param name="considerDrop" type="bool" value="false"/>
+    <param name="limitGroundLift" type="bool" value="true"/>
+    <param name="maxGroundLift" type="double" value="0.12"/>
+    <param name="clearDyObs" type="bool" value="false"/>
+    <param name="noDataObstacle" type="bool" value="false"/>
+    <param name="minBlockPointNum" type="int" value="3"/>
+    <param name="vehicleHeight" type="double" value="1.0"/>
+    <param name="minRelZ" type="double" value="-0.70"/>
+    <param name="maxRelZ" type="double" value="0.35"/>
+    <param name="disRatioZ" type="double" value="0.10"/>
+  </node>
+
+  <!-- TARE/FAR require local and extended terrain topics.  CMU's ground
+       terrain_analysis publishes a rolling 10 m terrain map; reuse that real
+       terrain for the extended collision input instead of the old synthetic
+       OccupancyGrid cloud. -->
+  <node pkg="topic_tools" type="relay" name="terrain_map_ext_relay"
+        args="/tare/terrain_map /tare/terrain_map_ext"
+        output="screen" required="true"/>
+
+  <node pkg="tare_planner" type="tare_planner_node"
+        name="tare_planner_node" ns="sensor_coverage_planner"
+        output="screen" required="true">
+    <rosparam command="load"
+              file="$(find tare_planner)/config/$(arg scenario).yaml"/>
+    <param name="sub_state_estimation_topic_"
+           value="/tare/state_estimation_at_scan"/>
+    <param name="sub_registered_scan_topic_" value="/tare/registered_scan"/>
+    <param name="sub_terrain_map_topic_" value="/tare/terrain_map"/>
+    <param name="sub_terrain_map_ext_topic_" value="/tare/terrain_map_ext"/>
+    <param name="pub_waypoint_topic_" value="/tare/way_point"/>
+    <param name="kAutoStart" value="true"/>
+    <param name="kNoExplorationReturnHome" value="true"/>
+    <!-- SimEnv indoor tuning of Official TARE.  Keep the range below the
+         room depth so doorway observations cannot complete a room from the
+         corridor, but make each in-room viewpoint cover enough area to avoid
+         dense, low-marginal-gain sampling. -->
+    <param name="kSensorRange" value="4.2"/>
+    <param name="kLineOfSightStopAtNearestObstacle" value="true"/>
+    <!-- Keep Official TARE's indoor cell-gain thresholds.  Raising these to
+         80/120 made the narrow entrance/corridor subspaces look covered even
+         while the official uncovered-frontier cloud still contained points
+         farther inside the building.  The three-viewpoint cap below controls
+         room density without hiding low-area doorway connectivity. -->
+    <param name="kMinAddPointNumSmall" value="40"/>
+    <param name="kMinAddPointNumBig" value="60"/>
+    <!-- Select the maximum residual-gain viewpoint instead of randomly
+         sampling one of the top three.  With deterministic greedy selection,
+         repeated local optimization trials produce the same viewpoint set. -->
+    <param name="kGreedyViewPointSampleRange" value="1"/>
+    <param name="kLocalPathOptimizationItrMax" value="1"/>
+    <!-- Bound the autonomous local set-cover tour to three high-gain points.
+         Their positions still come exclusively from Official TARE. -->
+    <param name="kMaxLocalCoverageViewPointNum" value="3"/>
+    <param name="kLookAheadDistance" value="3.0"/>
+    <param name="kExtendWayPointDistanceBig" value="2.5"/>
+    <param name="kExtendWayPointDistanceSmall" value="1.5"/>
+    <param name="kFrontierClusterMinSize" value="5"/>
+    <param name="kMinAddFrontierPointNum" value="8"/>
+    <param name="kViewPointCollisionMargin" value="0.35"/>
+    <!-- 40 * 0.5 / 5 = 4 m GridWorld cells instead of the stock 6 m
+         cells.  In a corridor/room layout this keeps lateral unknown space
+         in distinct official TARE subspaces without using door priors. -->
+    <param name="viewpoint_manager/number_x" value="40"/>
+    <param name="viewpoint_manager/number_y" value="40"/>
+    <param name="viewpoint_manager/resolution_x" value="0.5"/>
+    <param name="viewpoint_manager/resolution_y" value="0.5"/>
+    <param name="kNeighborRange" value="2.0"/>
+  </node>
+
+  <!-- Observation-only telemetry for Official TARE internals.  This records
+       frontier/viewpoint/path selection and publishes no control topics. -->
+  <node pkg="simenv_competitor" type="tare_planner_diagnostics.py"
+        name="tare_planner_diagnostics" output="screen">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="cloud_sample_period" value="1.0"/>
+  </node>
+
+  <!-- Stabilize Official TARE's rolling waypoint stream.  This node cannot
+       create goals: it only accepts, rejects, or holds an original TARE
+       waypoint according to execution commitment and map-derived gain. -->
+  <node pkg="simenv_competitor" type="tare_goal_arbitrator.py"
+        name="tare_goal_arbitrator" output="screen" required="true">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="tare_goal_topic" value="/tare/way_point"/>
+    <param name="arbitrated_goal_topic"
+           value="/tare/arbitrated_way_point"/>
+    <param name="arbitration_status_topic"
+           value="/tare/arbitration_status"/>
+    <param name="odom_topic" value="/tare/state_estimation_at_scan"/>
+    <param name="map_topic" value="/simenv/voxel_floor_projection"/>
+    <param name="far_status_topic" value="/simenv/tare_far_status"/>
+    <param name="execution_result_topic"
+           value="/simenv/goal_execution_result"/>
+    <param name="current_navigation_goal_topic"
+           value="/hybrid_exploration_goal"/>
+    <param name="min_goal_commit_time" value="12.0"/>
+    <param name="preemption_ratio" value="1.30"/>
+    <param name="preemption_absolute_gain" value="3.0"/>
+    <param name="backward_penalty" value="5.0"/>
+    <param name="active_region_radius" value="4.0"/>
+    <param name="local_exploration_depth" value="3.0"/>
+    <param name="minimum_unknown_area_to_continue" value="3.0"/>
+    <param name="minimum_frontier_cells_to_continue" value="8"/>
+    <param name="maximum_failures" value="3"/>
+    <param name="max_supersede_per_minute" value="5"/>
+    <param name="forced_commit_duration" value="15.0"/>
+    <param name="failed_goal_blacklist_duration" value="20.0"/>
+  </node>
+
+  <!-- Validate accepted TARE waypoints before FAR sees them.  This node does
+       not perform frontier scoring or create exploration targets. -->
+  <node pkg="simenv_competitor" type="tare_goal_refiner.py"
+        name="tare_goal_refiner" output="screen" required="true">
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="tare_goal_topic" value="/tare/arbitrated_way_point"/>
+    <param name="refined_goal_topic" value="/refined_exploration_goal"/>
+    <param name="map_topic" value="/simenv/voxel_floor_projection"/>
+    <param name="odom_topic" value="/tare/state_estimation_at_scan"/>
+    <param name="scan_service"
+           value="/tare_far_voxel_mapper/check_twin_cylinder"/>
+    <param name="goal_clearance" value="0.32"/>
+    <!-- TARE viewpoints may be on the unknown side of a frontier.  They are
+         still required to have an observed-free A* route before forwarding.
+         An invalid endpoint may only receive a nearby free-space repair;
+         FAR and SCAN-lite remain the runtime validators. -->
+    <param name="allow_unknown_tare_goal" value="true"/>
+    <param name="astar_clearance" value="0.30"/>
+    <param name="astar_maximum_expansions" value="100000"/>
+    <param name="astar_allow_blocked_start" value="true"/>
+    <param name="local_shift_max" value="0.75"/>
+    <param name="local_shift_step" value="0.15"/>
+  </node>
+</launch>
