@@ -396,7 +396,13 @@
     <param name="output_dir" value="$(arg output_dir)"/>
     <param name="startup_timeout_sec" value="240.0"/>
     <param name="waypoint_timeout_sec" value="150.0"/>
-    <param name="progress_timeout_sec" value="45.0"/>
+    <!-- A room leg now reports heading progress during its align_yaw
+         rotation, so this no longer has to cover the whole 6.9 s of a
+         worst-case 180-degree alignment at 0.45 rad/s.  The longest
+         remaining window without any progress signal is the ~3.8 s spent
+         turning onto the travel heading, so 15 s keeps a 4x margin while
+         costing a third of what a stall used to. -->
+    <param name="progress_timeout_sec" value="15.0"/>
     <param name="maximum_replans" value="2"/>
     <param name="minimum_upright_z" value="0.55"/>
     <param name="minimum_upright_duration_sec" value="0.60"/>
@@ -430,6 +436,8 @@
          command is reissued until the progress timeout ends the mission.
          Give those legs the same bounded zero-hold escape. -->
     <param name="stall_recovery_max_attempts" value="2"/>
+    <param name="stall_recovery_speed_mps" value="0.16"/>
+    <param name="stall_recovery_hold_sec" value="0.6"/>
     <param name="plane_fast_takeover" value="true"/>
     <param name="plane_fast_takeover_blend_seconds" value="0.50"/>
     <param name="plane_fast_takeover_zero_hold_seconds" value="0.15"/>

@@ -1239,6 +1239,10 @@ class ThreeFloorRLMissionTest(unittest.TestCase):
             encoding="utf-8")
         self.assertIn(
             '<param name="stall_recovery_max_attempts" value="2"/>', launch)
+        self.assertIn(
+            '<param name="stall_recovery_speed_mps" value="0.16"/>', launch)
+        self.assertIn(
+            '<param name="stall_recovery_hold_sec" value="0.6"/>', launch)
         sequencer_source = (
             ROOT / "scripts" / "scanplanner_three_floor_goal_sequencer.py"
         ).read_text(encoding="utf-8")
@@ -1247,6 +1251,13 @@ class ThreeFloorRLMissionTest(unittest.TestCase):
         self.assertIn("self._stall_recovery_max_attempts", sequencer_source)
         self.assertNotIn(
             "if (entrance_mode and stall_recoveries <", sequencer_source)
+        # A room leg must report progress while it rotates onto align_yaw,
+        # and a leg without align_yaw must not be handed an infinite one:
+        # inf <= inf - 0.08 is true and would disable the watchdog there.
+        self.assertNotIn(
+            "heading_error = float(\"inf\")\n            if plane_upright_hold",
+            sequencer_source)
+        self.assertIn("math.isfinite(heading_error)", sequencer_source)
 
     def test_launch_and_runners_use_real_rl_and_isolated_container(self):
         launch = (ROOT / "launch" / "scanplanner_three_floor_rl.launch").read_text(

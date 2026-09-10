@@ -505,6 +505,14 @@ class ThreeFloorGoalSequencer:
         self._stall_recovery_max_attempts = max(
             0, int(rospy.get_param(
                 "~stall_recovery_max_attempts", 2)))
+        # Backing out along the command that led into the deadlock changes the
+        # contact state; merely dropping the command leaves the policy free to
+        # re-enter the same gait.  Values match the executor this task ran
+        # before the direct-RL sequencer replaced it.
+        self._stall_recovery_speed = max(
+            0.0, float(rospy.get_param("~stall_recovery_speed_mps", 0.16)))
+        self._stall_recovery_hold = max(
+            0.0, float(rospy.get_param("~stall_recovery_hold_sec", 0.6)))
         self._plane_fast_takeover = bool(rospy.get_param(
             "~plane_fast_takeover", True))
         self._plane_fast_blend = max(
@@ -1358,7 +1366,14 @@ class ThreeFloorGoalSequencer:
                             distance_gain
                             if policy_kind_name == "plane" else 0.70),
                         translation_heading_limit=0.16)
-                heading_error = float("inf")
+                # Every room viewpoint carries align_yaw, so the leg ends
+                # with an in-place rotation during which the distance cannot
+                # fall.  Without a heading signal that rotation looks exactly
+                # like a stall, which is why the timeout had to stay long.
+                heading_error = (
+                    abs(normalize_angle(
+                        float(target_yaw) - float(pose[3])))
+                    if target_yaw is not None else float("inf"))
             if plane_upright_hold:
                 forward = 0.0
                 lateral = 0.0
@@ -1369,8 +1384,11 @@ class ThreeFloorGoalSequencer:
                 return pose, distance, stall_recoveries
             self._publish_scan(True, yaw_rate, forward, lateral)
             distance_progress = distance <= best_distance - self._progress_distance
+            # A leg without align_yaw keeps heading_error at infinity, and
+            # inf <= inf - 0.08 is true, so an unguarded comparison would
+            # report progress on every tick and disable the watchdog there.
             heading_progress = (
-                entrance_mode and
+                math.isfinite(heading_error) and
                 heading_error <= best_heading_error - 0.08)
             if distance_progress or heading_progress:
                 best_distance = distance
@@ -1398,7 +1416,23 @@ class ThreeFloorGoalSequencer:
                         entrance_mode=bool(entrance_mode),
                         distance_m=round(distance, 4),
                         heading_error_rad=round(heading_error, 4))
-                    self._sleep(self._entrance_recovery_hold)
+                    if entrance_mode:
+                        self._sleep(self._entrance_recovery_hold)
+                    else:
+                        magnitude = math.hypot(forward, lateral)
+                        if magnitude > 1.0e-6:
+                            back = (
+                                -self._stall_recovery_speed * forward / magnitude,
+                                -self._stall_recovery_speed * lateral / magnitude)
+                        else:
+                            back = (-self._stall_recovery_speed, 0.0)
+                        backoff_deadline = (
+                            time.monotonic() + self._stall_recovery_hold)
+                        while (not rospy.is_shutdown() and
+                               time.monotonic() < backoff_deadline):
+                            self._publish_scan(True, 0.0, back[0], back[1])
+                            time.sleep(1.0 / self._rate_hz)
+                        self._publish_scan(False)
                     best_distance = distance
                     best_heading_error = heading_error
                     progress_deadline = time.monotonic() + progress_timeout
