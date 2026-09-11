@@ -15,7 +15,6 @@ MISSION_CONFIG="${MISSION_CONFIG:-$PACKAGE_DIR/config/three_floor_rl_mission.jso
 CHECKER="$SCRIPT_DIR/check_three_floor_rl_mission.py"
 SCENE_PREPARER="$SCRIPT_DIR/prepare_three_floor_scene.py"
 SCENE_RANDOMIZER="$SCRIPT_DIR/randomize_three_floor_scene.py"
-OFFICIAL_SCENE_GENERATOR="$SIMENV_ASSET_ROOT/src/building_obstacles/scripts/generate_competition_scene.py"
 CONTROLLER_OVERLAY="$PACKAGE_DIR/vendor/unitree_guide_controller"
 CONTROLLER_PACKAGE="$SIMENV_ROOT/src/unitree_guide/unitree_guide/unitree_guide"
 RUN_NAME="${1:-scanplanner_three_floor_rl_$(date +%Y%m%d_%H%M%S)}"
@@ -199,10 +198,6 @@ test -f "$SCENE_RANDOMIZER" || {
   echo "ERROR: scene randomizer is missing: $SCENE_RANDOMIZER" >&2
   exit 2
 }
-test -f "$OFFICIAL_SCENE_GENERATOR" || {
-  echo "ERROR: official scene generator is missing: $OFFICIAL_SCENE_GENERATOR" >&2
-  exit 2
-}
 SOURCE_MISSION_CONFIG="$MISSION_CONFIG"
 resolve_runtime_asset() {
   local configured="$1"
@@ -226,34 +221,10 @@ resolve_runtime_asset() {
   echo "Set SIMENV_ASSET_ROOT to a SimEnv tree containing generated_building." >&2
   return 2
 }
+SOURCE_WORLD_FILE="$(resolve_runtime_asset "$(python3 "$CHECKER" --config "$SOURCE_MISSION_CONFIG" --emit-runtime world_file)")"
+SOURCE_LAYOUT_METADATA="$(resolve_runtime_asset "$(python3 "$CHECKER" --config "$SOURCE_MISSION_CONFIG" --emit-runtime layout_metadata)")"
+SOURCE_STAIR_MODEL_SDF="$(resolve_runtime_asset "$(python3 "$CHECKER" --config "$SOURCE_MISSION_CONFIG" --emit-runtime stair_model_sdf)")"
 THREE_FLOOR_SCENE_DIR="/tmp/simenv_bridge_three_floor_scene/$RUN_NAME"
-# The building, the danger spheres and the distractors all come from the
-# official generator now, run once per seed the way auto.sh runs it, instead
-# of a checked-in building the randomizer dressed itself.  It writes the
-# world, the building model and the layout the preparer already consumes.
-OFFICIAL_SCENE_DIR="$THREE_FLOOR_SCENE_DIR/official_scene"
-OFFICIAL_RESULTS_DIR="$THREE_FLOOR_SCENE_DIR/results"
-mkdir -p "$OFFICIAL_SCENE_DIR" "$OFFICIAL_RESULTS_DIR"
-python3 "$OFFICIAL_SCENE_GENERATOR" \
-  --output-dir "$OFFICIAL_SCENE_DIR" \
-  --results-dir "$OFFICIAL_RESULTS_DIR" \
-  --seed "$THREE_FLOOR_SEED_OFFSET" \
-  >/tmp/scanplanner_official_scene.json
-SOURCE_WORLD_FILE="$OFFICIAL_SCENE_DIR/competition_scene.world"
-SOURCE_LAYOUT_METADATA="$OFFICIAL_SCENE_DIR/layout_metadata.json"
-SOURCE_STAIR_MODEL_SDF="$OFFICIAL_SCENE_DIR/model.sdf"
-for official_asset in "$SOURCE_WORLD_FILE" "$SOURCE_LAYOUT_METADATA" \
-                      "$SOURCE_STAIR_MODEL_SDF"; do
-  test -f "$official_asset" || {
-    echo "ERROR: official generator did not write $official_asset" >&2
-    exit 2
-  }
-done
-# The generator drops a second copy of the truth beside the layout.  Delete
-# it: the planner resolves danger_truth.json relative to the layout, so
-# removing it makes "the route never sees the answer" structural rather than
-# a promise.  $OFFICIAL_RESULTS_DIR keeps the referee copy for scoring.
-rm -f "$OFFICIAL_SCENE_DIR/danger_truth.json"
 python3 "$SCENE_PREPARER" \
   --world "$SOURCE_WORLD_FILE" \
   --model "$SOURCE_STAIR_MODEL_SDF" \
@@ -520,14 +491,13 @@ CHECK_RC=$?
 # record leaves the truth questions unanswered.  Settle them here, the way a
 # referee would, against the copy the generator wrote for exactly this.
 SCORE_RC=0
-if [ -f "$OFFICIAL_RESULTS_DIR/danger_truth.json" ]; then
+OFFICIAL_TRUTH_FILE="$(dirname "$LAYOUT_METADATA")/danger_truth.json"
+if [ -f "$OFFICIAL_TRUTH_FILE" ]; then
   python3 "$SCRIPT_DIR/score_official_danger_truth.py" \
-    --results "$RESULTS_DIR" \
-    --truth "$OFFICIAL_RESULTS_DIR/danger_truth.json" || SCORE_RC=$?
-  cp "$OFFICIAL_RESULTS_DIR/danger_truth.json" \
-    "$RESULTS_DIR/official_danger_truth.json"
+    --results "$RESULTS_DIR" --truth "$OFFICIAL_TRUTH_FILE" || SCORE_RC=$?
+  cp "$OFFICIAL_TRUTH_FILE" "$RESULTS_DIR/official_danger_truth.json"
 else
-  echo "[three-floor] official referee truth is missing; scoring skipped" >&2
+  echo "[three-floor] official referee truth not found beside the layout; scoring skipped" >&2
   SCORE_RC=2
 fi
 set -e

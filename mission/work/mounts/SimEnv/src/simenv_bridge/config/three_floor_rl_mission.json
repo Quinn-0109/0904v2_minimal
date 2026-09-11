@@ -587,8 +587,7 @@
     "scan_point_minimum_turn_rad": 0.4,
     "scan_start_yaw_uncertainty_rad": 0.18,
     "scan_turn_rad": 1.9,
-    "scan_yaw_rate_rad_s": 2.9,
-    "consume_official_scene": true
+    "scan_yaw_rate_rad_s": 2.9
   },
   "schema": "scanplanner_three_floor_rl_mission_v1",
   "spawn_pose": {
