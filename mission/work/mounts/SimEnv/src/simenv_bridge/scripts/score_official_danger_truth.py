@@ -32,7 +32,28 @@ def read_json(path):
         return json.load(stream)
 
 
+DEFAULT_TOLERANCE = 1.5
 PREFIX = "referee scoring: "
+
+
+def resolve_tolerance(args):
+    """Score on the radius the run was configured with, not a second one.
+
+    A tolerance hardcoded here drifts silently from the config the detector
+    and the acceptance check use, and the two would then disagree about what
+    counts as the same sphere.
+    """
+    if args.tolerance is not None:
+        return float(args.tolerance), "command line"
+    config = args.config or os.path.join(args.results, "mission_config.json")
+    try:
+        value = read_json(config)["red_ball_detection"]["matching_tolerance_m"]
+        return float(value), config
+    except (OSError, ValueError, KeyError, TypeError):
+        sys.stderr.write(
+            "warning: no matching_tolerance_m in {}; scoring at {} m\n".format(
+                config, DEFAULT_TOLERANCE))
+        return DEFAULT_TOLERANCE, "built-in default"
 
 
 def update_acceptance(path, score):
@@ -80,7 +101,14 @@ def main():
     parser.add_argument("--truth", required=True,
                         help="Official danger_truth.json written for the referee.")
     parser.add_argument("--detections", default="red_ball_detections.json")
-    parser.add_argument("--tolerance", type=float, default=1.5)
+    parser.add_argument(
+        "--tolerance", type=float,
+        help="Match radius in metres.  Defaults to the run's own "
+             "red_ball_detection.matching_tolerance_m so the verdict cannot "
+             "be judged on a looser radius than the run was configured for.")
+    parser.add_argument("--config", help="Mission config to read the "
+                        "tolerance from.  Defaults to mission_config.json in "
+                        "the results directory.")
     parser.add_argument("--output")
     parser.add_argument(
         "--acceptance",
@@ -89,6 +117,7 @@ def main():
     args = parser.parse_args()
 
     checker = _load_checker()
+    tolerance, tolerance_source = resolve_tolerance(args)
     payload = read_json(os.path.join(args.results, args.detections))
     detections = [item for item in payload.get("detections", [])
                   if isinstance(item.get("position"), (list, tuple))]
@@ -100,7 +129,7 @@ def main():
         truth.append(record)
 
     matching = checker._maximum_truth_matching(
-        detections, truth, float(args.tolerance))
+        detections, truth, tolerance)
     matched_truth = set(matching)
     missed = [truth[index].get("model_name", truth[index].get("id", index))
               for index in range(len(truth)) if index not in matched_truth]
@@ -119,7 +148,8 @@ def main():
         "false_negatives": len(missed),
         "missed_sources": missed,
         "rooms_with_a_missed_source": rooms_missed,
-        "matching_tolerance_m": float(args.tolerance),
+        "matching_tolerance_m": tolerance,
+        "matching_tolerance_source": tolerance_source,
         "passed": not missed and not false_positives,
     }
     destination = args.output or os.path.join(
