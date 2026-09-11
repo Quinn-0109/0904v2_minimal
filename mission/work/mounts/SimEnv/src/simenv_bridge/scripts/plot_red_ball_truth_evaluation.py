@@ -255,6 +255,10 @@ def main():
             for source in read_json(referee).get("danger_sources", []):
                 record = dict(source)
                 record["pose"] = list(source.get("position", []))
+                # The layout records this script was written against carry the
+                # model name as "id"; the referee truth puts an integer there
+                # and the name in "model_name".  Labels call .replace on it.
+                record["id"] = source.get("model_name", source.get("id"))
                 truth.append(record)
             red_distractors = [
                 dict(item, pose=list(item.get("position", [])))

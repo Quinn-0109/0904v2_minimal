@@ -598,7 +598,8 @@ def generate(results_dir, output_dir):
         if referee.is_file():
             truth_payload = read_json(referee, required=False) or {}
             layout["danger_red_spheres"] = [
-                dict(source, pose=list(source.get("position", [])))
+                dict(source, pose=list(source.get("position", [])),
+                     id=source.get("model_name", source.get("id")))
                 for source in truth_payload.get("danger_sources", [])]
             layout["red_distractors"] = [
                 dict(item, pose=list(item.get("position", [])))
