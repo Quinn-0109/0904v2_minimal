@@ -491,7 +491,10 @@ CHECK_RC=$?
 # record leaves the truth questions unanswered.  Settle them here, the way a
 # referee would, against the copy the generator wrote for exactly this.
 SCORE_RC=0
-OFFICIAL_TRUTH_FILE="$(dirname "$LAYOUT_METADATA")/danger_truth.json"
+# SOURCE_LAYOUT_METADATA, not LAYOUT_METADATA: the latter is the planner's
+# own output directory under /tmp, which holds no truth.  The scene the
+# generator built is where danger_truth.json lives.
+OFFICIAL_TRUTH_FILE="$(dirname "$SOURCE_LAYOUT_METADATA")/danger_truth.json"
 if [ -f "$OFFICIAL_TRUTH_FILE" ]; then
   python3 "$SCRIPT_DIR/score_official_danger_truth.py" \
     --results "$RESULTS_DIR" --truth "$OFFICIAL_TRUTH_FILE" || SCORE_RC=$?
