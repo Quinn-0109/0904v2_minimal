@@ -2835,7 +2835,11 @@ def build_randomized_scene(source_layout, source_mission, seed_offset=0,
         seed_by_floor[index] for index in range(3)]
     settings["seed_offset"] = int(seed_offset)
 
-    if official_truth is None:
+    # An official scene arrives complete: its building, furniture, danger
+    # spheres and distractors are all the generator's.  This script stops
+    # being a scene author there and is only a viewpoint planner.
+    official_scene = bool(settings.get("consume_official_scene", False))
+    if official_truth is None and not official_scene:
         furniture_poses = randomize_furniture(
             layout, seed_by_floor, settings)
     else:
@@ -2851,11 +2855,21 @@ def build_randomized_scene(source_layout, source_mission, seed_offset=0,
     if official_poses:
         danger_poses, red_truth = preserve_official_scene_sources(
             layout, official_truth)
+    elif official_scene:
+        # Every danger sphere is already in the world.  The planner is never
+        # told where: no truth file is opened, no pose is rewritten, and the
+        # rooms stay empty so nothing downstream can read a position out of
+        # the layout it publishes.
+        danger_poses, red_truth = {}, []
+        for floor in layout.get("floors", []):
+            for room in floor.get("rooms", []):
+                room["red_balls"] = []
+        layout["danger_red_spheres"] = []
 
     scans = derive_physical_viewpoints(
         layout, seed_by_floor, settings)
 
-    if not official_poses:
+    if not official_poses and not official_scene:
         danger_poses, red_truth = place_sparse_red_balls(
             layout, scans, seed_by_floor, settings, red_distractors)
     layout["red_distractors"] = copy.deepcopy(red_distractors or [])
@@ -2919,6 +2933,12 @@ def build_randomized_scene(source_layout, source_mission, seed_offset=0,
             "furniture_position_source": "official_generator",
             "official_scene_seed": official_truth.get("seed"),
         })
+    elif official_scene:
+        metadata.update({
+            "danger_position_source": "official_generator_unread",
+            "furniture_position_source": "official_generator",
+            "red_ball_count": None,
+        })
 
     layout.setdefault("target_points", {})["room_scans"] = {
         definition["id"]: [definition["pose"][0], definition["pose"][1],
@@ -2928,14 +2948,26 @@ def build_randomized_scene(source_layout, source_mission, seed_offset=0,
     }
 
     red_config = mission.setdefault("red_ball_detection", {})
-    red_config.update({"minimum_confirmed_detections": len(red_truth),
-                       "maximum_confirmed_detections": len(red_truth),
-                       "expected_scene_red_balls": len(red_truth),
-                       "expected_red_balls_per_floor": None,
-                       "expected_total_range": [
-                           int(settings.get("red_ball_total_minimum", 3)),
-                           int(settings.get("red_ball_total_maximum", 6))],
-                       "require_all_scene_red_balls": True})
+    expected_range = [int(settings.get("red_ball_total_minimum", 3)),
+                      int(settings.get("red_ball_total_maximum", 6))]
+    if official_scene:
+        # How many spheres the generator placed is in the referee truth and
+        # nowhere else.  The run gets the published range instead, so it can
+        # neither assume a total nor stop searching on reaching one.  What
+        # was actually found is scored against the truth after the run.
+        red_config.update({"minimum_confirmed_detections": expected_range[0],
+                           "maximum_confirmed_detections": expected_range[1],
+                           "expected_scene_red_balls": None,
+                           "expected_red_balls_per_floor": None,
+                           "expected_total_range": expected_range,
+                           "require_all_scene_red_balls": True})
+    else:
+        red_config.update({"minimum_confirmed_detections": len(red_truth),
+                           "maximum_confirmed_detections": len(red_truth),
+                           "expected_scene_red_balls": len(red_truth),
+                           "expected_red_balls_per_floor": None,
+                           "expected_total_range": expected_range,
+                           "require_all_scene_red_balls": True})
     red_config.setdefault("matching_tolerance_m", 1.0)
     return (layout, mission, furniture_poses, danger_poses, red_truth,
             scans, seed_by_floor)
@@ -2953,7 +2985,14 @@ def main():
 
     source_layout = read_json(args.layout)
     source_mission = read_json(args.mission_config)
-    red_distractors = read_red_distractors_from_world(args.world)
+    consume_official_scene = bool(
+        source_mission.get("scene_randomization", {}).get(
+            "consume_official_scene", False))
+    # The red-box list exists to keep a placed ball's silhouette clear of a
+    # red distractor.  Nothing is placed against an official scene, so the
+    # world is not read at all.
+    red_distractors = ([] if consume_official_scene
+                       else read_red_distractors_from_world(args.world))
 
     preserve_official = bool(
         source_mission.get("scene_randomization", {}).get(
@@ -3027,9 +3066,13 @@ def main():
                 if os.path.isfile(candidate):
                     mission["runtime"][key] = os.path.abspath(candidate)
 
+    # Pruning exists so a randomized scene drops the placeholder spheres it
+    # did not use.  Against an official scene nothing is placed, so pruning
+    # would delete every danger sphere the generator wrote -- the world would
+    # load with none.  Leave the official geometry exactly as it arrived.
     assets = {"world": update_asset(
                   args.world, furniture_poses, danger_poses, True,
-                  prune_unused_dangers=True),
+                  prune_unused_dangers=not consume_official_scene),
               "model": update_asset(args.model, furniture_poses, danger_poses, False)}
     atomic_json(output_layout, layout)
     atomic_json(output_mission, mission)
