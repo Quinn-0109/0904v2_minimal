@@ -519,6 +519,12 @@ if [ -n "${OVERALL_RESULTS_ROOT:-}" ]; then
   echo "[three-floor] published result link: $OVERALL_RESULTS_ROOT/$RUN_NAME"
 fi
 echo "[three-floor] visualization: $RESULTS_DIR/visualization"
+# The scorer rewrites the acceptance record with the truth verdict, so a run
+# that passed everything it could judge itself still fails here if it missed a
+# sphere or invented one.  A missing truth file (2) is a warning, not a verdict.
+if [ "$SCORE_RC" -eq 1 ] && [ "$CHECK_RC" -eq 0 ]; then
+  CHECK_RC=1
+fi
 if [ "$CHECK_RC" -ne 0 ]; then
   echo "[three-floor] acceptance failed; inspect $RUN_LOG" >&2
   exit "$CHECK_RC"
