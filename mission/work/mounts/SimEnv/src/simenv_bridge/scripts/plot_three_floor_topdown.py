@@ -590,6 +590,20 @@ def generate(results_dir, output_dir):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     layout = read_json(results_dir / "layout_metadata.json")
+    if not layout.get("danger_red_spheres"):
+        # An official scene's layout carries no sphere: the run is not told
+        # where they are.  Draw the referee copy the runner saved beside the
+        # results, so the picture still shows what was there to find.
+        referee = results_dir / "official_danger_truth.json"
+        if referee.is_file():
+            truth_payload = read_json(referee, required=False) or {}
+            layout["danger_red_spheres"] = [
+                dict(source, pose=list(source.get("position", [])))
+                for source in truth_payload.get("danger_sources", [])]
+            layout["red_distractors"] = [
+                dict(item, pose=list(item.get("position", [])))
+                for item in truth_payload.get("distraction_sources", [])
+                if str(item.get("color")) == "red"]
     # Failed missions may stop before later-floor tour files exist.  Render
     # the available trace and planned layout instead of losing every top-down
     # diagnostic precisely when it is most useful.
