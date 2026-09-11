@@ -1735,6 +1735,18 @@ def _red_ball_check(config, results_dir, timing, failures, checks):
         return
     detections = payload.get("detections", [])
     minimum = int(detection_config["minimum_confirmed_detections"])
+    # An official scene keeps how many spheres it holds in the referee truth.
+    # Then all the run can ask of itself is that what it confirmed falls
+    # inside the published range; whether it found every one is settled after
+    # the run, against danger_truth.json.
+    expected_total = detection_config.get("expected_scene_red_balls")
+    expected_range = [int(value) for value in
+                      (detection_config.get("expected_total_range") or (3, 6))]
+    if expected_total is None:
+        confirmed_count_ok = (
+            expected_range[0] <= len(detections) <= expected_range[1])
+    else:
+        confirmed_count_ok = len(detections) == int(expected_total)
     required_fields = (
         "track_id", "position", "first_confirmed_elapsed_sec",
         "stage", "floor", "evidence_frames", "waypoint", "scan_active",
@@ -1782,7 +1794,7 @@ def _red_ball_check(config, results_dir, timing, failures, checks):
         int(payload.get("frames_processed", 0)) > 0 and
         int(payload.get("confirmed_count", -1)) == len(detections) and
         len(detections) >= minimum and
-        len(detections) == int(detection_config["expected_scene_red_balls"]) and
+        confirmed_count_ok and
         events_ok and
         all(float(item["first_confirmed_elapsed_sec"]) <= timing_duration
             for item in detections)
@@ -1795,6 +1807,18 @@ def _red_ball_check(config, results_dir, timing, failures, checks):
             "(schema={}, status={}, frames={}, confirmed={})".format(
                 minimum, payload.get("schema"), payload.get("status"),
                 payload.get("frames_processed"), len(detections)))
+
+    if expected_total is None:
+        # Nothing in this run knows the answer, so it must not claim one.
+        # score_official_danger_truth.py settles these against the referee
+        # truth once the run is over.
+        for key in ("all_scene_red_balls_detected",
+                    "every_selected_danger_room_detected",
+                    "zero_false_positive_dangers",
+                    "zero_false_negative_dangers"):
+            checks[key] = None
+        checks["red_ball_truth_scoring_deferred_to_referee"] = True
+        return
 
     layout_path = os.path.join(results_dir, "layout_metadata.json")
     if not os.path.isfile(layout_path):

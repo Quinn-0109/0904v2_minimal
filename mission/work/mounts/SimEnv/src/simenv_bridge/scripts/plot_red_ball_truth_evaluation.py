@@ -245,6 +245,21 @@ def main():
     config = read_json(results / "mission_config.json")
     truth = layout.get("danger_red_spheres", [])
     red_distractors = layout.get("red_distractors", [])
+    if not truth:
+        # An official scene's layout carries no sphere: the run is not told
+        # where they are.  Plot against the referee copy the runner saved
+        # beside the results, which is also what the score is computed from.
+        referee = results / "official_danger_truth.json"
+        if referee.is_file():
+            truth = []
+            for source in read_json(referee).get("danger_sources", []):
+                record = dict(source)
+                record["pose"] = list(source.get("position", []))
+                truth.append(record)
+            red_distractors = [
+                dict(item, pose=list(item.get("position", [])))
+                for item in read_json(referee).get("distraction_sources", [])
+                if str(item.get("color")) == "red"]
     detections = detection_record.get("detections", [])
     tolerance = float(config["red_ball_detection"]["matching_tolerance_m"])
     matching, distances = maximum_truth_matching(detections, truth, tolerance)

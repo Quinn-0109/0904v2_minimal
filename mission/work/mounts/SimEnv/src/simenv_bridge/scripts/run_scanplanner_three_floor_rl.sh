@@ -516,6 +516,20 @@ set +e
 python3 "$CHECKER" --config "$MISSION_CONFIG" --results "$RESULTS_DIR" \
   --output "$RESULTS_DIR/three_floor_rl_acceptance.json"
 CHECK_RC=$?
+# The run is never told how many spheres the scene holds, so the acceptance
+# record leaves the truth questions unanswered.  Settle them here, the way a
+# referee would, against the copy the generator wrote for exactly this.
+SCORE_RC=0
+if [ -f "$OFFICIAL_RESULTS_DIR/danger_truth.json" ]; then
+  python3 "$SCRIPT_DIR/score_official_danger_truth.py" \
+    --results "$RESULTS_DIR" \
+    --truth "$OFFICIAL_RESULTS_DIR/danger_truth.json" || SCORE_RC=$?
+  cp "$OFFICIAL_RESULTS_DIR/danger_truth.json" \
+    "$RESULTS_DIR/official_danger_truth.json"
+else
+  echo "[three-floor] official referee truth is missing; scoring skipped" >&2
+  SCORE_RC=2
+fi
 set -e
 
 if [ "$STATUS" != "completed" ]; then
