@@ -430,10 +430,16 @@ def validate_physical_layout(config, layout):
     errors = []
     settings = config.get("scene_randomization", {})
     truth = layout.get("danger_red_spheres", [])
-    official_positions = (
-        layout.get("metadata", {}).get("danger_position_source") ==
-        "official_generator")
-    if not 3 <= len(truth) <= 6:
+    source = str(layout.get("metadata", {}).get("danger_position_source", ""))
+    official_positions = source == "official_generator"
+    # The run was never told where the spheres are, so there is no truth here
+    # to validate and none to validate against.  Every truth-derived check
+    # below is skipped; the viewpoint and route contracts still apply in full,
+    # and the spheres are scored after the run against danger_truth.json.
+    truth_unread = source == "official_generator_unread"
+    if truth_unread:
+        truth = []
+    elif not 3 <= len(truth) <= 6:
         errors.append("runtime scene must contain 3--6 total danger sources")
     if (not official_positions and
             len({str(item.get("room_id")) for item in truth}) != len(truth)):
@@ -529,7 +535,11 @@ def validate_physical_layout(config, layout):
     minimum_range_margin = float(settings.get(
         "red_ball_view_range_margin_m", 0.25))
     red_distractors = layout.get("red_distractors") or []
-    if official_positions:
+    if truth_unread:
+        # The distractor list only ever fed the placement audit, which does
+        # not run when nothing is placed.
+        pass
+    elif official_positions:
         # OFFICIAL_DISTRACTOR_TOTAL_CHECK_V1
         official_distractors = layout.get("official_distractors") or []
         if not (4 <= len(official_distractors) <= 8):

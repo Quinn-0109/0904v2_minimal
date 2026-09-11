@@ -2835,7 +2835,12 @@ def build_randomized_scene(source_layout, source_mission, seed_offset=0,
         seed_by_floor[index] for index in range(3)]
     settings["seed_offset"] = int(seed_offset)
 
-    if official_truth is None:
+    # An official scene arrives complete.  consume_official_scene keeps it that
+    # way and never opens the truth: this script becomes a viewpoint planner
+    # and nothing else, so the route is derived from geometry the robot could
+    # itself survey rather than from the answer it is being tested on.
+    official_scene = bool(settings.get("consume_official_scene", False))
+    if official_truth is None and not official_scene:
         furniture_poses = randomize_furniture(
             layout, seed_by_floor, settings)
     else:
@@ -2851,11 +2856,20 @@ def build_randomized_scene(source_layout, source_mission, seed_offset=0,
     if official_poses:
         danger_poses, red_truth = preserve_official_scene_sources(
             layout, official_truth)
+    elif official_scene:
+        # The spheres are already in the world.  Nothing here is told where:
+        # no truth file is opened, no pose is rewritten, and the published
+        # layout carries no position for anything downstream to read.
+        danger_poses, red_truth = {}, []
+        for floor in layout.get("floors", []):
+            for room in floor.get("rooms", []):
+                room["red_balls"] = []
+        layout["danger_red_spheres"] = []
 
     scans = derive_physical_viewpoints(
         layout, seed_by_floor, settings)
 
-    if not official_poses:
+    if not official_poses and not official_scene:
         danger_poses, red_truth = place_sparse_red_balls(
             layout, scans, seed_by_floor, settings, red_distractors)
     layout["red_distractors"] = copy.deepcopy(red_distractors or [])
@@ -2919,6 +2933,13 @@ def build_randomized_scene(source_layout, source_mission, seed_offset=0,
             "furniture_position_source": "official_generator",
             "official_scene_seed": official_truth.get("seed"),
         })
+    elif official_scene:
+        # red_ball_count stays the real 0 rather than None: callers format it
+        # with %d and a None would take the runner down.
+        metadata.update({
+            "danger_position_source": "official_generator_unread",
+            "furniture_position_source": "official_generator",
+        })
 
     layout.setdefault("target_points", {})["room_scans"] = {
         definition["id"]: [definition["pose"][0], definition["pose"][1],
@@ -2928,6 +2949,25 @@ def build_randomized_scene(source_layout, source_mission, seed_offset=0,
     }
 
     red_config = mission.setdefault("red_ball_detection", {})
+    if official_scene:
+        # How many spheres the scene holds is in the referee truth and nowhere
+        # else.  The run gets the published range, so it can neither assume a
+        # total nor stop searching on reaching one; what it actually found is
+        # scored afterwards by score_official_danger_truth.py.
+        red_config.update({
+            "minimum_confirmed_detections": int(
+                settings.get("red_ball_total_minimum", 3)),
+            "maximum_confirmed_detections": int(
+                settings.get("red_ball_total_maximum", 6)),
+            "expected_scene_red_balls": None,
+            "expected_red_balls_per_floor": None,
+            "expected_total_range": [
+                int(settings.get("red_ball_total_minimum", 3)),
+                int(settings.get("red_ball_total_maximum", 6))],
+            "require_all_scene_red_balls": True})
+        red_config.setdefault("matching_tolerance_m", 1.0)
+        return (layout, mission, furniture_poses, danger_poses, red_truth,
+                scans, seed_by_floor)
     red_config.update({"minimum_confirmed_detections": len(red_truth),
                        "maximum_confirmed_detections": len(red_truth),
                        "expected_scene_red_balls": len(red_truth),
@@ -2953,7 +2993,14 @@ def main():
 
     source_layout = read_json(args.layout)
     source_mission = read_json(args.mission_config)
-    red_distractors = read_red_distractors_from_world(args.world)
+    consume_official_scene = bool(
+        source_mission.get("scene_randomization", {}).get(
+            "consume_official_scene", False))
+    # The red-box list exists so a ball this script places cannot hide its
+    # silhouette behind a distractor.  Nothing is placed against an official
+    # scene, so the world is not read for it at all.
+    red_distractors = ([] if consume_official_scene
+                       else read_red_distractors_from_world(args.world))
 
     preserve_official = bool(
         source_mission.get("scene_randomization", {}).get(
@@ -3027,9 +3074,13 @@ def main():
                 if os.path.isfile(candidate):
                     mission["runtime"][key] = os.path.abspath(candidate)
 
+    # Pruning drops any danger_red_sphere_ model this script did not place,
+    # which is right for a randomized scene discarding unused placeholders and
+    # catastrophic for an official one: with nothing placed it would delete
+    # every sphere the generator wrote and the world would load empty.
     assets = {"world": update_asset(
                   args.world, furniture_poses, danger_poses, True,
-                  prune_unused_dangers=True),
+                  prune_unused_dangers=not consume_official_scene),
               "model": update_asset(args.model, furniture_poses, danger_poses, False)}
     atomic_json(output_layout, layout)
     atomic_json(output_mission, mission)

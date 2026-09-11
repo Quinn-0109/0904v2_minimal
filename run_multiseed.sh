@@ -3,10 +3,10 @@
 #
 # Why this is not just "change SEED": for an official scene the seed offset is
 # inert.  randomize_three_floor_scene.py skips furniture and red-ball placement
-# when preserve_official_source_positions is set, and viewpoints are derived
-# from geometry alone, so two offsets on one scene produce byte-identical
-# routes (verified: 0 waypoints moved, no field differs).  A different scene
-# means a different official generator seed, i.e. a new scene directory.
+# when consume_official_scene is set, and viewpoints are derived from geometry
+# alone, so two offsets on one scene produce byte-identical routes (verified:
+# 0 waypoints moved, no field differs).  A different scene means a different
+# official generator seed, i.e. a new scene directory.
 #
 #   bash run_multiseed.sh                       # 10 seeds, RTF 0.55
 #   SEEDS="20 111 4242" TARGET_RTF=0.55 bash run_multiseed.sh
@@ -163,7 +163,12 @@ d["runtime"] = {
     "stair_policy": os.path.join(policy, "policy_act_inference_stair.pt"),
 }
 d["scene_randomization"]["official_scene_seed"] = seed
-d["scene_randomization"]["preserve_official_source_positions"] = True
+# consume_official_scene, not preserve_official_source_positions: both
+# keep the generator's furniture and spheres untouched, but preserve
+# reaches that by reading danger_truth.json, which hands the planner the
+# answer.  consume leaves the truth unopened and the run is scored
+# against it afterwards instead.
+d["scene_randomization"]["consume_official_scene"] = True
 out = os.path.join(dirpath, "three_floor_rl_mission.json")
 json.dump(d, open(out, "w"), indent=2, sort_keys=True); open(out, "a").write("\n")
 n = len(json.load(open(os.path.join(dirpath, "danger_truth.json")))["danger_sources"])
