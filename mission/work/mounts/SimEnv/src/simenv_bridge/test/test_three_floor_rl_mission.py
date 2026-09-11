@@ -1252,11 +1252,47 @@ class ThreeFloorRLMissionTest(unittest.TestCase):
         # the radius, and must hand back a pose rather than the None that
         # fails the floor.
         stall = source.split("direct_rl_no_progress")[0]
-        accept = stall[stall.rindex("viewpoint_accepted_short") - 900:]
-        for required in ('waypoint.get("room_id")', '("G3", "G4")',
-                         "distance <= self._viewpoint_stall_accept",
-                         "return pose, distance, stall_recoveries"):
-            self.assertIn(required, accept)
+        accept = stall[stall.rindex("_viewpoint_blocked_short") - 600:]
+        self.assertIn("return pose, distance, stall_recoveries", accept)
+        # Every gate must survive: a controller that gives up anywhere must
+        # not be recorded as having arrived at a viewpoint.
+        predicate = source[source.index("def _viewpoint_blocked_short"):]
+        predicate = predicate[:predicate.index("def _perceived_obstacle_points")]
+        for required in (
+                "blocked_seen >= self._viewpoint_block_evidence_hits",
+                'waypoint.get("room_id")',
+                '("G3", "G4")',
+                "distance <= self._viewpoint_stall_accept",
+                "best_distance <= self._viewpoint_stall_accept"):
+            self.assertIn(required, predicate)
+        # And the concession is rationed: many blocked legs on one floor is a
+        # broken controller, not a scene standing on every viewpoint.
+        self.assertIn("_blocked_viewpoint_budget_left", accept)
+        self.assertIn("viewpoint_stall_accept_max_per_floor", source)
+        self.assertIn("self._blocked_viewpoints_this_floor = 0",
+                      source[source.index("def _run_floor"):][:400])
+
+    def test_a_blocked_viewpoint_does_not_burn_two_more_progress_timeouts(self):
+        """Conceding cost 92 s of a 600 s budget: 46 s twice over.
+
+        Each stall attempt waits a full progress timeout, and the oblique
+        correction re-drove the same unreachable point for a second helping.
+        Neither can free a leg blocked by an obstacle on the target itself.
+        """
+        source = (
+            ROOT / "scripts" / "scanplanner_three_floor_goal_sequencer.py"
+        ).read_text(encoding="utf-8")
+        # One recovery is enough to tell a snag from a hard block.
+        cap = source[source.index("tells the two apart"):]
+        cap = cap[:cap.index("if stall_recoveries < recovery_attempts")]
+        self.assertIn("_viewpoint_blocked_short", cap)
+        self.assertIn("stall_recoveries >= 1", cap)
+        self.assertIn("recovery_attempts = 0", cap)
+        # The correction must not re-drive a point the leg proved unreachable.
+        self.assertIn("oblique_correction_skipped_blocked", source)
+        correction = source[source.index("def _correct_oblique_waypoint"):]
+        head = correction[:correction.index("_drive_direct_waypoint")]
+        self.assertIn("self._last_leg_accepted_short", head)
 
     def test_a_sensed_obstacle_produces_a_detour_the_route_can_take(self):
         """Seed 1001's floor_1_room_3 entry_to_g3 geometry, from points only.

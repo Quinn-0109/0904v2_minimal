@@ -613,8 +613,21 @@ class ThreeFloorGoalSequencer:
         # there.  A 0.15 m sphere sitting on the viewpoint leaves the base
         # roughly 0.45 m away; beyond this the leg is lost for some other
         # reason and should still fail.
+        # A 0.15 m sphere on the viewpoint stops the base about 0.45 m short.
+        # Anything materially further out is a leg lost for another reason.
         self._viewpoint_stall_accept = max(0.0, float(rospy.get_param(
-            "~viewpoint_stall_accept_m", 0.75)))
+            "~viewpoint_stall_accept_m", 0.60)))
+        self._viewpoint_block_evidence_hits = max(1, int(rospy.get_param(
+            "~viewpoint_block_evidence_hits", 2)))
+        self._viewpoint_stall_accept_max = max(0, int(rospy.get_param(
+            "~viewpoint_stall_accept_max_per_floor", 2)))
+        self._blocked_viewpoints_this_floor = 0
+        # How close a sensed return must sit to the target to count as
+        # standing on it.  A 0.15 m sphere centred there returns from about
+        # its own radius out.
+        self._viewpoint_block_evidence = max(0.10, float(rospy.get_param(
+            "~viewpoint_block_evidence_m", 0.35)))
+        self._last_leg_accepted_short = False
 
         os.makedirs(self._output_dir, exist_ok=True)
         self._lock = threading.RLock()
@@ -906,6 +919,50 @@ class ThreeFloorGoalSequencer:
         self._record_event("runtime_3d_path_audit", room_id=room_id, **audit)
         self._write_room_evidence("running")
         return passed
+
+    def _target_has_sensed_obstacle(self, floor, target, start):
+        """Is something standing on the target itself?
+
+        Judged only while the target is still outside the self-filter radius:
+        closer than that the filter erases the obstacle along with the
+        robot's own returns, so a stalled base can no longer see what stopped
+        it.  Callers latch the answer during the approach.
+        """
+        points = self._perceived_obstacle_points(floor, start)
+        if not points:
+            return False
+        limit = self._viewpoint_block_evidence
+        return any(
+            math.hypot(point[0] - target[0], point[1] - target[1]) <= limit
+            for point in points)
+
+    def _blocked_viewpoint_budget_left(self, floor):
+        """Has this floor already conceded as many viewpoints as it may?
+
+        One or two blocked viewpoints is the scene standing on them.  A
+        controller failing leg after leg would otherwise be absorbed
+        silently, one concession at a time, and the floor would report
+        success having scanned none of it properly.
+        """
+        return (self._blocked_viewpoints_this_floor <
+                self._viewpoint_stall_accept_max)
+
+    def _viewpoint_blocked_short(self, waypoint, distance,
+                                 blocked_seen, best_distance):
+        """A room viewpoint the base is physically barred from reaching.
+
+        Being stalled near a viewpoint is not enough: a controller that gives
+        up anywhere would then be recorded as having arrived.  The leg must
+        also have seen something standing on the target while it still could.
+        """
+        return bool(
+            blocked_seen >= self._viewpoint_block_evidence_hits and
+            waypoint.get("room_id") and
+            str(waypoint.get("room_phase", "")).upper() in ("G3", "G4") and
+            math.isfinite(distance) and
+            distance <= self._viewpoint_stall_accept and
+            math.isfinite(best_distance) and
+            best_distance <= self._viewpoint_stall_accept)
 
     def _perceived_obstacle_points(self, floor, start):
         """Fresh cloud points in the collision band, minus the robot itself.
@@ -1294,6 +1351,9 @@ class ThreeFloorGoalSequencer:
                                tolerance, index, policy_kind_name):
         target = (float(waypoint["x"]), float(waypoint["y"]))
         note = str(waypoint["note"])
+        self._last_leg_accepted_short = False
+        target_blocked_seen = 0
+        next_block_probe = 0.0
 
         # SUCCESS_BASELINE_VIEWPOINT_CAP_V4
         # Match the successful seed34 effective viewpoint speed.
@@ -1507,6 +1567,16 @@ class ThreeFloorGoalSequencer:
                     self._publish_scan(False)
                 return pose, distance, stall_recoveries
             self._publish_scan(True, yaw_rate, forward, lateral)
+            # Look for something on the target while the target is still
+            # beyond the self filter; once the base is up against it the
+            # evidence is no longer observable.
+            if (target_blocked_seen < self._viewpoint_block_evidence_hits and
+                    math.isfinite(distance) and
+                    distance > self._runtime_audit_self_radius + 0.5 and
+                    time.monotonic() >= next_block_probe):
+                next_block_probe = time.monotonic() + 0.5
+                if self._target_has_sensed_obstacle(floor, target, pose):
+                    target_blocked_seen += 1
             distance_progress = distance <= best_distance - self._progress_distance
             # A leg without align_yaw keeps heading_error at infinity, and
             # inf <= inf - 0.08 is true, so an unguarded comparison would
@@ -1522,6 +1592,15 @@ class ThreeFloorGoalSequencer:
                 recovery_attempts = (
                     self._entrance_recovery_max_attempts if entrance_mode
                     else self._stall_recovery_max_attempts)
+                # A backoff and retry frees a snagged leg; it cannot free one
+                # blocked by an obstacle standing on the target.  One attempt
+                # tells the two apart, and each further attempt costs a full
+                # progress timeout for nothing.
+                if (self._viewpoint_blocked_short(
+                        waypoint, distance, target_blocked_seen,
+                        best_distance) and
+                        stall_recoveries >= 1):
+                    recovery_attempts = 0
                 if stall_recoveries < recovery_attempts:
                     stall_recoveries += 1
                     self._publish_scan(False)
@@ -1568,17 +1647,22 @@ class ThreeFloorGoalSequencer:
                 # of a 0.12 m tolerance it cannot meet.  Scanning from there
                 # costs a few centimetres of viewpoint geometry; failing the
                 # floor costs every room after it.
-                if (waypoint.get("room_id") and
-                        str(waypoint.get("room_phase", "")).upper() in
-                        ("G3", "G4") and
-                        math.isfinite(distance) and
-                        distance <= self._viewpoint_stall_accept):
+                if (self._viewpoint_blocked_short(
+                        waypoint, distance, target_blocked_seen,
+                        best_distance) and
+                        self._blocked_viewpoint_budget_left(floor)):
+                    self._blocked_viewpoints_this_floor += 1
+                    self._last_leg_accepted_short = True
                     self._record_event(
                         "viewpoint_accepted_short", room_id=waypoint.get(
                             "room_id"), waypoint=note,
                         distance_error_m=round(float(distance), 4),
                         planned_tolerance_m=round(float(tolerance), 4),
-                        accept_radius_m=self._viewpoint_stall_accept)
+                        accept_radius_m=self._viewpoint_stall_accept,
+                        obstacle_seen_on_target=int(target_blocked_seen),
+                        evidence_radius_m=self._viewpoint_block_evidence,
+                        conceded_on_this_floor=self._blocked_viewpoints_this_floor,
+                        allowed_per_floor=self._viewpoint_stall_accept_max)
                     self._publish_route_state(
                         "ACCEPT_VIEWPOINT_SHORT",
                         floor=int(floor["floor_number"]),
@@ -1903,6 +1987,15 @@ class ThreeFloorGoalSequencer:
                                   effective_speed, index):
         if self._actual_oblique_waypoint_ok(floor, waypoint, reached_pose):
             return reached_pose, 0.0, 0, False
+        if self._last_leg_accepted_short:
+            # The leg already stalled against whatever is standing on this
+            # viewpoint.  Re-driving the same point spends another full
+            # progress timeout to stop in the same place.
+            self._record_event(
+                "oblique_correction_skipped_blocked",
+                room_id=waypoint.get("room_id"),
+                waypoint=waypoint.get("note"))
+            return reached_pose, 0.0, 0, False
         record = self._room_record(waypoint, floor["floor_number"])
         if int(record.get("geometry_correction_count", 0)) >= 1:
             with self._lock:
@@ -1976,6 +2069,7 @@ class ThreeFloorGoalSequencer:
 
     def _run_floor(self, floor):
         floor_number = int(floor["floor_number"])
+        self._blocked_viewpoints_this_floor = 0
         entrance_stair_active = floor_number == 1
         records = []
         self._write_tour(floor, records, "running")
