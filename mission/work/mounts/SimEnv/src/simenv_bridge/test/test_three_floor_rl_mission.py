@@ -1234,6 +1234,30 @@ class ThreeFloorRLMissionTest(unittest.TestCase):
                 acceptance["checks"]["final_pose_on_first_floor_landing"]
             )
 
+    def test_a_viewpoint_the_robot_cannot_reach_is_scanned_from_as_close_as_it_gets(self):
+        """Seed 1001 put a danger sphere on floor_0_room_1_g4.
+
+        An official scene never tells the planner where its spheres are, so a
+        viewpoint can land inside one.  The base then stops against it, short
+        of a 0.12 m tolerance it can never meet.  Losing the rest of the floor
+        over that is worse than scanning a few centimetres off.
+        """
+        source = (
+            ROOT / "scripts" / "scanplanner_three_floor_goal_sequencer.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("viewpoint_stall_accept_m", source)
+        self.assertIn("viewpoint_accepted_short", source)
+        self.assertIn("oblique_geometry_accepted_short", source)
+        # The accept must be confined to room viewpoints, must be bounded by
+        # the radius, and must hand back a pose rather than the None that
+        # fails the floor.
+        stall = source.split("direct_rl_no_progress")[0]
+        accept = stall[stall.rindex("viewpoint_accepted_short") - 900:]
+        for required in ('waypoint.get("room_id")', '("G3", "G4")',
+                         "distance <= self._viewpoint_stall_accept",
+                         "return pose, distance, stall_recoveries"):
+            self.assertIn(required, accept)
+
     def test_a_sensed_obstacle_produces_a_detour_the_route_can_take(self):
         """Seed 1001's floor_1_room_3 entry_to_g3 geometry, from points only.
 

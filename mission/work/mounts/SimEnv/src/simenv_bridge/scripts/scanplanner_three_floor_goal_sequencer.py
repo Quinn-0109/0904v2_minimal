@@ -609,6 +609,12 @@ class ThreeFloorGoalSequencer:
             "~runtime_detour_speed_mps", 0.60)))
         self._runtime_detour_tolerance = max(0.05, float(rospy.get_param(
             "~runtime_detour_tolerance_m", 0.20)))
+        # How far short of a room viewpoint the robot may stop and still scan
+        # there.  A 0.15 m sphere sitting on the viewpoint leaves the base
+        # roughly 0.45 m away; beyond this the leg is lost for some other
+        # reason and should still fail.
+        self._viewpoint_stall_accept = max(0.0, float(rospy.get_param(
+            "~viewpoint_stall_accept_m", 0.75)))
 
         os.makedirs(self._output_dir, exist_ok=True)
         self._lock = threading.RLock()
@@ -1555,6 +1561,31 @@ class ThreeFloorGoalSequencer:
                     best_heading_error = heading_error
                     progress_deadline = time.monotonic() + progress_timeout
                     continue
+                # A room viewpoint can be unreachable through no fault of the
+                # controller: the scene's own danger sphere may sit on it, and
+                # an official scene never tells the planner where its spheres
+                # are.  The robot then stops against the sphere, a little short
+                # of a 0.12 m tolerance it cannot meet.  Scanning from there
+                # costs a few centimetres of viewpoint geometry; failing the
+                # floor costs every room after it.
+                if (waypoint.get("room_id") and
+                        str(waypoint.get("room_phase", "")).upper() in
+                        ("G3", "G4") and
+                        math.isfinite(distance) and
+                        distance <= self._viewpoint_stall_accept):
+                    self._record_event(
+                        "viewpoint_accepted_short", room_id=waypoint.get(
+                            "room_id"), waypoint=note,
+                        distance_error_m=round(float(distance), 4),
+                        planned_tolerance_m=round(float(tolerance), 4),
+                        accept_radius_m=self._viewpoint_stall_accept)
+                    self._publish_route_state(
+                        "ACCEPT_VIEWPOINT_SHORT",
+                        floor=int(floor["floor_number"]),
+                        room_id=waypoint.get("room_id"), waypoint=note,
+                        target=list(target))
+                    self._publish_scan(False)
+                    return pose, distance, stall_recoveries
                 with self._lock:
                     if self._failure is None:
                         self._failure = "direct_rl_no_progress:{}".format(note)
@@ -1894,12 +1925,26 @@ class ThreeFloorGoalSequencer:
         if (corrected_pose is None or
                 not self._actual_oblique_waypoint_ok(
                     floor, waypoint, corrected_pose)):
-            with self._lock:
-                if self._failure is None:
-                    self._failure = (
-                        "actual_oblique_geometry_failed:{}".format(
-                            waypoint.get("note")))
-            return None, distance, recoveries, True
+            # The correction cannot help a viewpoint the robot is physically
+            # barred from: a danger sphere standing on it stops the base a
+            # little short every time.  Accept the closest pose it can hold
+            # rather than losing the rest of the floor over a few centimetres.
+            short = (corrected_pose is not None and math.hypot(
+                float(corrected_pose[0]) - float(waypoint["x"]),
+                float(corrected_pose[1]) - float(waypoint["y"]))
+                <= self._viewpoint_stall_accept)
+            if not short:
+                with self._lock:
+                    if self._failure is None:
+                        self._failure = (
+                            "actual_oblique_geometry_failed:{}".format(
+                                waypoint.get("note")))
+                return None, distance, recoveries, True
+            self._record_event(
+                "oblique_geometry_accepted_short",
+                room_id=waypoint.get("room_id"),
+                waypoint=waypoint.get("note"),
+                accept_radius_m=self._viewpoint_stall_accept)
         return corrected_pose, distance, recoveries, True
 
     def _write_tour(self, floor, records, status, reason=None):
