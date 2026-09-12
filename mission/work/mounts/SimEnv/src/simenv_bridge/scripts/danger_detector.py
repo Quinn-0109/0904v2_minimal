@@ -429,6 +429,83 @@ def combine_cross_view_positions(winner_position, loser_position, mode):
     return combined
 
 
+def same_ray_duplicate_losers(
+        detections, maximum_bearing_gap_deg=1.5,
+        minimum_range_ratio=1.10):
+    """Drop the farther of two same-view tracks sharing one viewing ray.
+
+    A red sphere sits above the floor, so the camera ray through it also
+    meets the floor some way beyond it.  When that ground intersection
+    survives as its own track the room reports two sources on one bearing:
+    seed 1001's floor_1_room_3 G3 scan confirmed the sphere at 5.49 m and a
+    ghost at 7.79 m, 0.15 deg apart, and the ghost scored as a false
+    positive.  The measured range ratios, 1.42 and 1.32, match the camera
+    height over the sphere centre.
+
+    Bearing, not distance, is what separates this from two real spheres:
+    the same room's genuine pair stood 2.08 m apart and the existing radius
+    gates cannot reach 2.30 m without merging them.  At 1.5 deg and 8 m the
+    window is 0.20 m -- narrower than a sphere -- so a second sphere inside
+    it would be hidden behind the first and never seen from that view.
+
+    Odometry and detections only; no scene truth is read.
+    """
+    maximum_gap_rad = math.radians(max(0.0, float(maximum_bearing_gap_deg)))
+    minimum_range_ratio = max(1.0, float(minimum_range_ratio))
+    groups = {}
+
+    for index, event in enumerate(detections or []):
+        try:
+            room_id = str(event.get("room_id", "")).strip()
+            role = str(event.get("viewpoint_role", "")).strip().upper()
+            waypoint = str(event.get("waypoint", "")).strip()
+            position = event.get("position", [])
+            observer = event.get("observer_xy", [])
+
+            if (not room_id or not role or not waypoint or
+                    len(position) < 2 or len(observer) < 2):
+                continue
+
+            distance = math.hypot(
+                float(position[0]) - float(observer[0]),
+                float(position[1]) - float(observer[1]))
+        except (AttributeError, TypeError, ValueError):
+            continue
+
+        if distance <= 0.0:
+            continue
+
+        groups.setdefault(
+            (event.get("floor"), room_id, role, waypoint), []
+        ).append((index, observer, distance))
+
+    discarded = set()
+
+    for members in groups.values():
+        for near_index, observer, near_range in members:
+            for far_index, _far_observer, far_range in members:
+                if far_index == near_index or far_index in discarded:
+                    continue
+                if far_range < near_range * minimum_range_ratio:
+                    continue
+
+                far_position = detections[far_index]["position"]
+                near_position = detections[near_index]["position"]
+                bearing_gap = abs(math.atan2(
+                    float(far_position[1]) - float(observer[1]),
+                    float(far_position[0]) - float(observer[0]),
+                ) - math.atan2(
+                    float(near_position[1]) - float(observer[1]),
+                    float(near_position[0]) - float(observer[0]),
+                ))
+                bearing_gap = min(bearing_gap, 2.0 * math.pi - bearing_gap)
+
+                if bearing_gap <= maximum_gap_rad:
+                    discarded.add(far_index)
+
+    return discarded
+
+
 def strong_same_view_duplicate_losers(
         detections, confirm_count=3, merge_radius_m=1.25,
         strong_evidence_multiplier=2,
@@ -1481,6 +1558,12 @@ class Detector:
                 "door_inward_direction": self.door_inward_direction,
                 "room_id": active_scan_room_id,
                 "scan_active": bool(self.scan_active),
+                # Where the robot stood when this track was confirmed.  A
+                # room scan turns in place, so it is the viewpoint itself
+                # and it is what lets two tracks be tested for sharing one
+                # viewing ray.  Odometry, not scene truth.
+                "observer_xy": [round(float(self.base_xyz[0]), 4),
+                                round(float(self.base_xyz[1]), 4)],
             }
             if should_update_detections(self.scan_active):
                 self.tracker.update(world_points, metadata=metadata)
@@ -1622,7 +1705,17 @@ class Detector:
                     (floor, str(room_id)), []
                 ).append(index)
 
-            discarded = set()
+            # One ball and its own ground re-projection must not reach the
+            # cross-view merge as two sources: they share a bearing, so no
+            # radius gate can separate them from two real balls.
+            discarded = same_ray_duplicate_losers(
+                [record["event"] for record in candidate_records])
+            for loser in sorted(discarded):
+                self.rospy.loginfo(
+                    "danger_detector: dropped same-ray track %s behind a "
+                    "nearer track on the same bearing",
+                    candidate_records[loser]["event"].get("track_id"),
+                )
 
             def planar_distance(left_index, right_index):
                 left = candidate_records[left_index]["event"]["position"]
@@ -1635,12 +1728,14 @@ class Detector:
             for _scope, indices in room_groups.items():
                 g3_indices = [
                     index for index in indices
-                    if str(candidate_records[index]["event"].get(
+                    if index not in discarded and
+                    str(candidate_records[index]["event"].get(
                         "viewpoint_role", "")).upper() == "G3"
                 ]
                 g4_indices = [
                     index for index in indices
-                    if str(candidate_records[index]["event"].get(
+                    if index not in discarded and
+                    str(candidate_records[index]["event"].get(
                         "viewpoint_role", "")).upper() == "G4"
                 ]
 
@@ -1716,7 +1811,8 @@ class Detector:
             # strong established track and a minimum-confirmation projection
             # tail. Equal-strength detections and different waypoints remain.
             strong_same_view_losers = strong_same_view_duplicate_losers(
-                [record["event"] for record in candidate_records],
+                [{} if index in discarded else record["event"]
+                 for index, record in enumerate(candidate_records)],
                 confirm_count=int(getattr(
                     self.tracker, "confirm_count", 3)),
                 merge_radius_m=1.40,
