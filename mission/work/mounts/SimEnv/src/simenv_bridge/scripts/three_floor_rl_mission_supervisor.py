@@ -398,9 +398,14 @@ class ThreeFloorRLMissionSupervisor:
     def _transition_task_stage(self, stage, source):
         if not stage:
             return
+        with self._lock:
+            if self._failure or self._completed:
+                return
         self._start_exploration_clock()
         now = time.monotonic()
         with self._lock:
+            if self._failure or self._completed:
+                return
             if self._task_stage == stage:
                 return
             if self._task_stage is not None:
@@ -468,6 +473,10 @@ class ThreeFloorRLMissionSupervisor:
     def _write_timing(self, status):
         now_mono = time.monotonic()
         with self._lock:
+            # A late descent/return callback must not turn a terminal failure
+            # back into a running timing artifact.
+            if self._failure:
+                status = "failed"
             started = self._exploration_started_monotonic
             wall_duration = (
                 None if started is None else max(0.0, now_mono - started))

@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from test_three_floor_rl_mission import load_sequencer
+from test_three_floor_rl_mission import load_sequencer, load_supervisor
 
 
 class Budget600RegressionTest(unittest.TestCase):
@@ -32,6 +32,44 @@ class Budget600RegressionTest(unittest.TestCase):
         self.assertFalse(update(.9, math.inf, .9, math.inf, .08)[2])
         self.assertTrue(update(.81, math.inf, .9, math.inf, .08)[2])
         self.assertTrue(update(.9, .90, .9, 1., .08)[2])
+
+    def test_blocked_translation_cannot_be_extended_by_heading_progress(self):
+        deadline = self.mod.direct_progress_deadline
+        # Fresh yaw progress at t=100 does not extend a blocked position whose
+        # last positional advance was t=80. Original code waited until 108.
+        self.assertEqual(deadline(100., 80., 15., 8., True, .25, .12), 88.)
+        self.assertEqual(deadline(100., 80., 15., 8., False, .25, .12), 115.)
+        self.assertEqual(deadline(100., 80., 15., 8., True, .10, .12), 115.)
+        # Actual position progress or a bounded recovery starts a fresh window.
+        self.assertEqual(deadline(100., 100., 15., 8., True, .25, .12), 108.)
+
+    def test_failure_blocks_late_return_stage_and_running_timing(self):
+        mod = load_supervisor()
+        obj = mod.ThreeFloorRLMissionSupervisor.__new__(mod.ThreeFloorRLMissionSupervisor)
+        obj._lock = threading.RLock()
+        obj._write_lock = threading.RLock()
+        obj._failure = 'exploration_deadline_exceeded_600.0s'
+        obj._completed = False
+        obj._task_stage = None
+        obj._start_exploration_clock = lambda: self.fail('terminal clock restarted')
+        obj._transition_task_stage('return_to_first_floor_lobby', 'late callback')
+        self.assertIsNone(obj._task_stage)
+        obj._exploration_started_monotonic = 1.
+        obj._exploration_started_sim_elapsed = 0.
+        obj._sim_clock_elapsed = 600.356
+        obj._started_monotonic = 0.
+        obj._exploration_started_wall_time = 1.
+        obj._sim_clock_resets = 0
+        obj._task_stages = []
+        obj._exploration_start_pose = None
+        obj.task_budget = 600.
+        obj.timing_config = {}
+        with tempfile.TemporaryDirectory() as directory:
+            obj.timing_path = str(Path(directory) / 'timing.json')
+            obj._write_timing('running')
+            result = json.loads(Path(obj.timing_path).read_text())
+        self.assertEqual(result['status'], 'failed')
+        self.assertFalse(result['budget_met'])
 
     def test_final_yaw_gain_changes_only_stationary_alignment(self):
         for command in (self.mod.direct_rl_command,

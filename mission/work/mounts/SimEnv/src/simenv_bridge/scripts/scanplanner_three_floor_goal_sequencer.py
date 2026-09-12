@@ -286,6 +286,16 @@ def advance_progress_anchors(distance, heading_error, best_distance,
             distance_progress or heading_progress)
 
 
+def direct_progress_deadline(last_progress, last_distance_progress,
+                             timeout, blocked_timeout, blocked_short,
+                             distance, tolerance):
+    # Turning toward scan yaw cannot make an occupied position reachable.
+    # Once within tolerance, ordinary heading progress remains legitimate.
+    if blocked_short and distance > tolerance:
+        return last_distance_progress + min(timeout, blocked_timeout)
+    return last_progress + timeout
+
+
 def direct_rl_command(pose, target, maximum_speed, maximum_yaw_rate=0.35,
                       position_tolerance=0.48, target_yaw=None,
                       heading_tolerance=0.12,
@@ -1466,6 +1476,7 @@ class ThreeFloorGoalSequencer:
             if entrance_mode else self._progress_timeout)
         progress_deadline = time.monotonic() + progress_timeout
         last_progress_at = time.monotonic()
+        last_distance_progress_at = last_progress_at
         best_distance = float("inf")
         best_heading_error = float("inf")
         stall_recoveries = 0
@@ -1668,6 +1679,8 @@ class ThreeFloorGoalSequencer:
             # A leg without align_yaw keeps heading_error at infinity, and
             # inf <= inf - 0.08 is true, so an unguarded comparison would
             # report progress on every tick and disable the watchdog there.
+            if distance <= best_distance - self._progress_distance:
+                last_distance_progress_at = time.monotonic()
             best_distance, best_heading_error, made_progress = advance_progress_anchors(
                 distance, heading_error, best_distance, best_heading_error,
                 self._progress_distance)
@@ -1677,10 +1690,10 @@ class ThreeFloorGoalSequencer:
                 # repeatedly renew the watchdog without net progress.
                 progress_deadline = time.monotonic() + progress_timeout
                 last_progress_at = time.monotonic()
-            elif time.monotonic() >= min(
-                    progress_deadline,
-                    last_progress_at + self._blocked_viewpoint_timeout
-                    if blocked_short else progress_deadline):
+            if time.monotonic() >= direct_progress_deadline(
+                    last_progress_at, last_distance_progress_at,
+                    progress_timeout, self._blocked_viewpoint_timeout,
+                    blocked_short, distance, tolerance):
                 recovery_attempts = (
                     self._entrance_recovery_max_attempts if entrance_mode
                     else self._stall_recovery_max_attempts)
@@ -1732,6 +1745,7 @@ class ThreeFloorGoalSequencer:
                     best_heading_error = heading_error
                     progress_deadline = time.monotonic() + progress_timeout
                     last_progress_at = time.monotonic()
+                    last_distance_progress_at = last_progress_at
                     continue
                 # A room viewpoint can be unreachable through no fault of the
                 # controller: the scene's own danger sphere may sit on it, and
