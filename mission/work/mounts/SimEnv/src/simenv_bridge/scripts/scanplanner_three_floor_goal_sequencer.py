@@ -275,12 +275,23 @@ def is_direct_stair_waypoint(waypoint):
     return str(waypoint.get("controller", "")) == "direct_stair_rl"
 
 
+def advance_progress_anchors(distance, heading_error, best_distance,
+                             best_heading_error, distance_step):
+    """Only net improvement in a metric can advance that metric's anchor."""
+    distance_progress = distance <= best_distance - distance_step
+    heading_progress = (math.isfinite(heading_error) and
+                        heading_error <= best_heading_error - 0.08)
+    return (distance if distance_progress else best_distance,
+            heading_error if heading_progress else best_heading_error,
+            distance_progress or heading_progress)
+
+
 def direct_rl_command(pose, target, maximum_speed, maximum_yaw_rate=0.35,
                       position_tolerance=0.48, target_yaw=None,
                       heading_tolerance=0.12,
                       minimum_forward_speed=0.18,
                       distance_gain=0.70,
-                      translation_heading_limit=0.16):
+                      translation_heading_limit=0.16, final_yaw_gain=1.1):
     """Return a turn-before-forward command for the entrance step.
 
     SCAN correctly sees the apron as an obstacle, but its simultaneous
@@ -298,7 +309,7 @@ def direct_rl_command(pose, target, maximum_speed, maximum_yaw_rate=0.35,
         if abs(final_error) <= float(heading_tolerance):
             return 0.0, 0.0, distance, True
         yaw_rate = max(-float(maximum_yaw_rate), min(
-            float(maximum_yaw_rate), 1.1 * final_error))
+            float(maximum_yaw_rate), float(final_yaw_gain) * final_error))
         return 0.0, yaw_rate, distance, False
     desired = math.atan2(dy, dx)
     error = normalize_angle(desired - float(pose[3]))
@@ -322,7 +333,8 @@ def direct_holonomic_rl_command(
         position_tolerance=0.28, target_yaw=None,
         heading_tolerance=0.12, minimum_speed=0.30,
         distance_gain=1.10, maximum_lateral_speed=0.75,
-        maximum_reverse_speed=0.20, translation_heading_limit=1.45):
+        maximum_reverse_speed=0.20, translation_heading_limit=1.45,
+        final_yaw_gain=1.1):
     """Track an audited segment while yawing, without geometrical corner cut.
 
     Plane RL accepts body-frame forward and lateral commands.  Resolving the
@@ -341,7 +353,7 @@ def direct_holonomic_rl_command(
         if abs(final_error) <= float(heading_tolerance):
             return 0.0, 0.0, 0.0, distance, True
         yaw_rate = max(-float(maximum_yaw_rate), min(
-            float(maximum_yaw_rate), 1.1 * final_error))
+            float(maximum_yaw_rate), float(final_yaw_gain) * final_error))
         return 0.0, 0.0, yaw_rate, distance, False
 
     desired = math.atan2(dy, dx)
@@ -502,6 +514,8 @@ class ThreeFloorGoalSequencer:
         self._direct_plane_distance_gain = max(
             0.70, float(rospy.get_param(
                 "~direct_plane_distance_gain", 1.10)))
+        self._room_final_yaw_gain = max(1.1, min(1.8, float(rospy.get_param(
+            "~room_final_yaw_gain", 1.8))))
         self._direct_plane_translation_heading_limit = max(
             0.16, min(1.50, float(rospy.get_param(
                 "~direct_plane_translation_heading_limit_rad", 1.45))))
@@ -1441,6 +1455,10 @@ class ThreeFloorGoalSequencer:
         heading_tolerance = float(waypoint.get(
             "heading_tolerance", 0.12))
         entrance_mode = is_direct_entrance_waypoint(note)
+        final_yaw_gain = (self._room_final_yaw_gain
+                          if is_room_viewpoint and policy_kind_name == "plane"
+                          else 1.1)
+        aligning = False
         entrance_yaw = float(waypoint.get("yaw", math.pi / 2.0))
         deadline = time.monotonic() + self._waypoint_timeout
         progress_timeout = (
@@ -1466,6 +1484,7 @@ class ThreeFloorGoalSequencer:
                 "direct_plane_distance_gain", self._direct_plane_distance_gain))
                 if policy_kind_name == "plane" and not entrance_mode else 0.70),
             position_tolerance_m=tolerance,
+            final_yaw_gain=final_yaw_gain,
             progress_timeout_wall_sec=progress_timeout,
             blocked_progress_timeout_wall_sec=min(
                 progress_timeout, self._blocked_viewpoint_timeout),
@@ -1533,6 +1552,15 @@ class ThreeFloorGoalSequencer:
                         "Plane attitude guard scaling translation to %.2f "
                         "(upright_z=%.3f).",
                         attitude_scale, upright_z)
+            in_alignment = (target_yaw is not None and
+                            math.hypot(target[0] - pose[0], target[1] - pose[1])
+                            <= tolerance)
+            if in_alignment != aligning:
+                aligning = in_alignment
+                self._record_event(
+                    "waypoint_alignment", waypoint=note, active=aligning,
+                    heading_error_rad=abs(normalize_angle(
+                        float(target_yaw) - pose[3])) if target_yaw is not None else None)
             if entrance_mode:
                 forward, lateral, yaw_rate, distance, reached = (
                     direct_entrance_rl_command(
@@ -1586,7 +1614,8 @@ class ThreeFloorGoalSequencer:
                             distance_gain=distance_gain,
                             maximum_lateral_speed=maximum_lateral_speed,
                             translation_heading_limit=(
-                                self._direct_plane_translation_heading_limit)))
+                                self._direct_plane_translation_heading_limit),
+                            final_yaw_gain=final_yaw_gain))
                 else:
                     distance_gain = float(waypoint.get(
                         "direct_plane_distance_gain",
@@ -1603,7 +1632,8 @@ class ThreeFloorGoalSequencer:
                         distance_gain=(
                             distance_gain
                             if policy_kind_name == "plane" else 0.70),
-                        translation_heading_limit=0.16)
+                        translation_heading_limit=0.16,
+                        final_yaw_gain=final_yaw_gain)
                 # Every room viewpoint carries align_yaw, so the leg ends
                 # with an in-place rotation during which the distance cannot
                 # fall.  Without a heading signal that rotation looks exactly
@@ -1635,16 +1665,16 @@ class ThreeFloorGoalSequencer:
                     target_blocked_seen += 1
             blocked_short = self._viewpoint_blocked_short(
                 waypoint, distance, target_blocked_seen, best_distance)
-            distance_progress = distance <= best_distance - self._progress_distance
             # A leg without align_yaw keeps heading_error at infinity, and
             # inf <= inf - 0.08 is true, so an unguarded comparison would
             # report progress on every tick and disable the watchdog there.
-            heading_progress = (
-                math.isfinite(heading_error) and
-                heading_error <= best_heading_error - 0.08)
-            if distance_progress or heading_progress:
-                best_distance = distance
-                best_heading_error = heading_error
+            best_distance, best_heading_error, made_progress = advance_progress_anchors(
+                distance, heading_error, best_distance, best_heading_error,
+                self._progress_distance)
+            if made_progress:
+                # Each metric retains its own progress anchor. Updating both
+                # when only one improves lets alternating drift/turn cycles
+                # repeatedly renew the watchdog without net progress.
                 progress_deadline = time.monotonic() + progress_timeout
                 last_progress_at = time.monotonic()
             elif time.monotonic() >= min(

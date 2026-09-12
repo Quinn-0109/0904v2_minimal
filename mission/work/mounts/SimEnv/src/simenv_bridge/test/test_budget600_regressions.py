@@ -19,6 +19,40 @@ class Budget600RegressionTest(unittest.TestCase):
         self.seq._lock = threading.RLock()
         self.seq._failure = None
 
+    def test_alternating_drift_cannot_keep_watchdog_alive(self):
+        update = self.mod.advance_progress_anchors
+        distance, heading, _ = update(1., 1., math.inf, math.inf, .08)
+        distance, heading, progress = update(.9, 1.3, distance, heading, .08)
+        self.assertTrue(progress)
+        self.assertEqual(heading, 1.)
+        for _ in range(20):
+            for d, h in ((1.2, 1.), (.9, 1.3)):
+                distance, heading, progress = update(d, h, distance, heading, .08)
+                self.assertFalse(progress)
+        self.assertFalse(update(.9, math.inf, .9, math.inf, .08)[2])
+        self.assertTrue(update(.81, math.inf, .9, math.inf, .08)[2])
+        self.assertTrue(update(.9, .90, .9, 1., .08)[2])
+
+    def test_final_yaw_gain_changes_only_stationary_alignment(self):
+        for command in (self.mod.direct_rl_command,
+                        self.mod.direct_holonomic_rl_command):
+            args = dict(maximum_yaw_rate=1.5, target_yaw=.5,
+                        position_tolerance=.12, heading_tolerance=.16)
+            moving = command((0, 0, 0, 0), (2, 0), .9, **args)
+            self.assertEqual(moving, command((0, 0, 0, 0), (2, 0), .9,
+                                            final_yaw_gain=1.8, **args))
+            turn = command((0, 0, 0, 0), (0, 0), .9,
+                           final_yaw_gain=1.8, **args)
+            self.assertEqual(turn[0], 0.)
+            self.assertAlmostEqual(turn[-3], .9)
+            self.assertFalse(turn[-1])
+            args['target_yaw'] = 3.
+            self.assertEqual(command((0, 0, 0, 0), (0, 0), .9,
+                                     final_yaw_gain=1.8, **args)[-3], 1.5)
+            args['target_yaw'] = .15
+            self.assertTrue(command((0, 0, 0, 0), (0, 0), .9,
+                                    final_yaw_gain=1.8, **args)[-1])
+
     def test_policy_dedup_keeps_ack_refresh(self):
         seq = self.seq
         seq._plane_policy = '/tmp/policy_act_inference_plane.pt'
