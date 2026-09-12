@@ -1056,6 +1056,15 @@ class ThreeFloorGoalSequencer:
                 waypoint.get("viewpoint_policy") not in OBLIQUE_VIEWPOINT_POLICIES or
                 waypoint.get("runtime_original_target") is not None):
             return False
+        # Moving the viewpoint moves door_relative_depth_m and
+        # door_relative_lateral_m with it, and the detector reads those as
+        # the room boundary.  Without the contract they cannot be kept
+        # consistent, so the planned viewpoint stands.  _runtime_3d_audit
+        # already treats both the contract and the room record as optional.
+        door = waypoint.get("door_contract") or {}
+        if ("inward_direction" not in door or
+                len(door.get("centre") or []) < 2):
+            return False
         with self._lock:
             start = self._pose
         if start is None:
@@ -1066,6 +1075,8 @@ class ThreeFloorGoalSequencer:
                              for p in points) >= self._runtime_audit_clearance:
             return False
         record = self._room_record(waypoint, floor["floor_number"])
+        if record is None:
+            return False
         first = record.get("viewpoints", {}).get("G3", {}).get("actual_pose")
         if not first:
             return False
@@ -1093,7 +1104,6 @@ class ThreeFloorGoalSequencer:
                     continue
                 waypoint.update(x=candidate[0], y=candidate[1],
                                 runtime_original_target=list(original))
-                door = waypoint["door_contract"]
                 waypoint["door_relative_depth_m"] = float(door["inward_direction"]) * (
                     candidate[0] - float(door["centre"][0]))
                 waypoint["door_relative_lateral_m"] = candidate[1] - float(door["centre"][1])

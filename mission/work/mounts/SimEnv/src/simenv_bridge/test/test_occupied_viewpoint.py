@@ -64,6 +64,27 @@ class OccupiedViewpointTest(unittest.TestCase):
         self.assertFalse(self.s._relocate_occupied_g4(self.floor, self.w))
         self.assertEqual(self.w, before)
 
+    def test_an_unusable_door_contract_does_not_move_target(self):
+        # Relocation rewrites door_relative_depth_m / door_relative_lateral_m
+        # from the contract, and the detector reads those as the room
+        # boundary.  A contract it cannot rewrite them from must leave the
+        # planned viewpoint alone rather than raise.
+        for door in (None, {}, {'centre': [-1.1, 14.865]},
+                     {'inward_direction': -1},
+                     {'centre': [-1.1], 'inward_direction': -1}):
+            self.w['door_contract'] = door
+            before = copy.deepcopy(self.w)
+            self.assertFalse(self.s._relocate_occupied_g4(self.floor, self.w))
+            self.assertEqual(self.w, before)
+
+    def test_a_room_without_a_record_does_not_move_target(self):
+        # _room_record returns None for a waypoint with no room_id, and
+        # _runtime_3d_audit already treats that as optional.
+        self.s._room_record = lambda *a: None
+        before = copy.deepcopy(self.w)
+        self.assertFalse(self.s._relocate_occupied_g4(self.floor, self.w))
+        self.assertEqual(self.w, before)
+
     def test_ordinary_transit_and_g3_are_not_relocated(self):
         for phase in ('G3', 'G4_PATH', 'EXIT'):
             self.w['room_phase'] = phase
