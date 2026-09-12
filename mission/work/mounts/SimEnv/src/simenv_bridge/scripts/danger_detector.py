@@ -976,6 +976,18 @@ class Detector:
                 if "x" in track and "y" in track
             ]
             room_already_confirmed = bool(confirmed_room_tracks)
+            # Tracker confirmation precedes the final weak-evidence filter.
+            # Do not let a track that will be removed suppress its one retry.
+            weak_room_tracks = []
+            for track in confirmed_room_tracks:
+                event = dict(track.get("metadata", {}))
+                event.update({
+                    "room_id": str(room_id),
+                    "position": [track["x"], track["y"]],
+                    "evidence_frames": int(track["count"]),
+                })
+                if is_weak_small_single_view_detection(event, self.scan_batches):
+                    weak_room_tracks.append(int(track["id"]))
 
             # A non-empty candidate batch with no confirmed track is useful
             # online evidence that the sphere was only briefly exposed. Wait
@@ -1034,10 +1046,12 @@ class Detector:
                     str(batch.get("viewpoint_role")) == "G4" and
                     combined_candidate_frames > 0 and
                     (not room_already_confirmed or
+                     bool(weak_room_tracks) or
                      residual_multi_cluster_evidence) and
                     str(room_id) not in getattr(
                         self, "_danger_rescan_requested_rooms", set())):
                 request = {
+                    "weak_track_ids": weak_room_tracks,
                     "room_id": str(room_id),
                     "waypoint": batch_label,
                     "floor": batch.get("floor"),

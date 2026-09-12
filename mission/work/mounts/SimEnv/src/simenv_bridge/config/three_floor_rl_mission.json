@@ -458,7 +458,7 @@
     "classification_shallow_front_limit_m": 3.2,
     "classification_shallow_side_influence_m": 2.45,
     "coverage_time_floor_speed_mps": 1.65,
-    "coverage_time_speed_scale": 2.6,
+    "coverage_time_speed_scale": 1.0,
     "deep_obstacle_candidate_limit_per_side": 12,
     "door_scan_furniture_reserve_m": 0.78,
     "dual_view_scoring_grid_stride": 4,

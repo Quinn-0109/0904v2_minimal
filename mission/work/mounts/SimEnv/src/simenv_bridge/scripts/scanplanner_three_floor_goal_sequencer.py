@@ -628,6 +628,8 @@ class ThreeFloorGoalSequencer:
         self._viewpoint_block_evidence = max(0.10, float(rospy.get_param(
             "~viewpoint_block_evidence_m", 0.35)))
         self._last_leg_accepted_short = False
+        self._blocked_viewpoint_timeout = max(5.0, float(rospy.get_param(
+            "~blocked_viewpoint_progress_timeout_sec", 8.0)))
 
         os.makedirs(self._output_dir, exist_ok=True)
         self._lock = threading.RLock()
@@ -722,10 +724,19 @@ class ThreeFloorGoalSequencer:
 
     def _record_event(self, event, **fields):
         payload = {"event": str(event), "wall_time": round(time.time(), 3)}
+        payload["sim_time"] = float(rospy.get_time())
         payload.update(fields)
         with self._lock:
             self._events.append(payload)
             self._events = self._events[-1000:]
+            # Keep the complete diagnostic history even after the summary ring
+            # rolls over. Never let a diagnostics write stop the controller.
+            try:
+                with open(os.path.join(self._output_dir, "route_events.jsonl"),
+                          "a", encoding="utf-8") as stream:
+                    stream.write(json.dumps(payload, sort_keys=True) + "\n")
+            except OSError as exc:
+                rospy.logwarn_throttle(30.0, "route event write failed: %s", exc)
 
     def _publish_route_state(self, phase, **fields):
         payload = {"phase": str(phase), "wall_time": round(time.time(), 3)}
@@ -946,6 +957,15 @@ class ThreeFloorGoalSequencer:
         """
         return (self._blocked_viewpoints_this_floor <
                 self._viewpoint_stall_accept_max)
+
+    def _new_target_obstacle_sample(self, floor, target, pose, last_stamp):
+        """Count independent cloud arrivals, not repeated checks of one cloud."""
+        with self._lock:
+            stamp = self._latest_cloud_monotonic
+            if (stamp is not None and stamp != last_stamp and
+                    self._target_has_sensed_obstacle(floor, target, pose)):
+                return stamp, True
+        return last_stamp, False
 
     def _viewpoint_blocked_short(self, waypoint, distance,
                                  blocked_seen, best_distance):
@@ -1194,8 +1214,27 @@ class ThreeFloorGoalSequencer:
         if "policy_reload_failed:" in text:
             with self._lock:
                 self._failure = "policy_reload_failed:{}".format(text)
-        self._record_event("policy_status", status=text,
-                           policy=policy_kind(text))
+        # Numeric telemetry changes every frame (including timestamp). Keep
+        # state/guard transitions immediately, plus one sample per 5 wall sec.
+        # Never throttle the readiness acknowledgement above.
+        try:
+            telemetry = json.loads(text)
+        except (TypeError, ValueError):
+            telemetry = None
+        if isinstance(telemetry, dict) and "phase" in telemetry:
+            scale = telemetry.get("plane_tilt_guard_scale", 1.0)
+            key = (kind, telemetry.get("phase"),
+                   telemetry.get("locomotion_ready"),
+                   telemetry.get("plane_tilt_guard_hold"),
+                   isinstance(scale, (int, float)) and scale < 1.0)
+            periodic = now - getattr(self, "_last_policy_event_at", -float("inf")) >= 5.0
+        else:
+            key = text
+            periodic = False
+        if key != getattr(self, "_last_recorded_policy_status", None) or periodic:
+            self._last_recorded_policy_status = key
+            self._last_policy_event_at = now
+            self._record_event("policy_status", status=text, policy=kind)
 
     def _on_manager_state(self, message, topic):
         text = str(message.data).strip()
@@ -1354,6 +1393,7 @@ class ThreeFloorGoalSequencer:
         self._last_leg_accepted_short = False
         target_blocked_seen = 0
         next_block_probe = 0.0
+        last_block_cloud = None
 
         # SUCCESS_BASELINE_VIEWPOINT_CAP_V4
         # Match the successful seed34 effective viewpoint speed.
@@ -1407,18 +1447,32 @@ class ThreeFloorGoalSequencer:
             self._entrance_progress_timeout
             if entrance_mode else self._progress_timeout)
         progress_deadline = time.monotonic() + progress_timeout
+        last_progress_at = time.monotonic()
         best_distance = float("inf")
         best_heading_error = float("inf")
         stall_recoveries = 0
         distance = float("inf")
+        forward_only = (not entrance_mode and (
+            policy_kind_name != "plane" or
+            note.endswith("_entry") or note.endswith("_exit") or
+            bool(waypoint.get("plane_forward_only", False))))
         self._publish_route_state(
             "NAVIGATE_DIRECT_{}_RL".format(policy_kind_name.upper()),
             floor=int(floor["floor_number"]),
             waypoint_index=index, waypoint=note, target=list(target),
-            forward_only=not entrance_mode,
+            forward_only=forward_only,
+            effective_speed_mps=effective_speed,
+            distance_gain=(float(waypoint.get(
+                "direct_plane_distance_gain", self._direct_plane_distance_gain))
+                if policy_kind_name == "plane" and not entrance_mode else 0.70),
+            position_tolerance_m=tolerance,
+            progress_timeout_wall_sec=progress_timeout,
+            blocked_progress_timeout_wall_sec=min(
+                progress_timeout, self._blocked_viewpoint_timeout),
             control_mode=(
                 "fixed_entrance_heading_with_lateral_correction"
-                if entrance_mode else "turn_before_forward"))
+                if entrance_mode else (
+                    "turn_before_forward" if forward_only else "holonomic")))
         while not rospy.is_shutdown() and time.monotonic() < deadline:
             if not self._deadline_ok():
                 break
@@ -1575,8 +1629,12 @@ class ThreeFloorGoalSequencer:
                     distance > self._runtime_audit_self_radius + 0.5 and
                     time.monotonic() >= next_block_probe):
                 next_block_probe = time.monotonic() + 0.5
-                if self._target_has_sensed_obstacle(floor, target, pose):
+                last_block_cloud, new_sample = self._new_target_obstacle_sample(
+                    floor, target, pose, last_block_cloud)
+                if new_sample:
                     target_blocked_seen += 1
+            blocked_short = self._viewpoint_blocked_short(
+                waypoint, distance, target_blocked_seen, best_distance)
             distance_progress = distance <= best_distance - self._progress_distance
             # A leg without align_yaw keeps heading_error at infinity, and
             # inf <= inf - 0.08 is true, so an unguarded comparison would
@@ -1588,7 +1646,11 @@ class ThreeFloorGoalSequencer:
                 best_distance = distance
                 best_heading_error = heading_error
                 progress_deadline = time.monotonic() + progress_timeout
-            elif time.monotonic() >= progress_deadline:
+                last_progress_at = time.monotonic()
+            elif time.monotonic() >= min(
+                    progress_deadline,
+                    last_progress_at + self._blocked_viewpoint_timeout
+                    if blocked_short else progress_deadline):
                 recovery_attempts = (
                     self._entrance_recovery_max_attempts if entrance_mode
                     else self._stall_recovery_max_attempts)
@@ -1639,6 +1701,7 @@ class ThreeFloorGoalSequencer:
                     best_distance = distance
                     best_heading_error = heading_error
                     progress_deadline = time.monotonic() + progress_timeout
+                    last_progress_at = time.monotonic()
                     continue
                 # A room viewpoint can be unreachable through no fault of the
                 # controller: the scene's own danger sphere may sit on it, and
@@ -1986,7 +2049,8 @@ class ThreeFloorGoalSequencer:
     def _correct_oblique_waypoint(self, floor, waypoint, reached_pose,
                                   effective_speed, index):
         if self._actual_oblique_waypoint_ok(floor, waypoint, reached_pose):
-            return reached_pose, 0.0, 0, False
+            return reached_pose, math.hypot(
+                reached_pose[0] - waypoint["x"], reached_pose[1] - waypoint["y"]), 0, False
         if self._last_leg_accepted_short:
             # The leg already stalled against whatever is standing on this
             # viewpoint.  Re-driving the same point spends another full
@@ -1995,7 +2059,8 @@ class ThreeFloorGoalSequencer:
                 "oblique_correction_skipped_blocked",
                 room_id=waypoint.get("room_id"),
                 waypoint=waypoint.get("note"))
-            return reached_pose, 0.0, 0, False
+            return reached_pose, math.hypot(
+                reached_pose[0] - waypoint["x"], reached_pose[1] - waypoint["y"]), 0, False
         record = self._room_record(waypoint, floor["floor_number"])
         if int(record.get("geometry_correction_count", 0)) >= 1:
             with self._lock:
@@ -2022,7 +2087,8 @@ class ThreeFloorGoalSequencer:
             # barred from: a danger sphere standing on it stops the base a
             # little short every time.  Accept the closest pose it can hold
             # rather than losing the rest of the floor over a few centimetres.
-            short = (corrected_pose is not None and math.hypot(
+            short = (self._last_leg_accepted_short and
+                corrected_pose is not None and math.hypot(
                 float(corrected_pose[0]) - float(waypoint["x"]),
                 float(corrected_pose[1]) - float(waypoint["y"]))
                 <= self._viewpoint_stall_accept)
