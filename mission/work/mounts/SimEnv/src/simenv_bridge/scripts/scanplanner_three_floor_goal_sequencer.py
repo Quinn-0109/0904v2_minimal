@@ -1044,6 +1044,69 @@ class ThreeFloorGoalSequencer:
             self._perceived_obstacle_points(floor, start),
             self._runtime_audit_clearance, self._runtime_detour_step)
 
+    def _relocate_occupied_g4(self, floor, waypoint):
+        """Bounded local G4 replacement using fresh sensed points only.
+
+        Require an executed G3 and check geometry at the candidate and eight
+        arrival-tolerance offsets. Unobserved space is not proven obstacle-free;
+        the normal live audit and arrival geometry checks remain mandatory.
+        """
+        if (waypoint.get("room_phase") != "G4" or
+                not waypoint.get("scan") or
+                waypoint.get("viewpoint_policy") not in OBLIQUE_VIEWPOINT_POLICIES or
+                waypoint.get("runtime_original_target") is not None):
+            return False
+        with self._lock:
+            start = self._pose
+        if start is None:
+            return False
+        points = self._perceived_obstacle_points(floor, start)
+        original = (float(waypoint["x"]), float(waypoint["y"]))
+        if not points or min(math.hypot(p[0] - original[0], p[1] - original[1])
+                             for p in points) >= self._runtime_audit_clearance:
+            return False
+        record = self._room_record(waypoint, floor["floor_number"])
+        first = record.get("viewpoints", {}).get("G3", {}).get("actual_pose")
+        if not first:
+            return False
+        tolerance = float(waypoint.get("tolerance", 0.12))
+        clearance = self._runtime_audit_clearance + tolerance
+        minimum_separation = float(waypoint.get("minimum_viewpoint_separation_m", 2.2))
+        for radius in (0.15, 0.30, 0.45, 0.60):
+            for index in range(24):
+                angle = index * math.pi / 12.0
+                candidate = (original[0] + radius * math.cos(angle),
+                             original[1] + radius * math.sin(angle))
+                if min(point_segment_distance_2d(p, start, candidate)
+                       for p in points) < clearance:
+                    continue
+                probes = [candidate] + [
+                    (candidate[0] + tolerance * math.cos(i * math.pi / 4),
+                     candidate[1] + tolerance * math.sin(i * math.pi / 4))
+                    for i in range(8)]
+                if any(math.hypot(p[0] - first[0], p[1] - first[1]) < minimum_separation
+                       or not self._actual_oblique_waypoint_ok(floor, waypoint, p)
+                       for p in probes):
+                    continue
+                proposed = dict(waypoint, x=candidate[0], y=candidate[1])
+                if not self._runtime_3d_audit(floor, proposed):
+                    continue
+                waypoint.update(x=candidate[0], y=candidate[1],
+                                runtime_original_target=list(original))
+                door = waypoint["door_contract"]
+                waypoint["door_relative_depth_m"] = float(door["inward_direction"]) * (
+                    candidate[0] - float(door["centre"][0]))
+                waypoint["door_relative_lateral_m"] = candidate[1] - float(door["centre"][1])
+                relocation = dict(waypoint=waypoint["note"], original_target=list(original),
+                                  replacement_target=list(candidate), offset_m=radius,
+                                  required_clearance_m=clearance)
+                record["runtime_viewpoint_relocation"] = relocation
+                self._record_event("occupied_viewpoint_relocated", **relocation)
+                return True
+        self._record_event("occupied_viewpoint_relocation_unavailable",
+                           waypoint=waypoint["note"], maximum_offset_m=0.60)
+        return False
+
     def _ensure_runtime_3d_audit(self, floor, waypoint, index=0):
         if self._runtime_3d_audit(floor, waypoint):
             return True
@@ -1068,6 +1131,8 @@ class ThreeFloorGoalSequencer:
         # known, so route around it from the cloud and re-audit what is
         # left of the leg.  The scan still happens at the planned
         # viewpoint, so room coverage is unchanged.
+        if self._relocate_occupied_g4(floor, waypoint):
+            return True
         for attempt in range(self._runtime_detour_max_attempts):
             detour = self._perceived_detour_point(floor, waypoint)
             if detour is None:
@@ -2234,6 +2299,8 @@ class ThreeFloorGoalSequencer:
                     reason = self._failure
                 self._write_tour(floor, records, "failed", reason)
                 return False
+            # Runtime audit may have selected a nearby replacement G4.
+            target = (float(waypoint["x"]), float(waypoint["y"]))
             if bool(waypoint.get("speed_scale_exempt", False)):
                 waypoint_speed_scale = 1.0
             else:
