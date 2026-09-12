@@ -1151,7 +1151,8 @@ class Detector:
         if world_points:
             batch["candidate_frames"] += 1
 
-    def _record_projection_provenance(self, world_points, records):
+    def _record_projection_provenance(self, world_points, records,
+                                      observer_xy):
         """File each admitted candidate under the frame and track it fed.
 
         Observation only.  A same-ray pair turns on whether the two members
@@ -1187,8 +1188,9 @@ class Detector:
                 "track_id": int(track_id),
                 "track_count_after": int(count),
                 "opened_track": bool(is_new),
-                "observer_xy": [round(float(self.base_xyz[0]), 4),
-                                round(float(self.base_xyz[1]), 4)],
+                # The image-time pose the points were projected from, the
+                # same one the track metadata carries -- not latest odom.
+                "observer_xy": list(observer_xy),
             })
             stored.append(entry)
             if len(stored) >= self._projection_provenance_limit:
@@ -1785,7 +1787,8 @@ class Detector:
                 self.tracker.update(world_points, metadata=metadata,
                                     frame_id=int(self.frames_processed))
                 self._record_projection_provenance(
-                    world_points, projection_provenance)
+                    world_points, projection_provenance,
+                    metadata["observer_xy"])
             else:
                 # A direct-RL navigation command also uses scan_cmd_vel, but
                 # only the dedicated stationary-room-scan topic is detection

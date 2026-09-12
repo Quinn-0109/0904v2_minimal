@@ -189,10 +189,13 @@ class ProjectionProvenanceTest(unittest.TestCase):
         self.detector._projection_provenance_limit = 400
         self.detector._scan_batch = {}
 
+    IMAGE_TIME_POSE = [-3.8901, 29.5168]
+
     def _record(self, world_points, assignments, records):
         self.detector.tracker = SimpleNamespace(
             last_assignments=assignments)
-        self.detector._record_projection_provenance(world_points, records)
+        self.detector._record_projection_provenance(
+            world_points, records, self.IMAGE_TIME_POSE)
         return self.detector._scan_batch.get("projection_provenance", [])
 
     def test_a_filtered_out_candidate_does_not_shift_the_rest(self):
@@ -222,7 +225,11 @@ class ProjectionProvenanceTest(unittest.TestCase):
         self.assertEqual(stored[0]["frame_id"], 42)
         self.assertEqual(stored[0]["track_count_after"], 4)
         self.assertFalse(stored[0]["opened_track"])
-        self.assertEqual(stored[0]["observer_xy"], [-3.8896, 29.5173])
+        # The image-time pose the points were projected from, which is
+        # what the track metadata carries -- not self.base_xyz.
+        self.assertEqual(stored[0]["observer_xy"], self.IMAGE_TIME_POSE)
+        self.assertNotEqual(stored[0]["observer_xy"],
+                            self.detector.base_xyz[:2])
 
     def test_an_out_of_range_assignment_is_skipped(self):
         records = [{"world_xy": [1.0, 2.0], "projection": "depth_only"}]
@@ -248,7 +255,8 @@ class ProjectionProvenanceTest(unittest.TestCase):
         self.detector.tracker = SimpleNamespace(
             last_assignments=[(0, 5, 1, True)])
         self.detector._record_projection_provenance(
-            [(1.0, 2.0, 2.75)], records)   # must not raise
+            [(1.0, 2.0, 2.75)], records,
+            self.IMAGE_TIME_POSE)   # must not raise
 
 
 if __name__ == "__main__":
