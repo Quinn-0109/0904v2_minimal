@@ -2015,11 +2015,30 @@ class ThreeFloorGoalSequencer:
                                     self._maximum_floor_speed,
                                     self._speed_scale * float(
                                         rescan_waypoint["speed"]))
-                                # This is the exact reverse of the already
-                                # A*-validated and freshly audited G3->G4
-                                # segment. Re-auditing sparse live points here
-                                # could spend the room's unrelated single
-                                # point-cloud refresh allowance.
+                                # NOT the reverse of the audited G3->G4
+                                # segment whenever that segment has bends.
+                                # seed 77's floor_0_room_1 plans
+                                # g3 -> g4_path_1 -> g4 around a coffee
+                                # table on the centreline; this leg drives
+                                # g4 -> g3 straight, 0.006 m from the point
+                                # the G3 audit itself had sensed on that
+                                # table.  Unaudited, it went through it
+                                # twice and the robot ended upside down
+                                # (upright z -0.725) at 2.13 m/s.  One
+                                # point-cloud refresh is cheaper than that.
+                                if not self._ensure_runtime_3d_audit(
+                                        floor, rescan_waypoint):
+                                    with self._lock:
+                                        audit_reason = self._failure
+                                        self._failure = None
+                                    self._record_event(
+                                        "local_danger_rescan_soft_skipped",
+                                        floor=floor_number, waypoint=note,
+                                        room_id=room_key,
+                                        reason=(audit_reason or
+                                                "rescan_leg_audit_failed"))
+                                    self._write_room_evidence("running")
+                                    return True, total
                                 reached, distance, _recoveries = (
                                     self._drive_direct_waypoint(
                                         floor, rescan_waypoint, speed,
@@ -2079,8 +2098,24 @@ class ThreeFloorGoalSequencer:
                                 self._maximum_floor_speed,
                                 self._speed_scale * float(
                                     return_waypoint["speed"]))
-                            # Restore along the same validated segment before
-                            # the regular G4->RETURN route resumes.
+                            # Same leg, same obstacle, same audit.  The
+                            # room's G4 scan is already banked, so a leg
+                            # the audit cannot clear skips the restore and
+                            # lets the normal route resume from G3 rather
+                            # than driving into what it just sensed.
+                            if not self._ensure_runtime_3d_audit(
+                                    floor, return_waypoint):
+                                with self._lock:
+                                    audit_reason = self._failure
+                                    self._failure = None
+                                self._record_event(
+                                    "local_danger_rescan_restore_skipped",
+                                    floor=floor_number, waypoint=note,
+                                    room_id=room_key,
+                                    reason=(audit_reason or
+                                            "restore_leg_audit_failed"))
+                                self._write_room_evidence("running")
+                                return True, total
                             reached, distance, _recoveries = (
                                 self._drive_direct_waypoint(
                                     floor, return_waypoint, speed,
