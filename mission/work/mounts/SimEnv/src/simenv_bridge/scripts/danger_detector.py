@@ -338,17 +338,25 @@ class DetectionTracker:
         self.tracks = []
         self._next_id = 1
         self.last_newly_confirmed = []
+        self.last_assignments = []
 
-    def update(self, points, metadata=None):
+    def update(self, points, metadata=None, frame_id=None):
         """Update 2-D or floor-aware 3-D tracks.
 
         A track may consume at most one candidate from a camera frame.  This
         prevents two nearby balls visible simultaneously from being collapsed
         into one source while still averaging projection noise over time.
+        It also means ``count`` is already a count of distinct frames, which
+        the per-cluster point totals in a scan batch are NOT.
+
+        ``frame_id`` is recorded per track and per assignment so a later
+        pass can ask whether two tracks were fed by the same frames or by
+        different ones.  Nothing about the tracking decisions depends on it.
         """
         used_tracks = set()
         newly_confirmed = []
-        for point in points:
+        self.last_assignments = []
+        for point_index, point in enumerate(points):
             dimensions = 3 if len(point) >= 3 else 2
             coordinates = tuple(float(value) for value in point[:dimensions])
             nearest = None
@@ -374,6 +382,8 @@ class DetectionTracker:
                     "count": 1,
                     "confirmed": self.confirm_count <= 1,
                     "metadata": dict(metadata or {}),
+                    "frame_ids": ([] if frame_id is None
+                                  else [int(frame_id)]),
                 }
                 if dimensions == 3:
                     nearest["z"] = coordinates[2]
@@ -382,6 +392,8 @@ class DetectionTracker:
                 if nearest["confirmed"]:
                     newly_confirmed.append(nearest)
                 used_tracks.add(nearest["id"])
+                self.last_assignments.append(
+                    (point_index, nearest["id"], 1, True))
                 continue
             count = nearest["count"] + 1
             nearest["x"] += (coordinates[0] - nearest["x"]) / count
@@ -389,7 +401,13 @@ class DetectionTracker:
             if dimensions == 3:
                 nearest["z"] += (coordinates[2] - nearest["z"]) / count
             nearest["count"] = count
+            if frame_id is not None:
+                frames = nearest.setdefault("frame_ids", [])
+                if not frames or frames[-1] != int(frame_id):
+                    frames.append(int(frame_id))
             used_tracks.add(nearest["id"])
+            self.last_assignments.append(
+                (point_index, nearest["id"], count, False))
             if not nearest["confirmed"] and count >= self.confirm_count:
                 nearest["confirmed"] = True
                 nearest["metadata"] = dict(metadata or {})
@@ -505,6 +523,117 @@ def same_ray_duplicate_losers(
                     discarded.add(far_index)
 
     return discarded
+
+
+def same_ray_track_associations(
+        tracks, confirm_count=3, maximum_bearing_gap_deg=1.5,
+        minimum_range_ratio=1.10):
+    """Report same-view track pairs on one bearing.  Changes nothing.
+
+    Seed 20 showed why this must be observed before it is acted on.
+    floor_1_room_2's G4 scan held four same-ray pairs' worth of candidates,
+    and the rule that relocates a confirmed track onto the nearer one fired
+    on two of them: the pair that would have recovered
+    danger_red_sphere_01 (0.212 deg apart, 1.184x) and a pair that would
+    have dragged track 4 off danger_red_sphere_00 from 0.406 m to 2.152 m
+    (0.571 deg apart, 1.619x).  Near bearing and a range ratio do not
+    establish one ball; a stray near estimate looks the same.
+
+    What separates them is not measured anywhere yet: whether the two
+    members were fed by the SAME frames, which means two things seen at
+    once, or by DIFFERENT frames, which means one thing projected two ways.
+    So each pair is reported with both frame lists, their overlap, and
+    whether the near member recurs in more than one independent frame --
+    the condition a later merge should require.  No position, count or
+    discard decision reads any of it.
+
+    Odometry and tracks only; no scene truth is read.
+    """
+    confirm_count = max(1, int(confirm_count))
+    maximum_gap_rad = math.radians(max(0.0, float(maximum_bearing_gap_deg)))
+    minimum_range_ratio = max(1.0, float(minimum_range_ratio))
+    groups = {}
+
+    for track in tracks or []:
+        try:
+            metadata = track.get("metadata") or {}
+            room_id = str(metadata.get("room_id", "")).strip()
+            role = str(metadata.get("viewpoint_role", "")).strip().upper()
+            waypoint = str(metadata.get("waypoint", "")).strip()
+            observer = metadata.get("observer_xy", [])
+
+            if (not room_id or not role or not waypoint or
+                    len(observer) < 2):
+                continue
+
+            offset = (float(track["x"]) - float(observer[0]),
+                      float(track["y"]) - float(observer[1]))
+            member = {
+                "id": int(track["id"]),
+                "x": round(float(track["x"]), 4),
+                "y": round(float(track["y"]), 4),
+                "frames": int(track["count"]),
+                "frame_ids": [int(value) for value in
+                              (track.get("frame_ids") or [])],
+            }
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue
+
+        distance = math.hypot(offset[0], offset[1])
+        if distance <= 0.0:
+            continue
+
+        member["bearing"] = math.atan2(offset[1], offset[0])
+        member["range"] = distance
+        groups.setdefault(
+            (metadata.get("floor"), room_id, role, waypoint), []
+        ).append(member)
+
+    associations = []
+
+    for key, members in sorted(
+            groups.items(), key=lambda item: str(item[0])):
+        floor, room_id, role, waypoint = key
+        for index, far in enumerate(members):
+            for near in members[index + 1:]:
+                low, high = sorted((far, near), key=lambda m: m["range"])
+                ratio = high["range"] / low["range"]
+                if ratio < minimum_range_ratio:
+                    continue
+                gap = abs(high["bearing"] - low["bearing"])
+                gap = min(gap, 2.0 * math.pi - gap)
+                if gap > maximum_gap_rad:
+                    continue
+
+                shared = sorted(
+                    set(low["frame_ids"]) & set(high["frame_ids"]))
+                associations.append({
+                    "floor": floor,
+                    "room_id": room_id,
+                    "viewpoint_role": role,
+                    "waypoint": waypoint,
+                    "bearing_gap_deg": round(math.degrees(gap), 4),
+                    "range_ratio": round(ratio, 4),
+                    "near_track_id": low["id"],
+                    "near_position": [low["x"], low["y"]],
+                    "near_range_m": round(low["range"], 4),
+                    "near_frames": low["frames"],
+                    "near_frame_ids": low["frame_ids"],
+                    "near_confirmed": low["frames"] >= confirm_count,
+                    "far_track_id": high["id"],
+                    "far_position": [high["x"], high["y"]],
+                    "far_range_m": round(high["range"], 4),
+                    "far_frames": high["frames"],
+                    "far_frame_ids": high["frame_ids"],
+                    "far_confirmed": high["frames"] >= confirm_count,
+                    "shared_frame_ids": shared,
+                    # The condition a later merge should require, reported
+                    # so it can be checked against scored runs first.
+                    "near_recurs_independently": low["frames"] >= 2,
+                    "frames_are_disjoint": not shared,
+                })
+
+    return associations
 
 
 def strong_same_view_duplicate_losers(
@@ -886,6 +1015,8 @@ class Detector:
         # merge has decided they are one ball.  Set to "winner" to keep
         # the pre-existing behaviour of reporting the surviving track
         # unchanged and discarding the other view entirely.
+        self._projection_provenance_limit = int(rospy.get_param(
+            "~projection_provenance_limit", 400))
         self.cross_view_merge_position = str(rospy.get_param(
             "~cross_view_merge_position", "midpoint")).strip().lower()
         self.floor_height = float(rospy.get_param("~floor_height_m", 2.6))
@@ -1019,6 +1150,50 @@ class Detector:
         batch["processed_frames"] += 1
         if world_points:
             batch["candidate_frames"] += 1
+
+    def _record_projection_provenance(self, world_points, records):
+        """File each admitted candidate under the frame and track it fed.
+
+        Observation only.  A same-ray pair turns on whether the two members
+        were fed by the SAME frames -- two objects seen together -- or by
+        DIFFERENT ones -- one object projected two ways.  Neither the batch
+        clusters nor the track counts answer that, so record it and decide
+        later, on evidence, rather than relocating a position now.
+        """
+        batch = getattr(self, "_scan_batch", None)
+        if batch is None or not records:
+            return
+        stored = batch.setdefault("projection_provenance", [])
+        if len(stored) >= self._projection_provenance_limit:
+            batch["projection_provenance_truncated"] = True
+            return
+        by_xy = {}
+        for record in records:
+            world = record.get("world_xy")
+            if world and len(world) >= 2:
+                by_xy.setdefault((world[0], world[1]), record)
+        for point_index, track_id, count, is_new in getattr(
+                self.tracker, "last_assignments", []):
+            if not 0 <= point_index < len(world_points):
+                continue
+            point = world_points[point_index]
+            record = by_xy.get((round(float(point[0]), 4),
+                                round(float(point[1]), 4)))
+            if record is None:
+                continue
+            entry = dict(record)
+            entry.update({
+                "frame_id": int(self.frames_processed),
+                "track_id": int(track_id),
+                "track_count_after": int(count),
+                "opened_track": bool(is_new),
+                "observer_xy": [round(float(self.base_xyz[0]), 4),
+                                round(float(self.base_xyz[1]), 4)],
+            })
+            stored.append(entry)
+            if len(stored) >= self._projection_provenance_limit:
+                batch["projection_provenance_truncated"] = True
+                break
 
     def _scan_active_cb(self, msg):
         active = bool(msg.data)
@@ -1476,6 +1651,7 @@ class Detector:
         world_points = []
         floor_z = round(float(base_xyz[2]) / self.floor_height) * self.floor_height
         danger_z = floor_z + DANGER_Z
+        projection_provenance = []
         for cx, cy, radius, _fill in candidates:
             sensor_depth = self._depth_at(cx, cy, stamp)
             depth = select_sphere_depth(
@@ -1485,6 +1661,20 @@ class Detector:
                 target_z=danger_z)
             ground_point = scale_planar_range(
                 ground_point, base_xyz, self.ground_range_scale)
+            # Which of the two projections produced the point a track is
+            # built from is not recoverable from the batch clusters, and it
+            # is the question a same-ray pair turns on.  Recorded only; no
+            # decision below reads it.
+            record = {
+                "sensor_depth_m": (None if sensor_depth is None
+                                   else round(float(sensor_depth), 4)),
+                "selected_depth_m": (None if depth is None
+                                     else round(float(depth), 4)),
+                "radius_px": round(float(radius), 3),
+                "ground_xy": (None if ground_point is None else
+                              [round(float(ground_point[0]), 4),
+                               round(float(ground_point[1]), 4)]),
+            }
             if depth is not None:
                 point3 = depth_pixel_to_world(cx, cy, depth, base_xyz, base_yaw, self.calibration)
                 # The level recording camera gives a stable ground-plane
@@ -1493,9 +1683,28 @@ class Detector:
                 # already background-filtered sphere-size/depth estimate.
                 fused = fuse_sphere_world_point(
                     point3, ground_point, danger_z, agreement_m=1.0)
+                record["depth_xy"] = (None if point3 is None else
+                                      [round(float(point3[0]), 4),
+                                       round(float(point3[1]), 4)])
+                if point3 is not None and ground_point is not None:
+                    separation = math.hypot(
+                        float(point3[0]) - float(ground_point[0]),
+                        float(point3[1]) - float(ground_point[1]))
+                    record["depth_ground_separation_m"] = round(separation, 4)
+                    record["projection"] = ("fused_midpoint"
+                                            if separation <= 1.0
+                                            else "depth_over_ground")
+                else:
+                    record["projection"] = "depth_only"
                 if fused is not None:
+                    record["world_xy"] = [round(float(fused[0]), 4),
+                                          round(float(fused[1]), 4)]
+                    projection_provenance.append(record)
                     world_points.append(fused)
             elif ground_point is not None:
+                record["projection"] = "ground_only"
+                record["world_xy"] = list(record["ground_xy"])
+                projection_provenance.append(record)
                 world_points.append((ground_point[0], ground_point[1], danger_z))
         if (should_update_detections(self.scan_active) and
                 self.room_id is not None):
@@ -1573,7 +1782,10 @@ class Detector:
                                 round(float(base_xyz[1]), 4)],
             }
             if should_update_detections(self.scan_active):
-                self.tracker.update(world_points, metadata=metadata)
+                self.tracker.update(world_points, metadata=metadata,
+                                    frame_id=int(self.frames_processed))
+                self._record_projection_provenance(
+                    world_points, projection_provenance)
             else:
                 # A direct-RL navigation command also uses scan_cmd_vel, but
                 # only the dedicated stationary-room-scan topic is detection
@@ -1979,6 +2191,12 @@ class Detector:
                 "runtime_source_sha256": getattr(self, "runtime_source_sha256", None),
                 "tracks_missing_observer_xy": sum(
                     len(event.get("observer_xy") or []) < 2 for event in detections),
+                # Observation only -- see same_ray_track_associations.
+                "same_ray_observation": "record_only_v1",
+                "same_ray_associations": same_ray_track_associations(
+                    getattr(self.tracker, "tracks", []),
+                    confirm_count=int(getattr(
+                        self.tracker, "confirm_count", 3))),
                 "schema": "scanplanner_red_ball_detections_v1",
                 "status": str(effective_status),
                 "preparation_excluded": True,

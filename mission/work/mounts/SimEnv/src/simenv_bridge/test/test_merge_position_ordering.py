@@ -42,7 +42,7 @@ def event(track_id, role, waypoint, observer, elapsed):
     }
 
 
-def run_write_output(tracks, events):
+def run_write_output(tracks, events, all_tracks=None):
     module = _load_module()
     detector = module.Detector.__new__(module.Detector)
     detector._output_lock = threading.RLock()
@@ -57,6 +57,7 @@ def run_write_output(tracks, events):
     detector.tracker = SimpleNamespace(
         confirm_count=3,
         confirmed_tracks=lambda: tracks,
+        tracks=list(tracks if all_tracks is None else all_tracks),
     )
     detector.rospy = SimpleNamespace(loginfo=lambda *_args: None)
 
@@ -149,6 +150,62 @@ class Seed1001PipelineTest(unittest.TestCase):
         self.assertIn("merged_source_positions", survivor)
         self.assertLess(offset, 1.5)
         self.assertAlmostEqual(offset, 0.511, places=2)
+
+
+class ObservationIsAdditiveTest(unittest.TestCase):
+    """The same-ray record must not reach any decision.
+
+    Seed 20's shape: a four-frame track 1.560 m from its sphere with a
+    one-frame track on its bearing 1.184x nearer.  The association is
+    reported; the reported position is still the track's own.
+    """
+
+    VIEWPOINT_G4 = [-3.8896, 29.5173]
+
+    def _room_2(self):
+        def at(track_id, x, y, frames, frame_ids):
+            item = event(track_id, "G4", "floor_1_room_2_g4",
+                         self.VIEWPOINT_G4, 265.0 + track_id * 0.1)
+            item["door_plane_x"] = -1.1
+            item["door_inward_direction"] = -1.0
+            row = track(track_id, x, y, frames)
+            row["metadata"] = dict(item)
+            row["frame_ids"] = list(frame_ids)
+            return row, item
+
+        rows = [at(5, -5.3855, 21.9878, 4, [11, 13, 15, 17]),
+                at(6, -5.1299, 23.1511, 1, [19])]
+        return [rows[0][0]], [rows[0][1]], [row[0] for row in rows]
+
+    def test_the_position_reported_is_still_the_track_s_own(self):
+        confirmed, events, every = self._room_2()
+        output = run_write_output(confirmed, events, all_tracks=every)
+        found = output["detections"]
+
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["track_id"], 5)
+        self.assertEqual(found[0]["position"][:2], [-5.3855, 21.9878])
+        self.assertEqual(found[0]["evidence_frames"], 4)
+        self.assertNotIn("same_ray_origin", found[0])
+
+    def test_the_association_is_reported_alongside_it(self):
+        confirmed, events, every = self._room_2()
+        output = run_write_output(confirmed, events, all_tracks=every)
+
+        self.assertEqual(output["same_ray_observation"], "record_only_v1")
+        self.assertEqual(len(output["same_ray_associations"]), 1)
+        pair = output["same_ray_associations"][0]
+        self.assertEqual((pair["far_track_id"], pair["near_track_id"]), (5, 6))
+        self.assertAlmostEqual(pair["range_ratio"], 1.184, places=2)
+        self.assertEqual(pair["near_frame_ids"], [19])
+        self.assertTrue(pair["frames_are_disjoint"])
+        self.assertFalse(pair["near_recurs_independently"])
+
+    def test_the_rules_revision_did_not_move(self):
+        confirmed, events, every = self._room_2()
+        output = run_write_output(confirmed, events, all_tracks=every)
+        self.assertEqual(output["detector_rules_revision"],
+                         "same_ray_before_merge_midpoint_after_dedup_v1")
 
 
 if __name__ == "__main__":
