@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Detect red spherical danger sources and publish world-frame positions."""
 import json
+import hashlib
 import math
 import os
 import sys
@@ -806,6 +807,12 @@ class Detector:
         from std_msgs.msg import Bool, String
 
         self.rospy = rospy
+        self.runtime_source_path = os.path.realpath(__file__)
+        try:
+            with open(self.runtime_source_path, "rb") as source:
+                self.runtime_source_sha256 = hashlib.sha256(source.read()).hexdigest()
+        except OSError:
+            self.runtime_source_sha256 = None
         self.Image = Image
         self.Bool = Bool
         self.String = String
@@ -1562,8 +1569,8 @@ class Detector:
                 # room scan turns in place, so it is the viewpoint itself
                 # and it is what lets two tracks be tested for sharing one
                 # viewing ray.  Odometry, not scene truth.
-                "observer_xy": [round(float(self.base_xyz[0]), 4),
-                                round(float(self.base_xyz[1]), 4)],
+                "observer_xy": [round(float(base_xyz[0]), 4),
+                                round(float(base_xyz[1]), 4)],
             }
             if should_update_detections(self.scan_active):
                 self.tracker.update(world_points, metadata=metadata)
@@ -1967,6 +1974,11 @@ class Detector:
             )
 
             output = {
+                "detector_rules_revision": "same_ray_before_merge_midpoint_after_dedup_v1",
+                "runtime_source_path": getattr(self, "runtime_source_path", None),
+                "runtime_source_sha256": getattr(self, "runtime_source_sha256", None),
+                "tracks_missing_observer_xy": sum(
+                    len(event.get("observer_xy") or []) < 2 for event in detections),
                 "schema": "scanplanner_red_ball_detections_v1",
                 "status": str(effective_status),
                 "preparation_excluded": True,
