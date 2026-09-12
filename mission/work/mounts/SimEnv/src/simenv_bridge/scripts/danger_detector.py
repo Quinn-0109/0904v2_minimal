@@ -407,6 +407,28 @@ class DetectionTracker:
         return [t for t in self.tracks if t["count"] >= self.confirm_count]
 
 
+def combine_cross_view_positions(winner_position, loser_position, mode):
+    """Report one position for a pair the cross-view merge just joined.
+
+    "winner" keeps the surviving track untouched and throws the other view
+    away with it.  That is what scored seed 1001's floor_1_room_3 sphere as
+    a false positive and a miss at once: the kept G3 track sat 1.73 m from
+    the sphere and the discarded G4 track sat 0.38 m from it.  A camera's
+    position error runs mostly along its own viewing ray, so two views that
+    disagree bracket the ball and their midpoint lands inside the bracket.
+    """
+    winner = [float(value) for value in (winner_position or [])]
+    loser = [float(value) for value in (loser_position or [])]
+    if str(mode).strip().lower() != "midpoint":
+        return winner
+    if len(winner) < 2 or len(loser) < 2:
+        return winner
+    combined = list(winner)
+    for axis in (0, 1):
+        combined[axis] = round(0.5 * (winner[axis] + loser[axis]), 4)
+    return combined
+
+
 def strong_same_view_duplicate_losers(
         detections, confirm_count=3, merge_radius_m=1.25,
         strong_evidence_multiplier=2,
@@ -776,6 +798,12 @@ class Detector:
         self._danger_rescan_requested_rooms = set()
         self._room_scan_evidence = {}
         self.scan_merge_radius = float(rospy.get_param("~scan_merge_radius", 1.2))
+        # How a cross-view duplicate pair reports its position once the
+        # merge has decided they are one ball.  Set to "winner" to keep
+        # the pre-existing behaviour of reporting the surviving track
+        # unchanged and discarding the other view entirely.
+        self.cross_view_merge_position = str(rospy.get_param(
+            "~cross_view_merge_position", "midpoint")).strip().lower()
         self.floor_height = float(rospy.get_param("~floor_height_m", 2.6))
         # The level Gazebo recording camera's rasterized sphere centroid is
         # biased slightly toward the visible lower silhouette, which makes a
@@ -1652,11 +1680,35 @@ class Detector:
 
                     discarded.add(loser)
 
+                    # The merge has just asserted these are one ball seen
+                    # twice.  Keeping only the winner's position also keeps
+                    # that view's depth bias and throws the other view away:
+                    # seed 1001 kept a 9-frame G3 track 1.73 m off its sphere
+                    # and discarded the G4 track that sat 0.38 m from it, so
+                    # one localisation error was scored as a false positive
+                    # and a miss at once.  A camera's error runs mostly along
+                    # its own viewing ray, so the midpoint of two views is
+                    # closer than either whenever they disagree.
+                    winner_event = candidate_records[winner]["event"]
+                    loser_event = candidate_records[loser]["event"]
+                    combined = combine_cross_view_positions(
+                        winner_event.get("position"),
+                        loser_event.get("position"),
+                        self.cross_view_merge_position)
+                    if combined != winner_event.get("position"):
+                        winner_event["merged_source_positions"] = [
+                            list(winner_event.get("position") or []),
+                            list(loser_event.get("position") or []),
+                        ]
+                        winner_event["merged_source_separation_m"] = round(
+                            distance, 4)
+                        winner_event["position"] = combined
+
                     self.rospy.loginfo(
                         "danger_detector: merged cross-view duplicate "
                         "track %s into track %s, distance=%.3fm",
-                        candidate_records[loser]["event"].get("track_id"),
-                        candidate_records[winner]["event"].get("track_id"),
+                        loser_event.get("track_id"),
+                        winner_event.get("track_id"),
                         distance,
                     )
 
