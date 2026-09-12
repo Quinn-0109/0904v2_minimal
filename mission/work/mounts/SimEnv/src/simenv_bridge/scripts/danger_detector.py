@@ -1717,6 +1717,8 @@ class Detector:
                     candidate_records[loser]["event"].get("track_id"),
                 )
 
+            pending_midpoints = {}
+
             def planar_distance(left_index, right_index):
                 left = candidate_records[left_index]["event"]["position"]
                 right = candidate_records[right_index]["event"]["position"]
@@ -1791,13 +1793,18 @@ class Detector:
                         loser_event.get("position"),
                         self.cross_view_merge_position)
                     if combined != winner_event.get("position"):
-                        winner_event["merged_source_positions"] = [
-                            list(winner_event.get("position") or []),
-                            list(loser_event.get("position") or []),
-                        ]
-                        winner_event["merged_source_separation_m"] = round(
-                            distance, 4)
-                        winner_event["position"] = combined
+                        # Held back, not written.  The midpoint is a
+                        # reporting decision; every duplicate rule below
+                        # still measures the position a camera reported.
+                        pending_midpoints[winner] = {
+                            "position": combined,
+                            "merged_source_positions": [
+                                list(winner_event.get("position") or []),
+                                list(loser_event.get("position") or []),
+                            ],
+                            "merged_source_separation_m": round(
+                                distance, 4),
+                        }
 
                     self.rospy.loginfo(
                         "danger_detector: merged cross-view duplicate "
@@ -1941,6 +1948,14 @@ class Detector:
                             loser = left_index
 
                         discarded.add(loser)
+
+            # Every duplicate rule has run on reported coordinates.  Only
+            # now does a survivor of a cross-view merge report the midpoint
+            # of the two views the merge called one ball.
+            for index, replacement in pending_midpoints.items():
+                if index in discarded:
+                    continue
+                candidate_records[index]["event"].update(replacement)
 
             detections = [
                 record["event"]
