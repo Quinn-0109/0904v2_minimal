@@ -91,6 +91,24 @@ class Budget600RegressionTest(unittest.TestCase):
             self.assertTrue(command((0, 0, 0, 0), (0, 0), .9,
                                     final_yaw_gain=1.8, **args)[-1])
 
+    def test_tighter_alignment_retains_cap_and_position_gate(self):
+        for command in (self.mod.direct_rl_command,
+                        self.mod.direct_holonomic_rl_command):
+            for error in (-3., -.5, .5, 3.):
+                args = dict(target_yaw=error, maximum_yaw_rate=1.5,
+                            position_tolerance=.12, heading_tolerance=.16)
+                old = command((0, 0, 0, 0), (1, 0), .9,
+                              final_yaw_gain=1.8, **args)
+                new = command((0, 0, 0, 0), (1, 0), .9,
+                              final_yaw_gain=2.2, **args)
+                self.assertEqual(old, new)
+                aligned = command((0, 0, 0, 0), (0, 0), .9,
+                                  final_yaw_gain=2.2, **args)
+                self.assertEqual(aligned[0], 0.)
+                self.assertAlmostEqual(aligned[-3], max(-1.5, min(1.5, 2.2 * error)))
+        self.assertEqual(self.mod.direct_progress_deadline(
+            10., 10., 15., 5., True, .2, .12), 15.)
+
     def test_policy_dedup_keeps_ack_refresh(self):
         seq = self.seq
         seq._plane_policy = '/tmp/policy_act_inference_plane.pt'

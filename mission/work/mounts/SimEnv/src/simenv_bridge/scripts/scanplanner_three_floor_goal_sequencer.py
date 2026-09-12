@@ -524,8 +524,8 @@ class ThreeFloorGoalSequencer:
         self._direct_plane_distance_gain = max(
             0.70, float(rospy.get_param(
                 "~direct_plane_distance_gain", 1.10)))
-        self._room_final_yaw_gain = max(1.1, min(1.8, float(rospy.get_param(
-            "~room_final_yaw_gain", 1.8))))
+        self._room_final_yaw_gain = max(1.1, min(2.2, float(rospy.get_param(
+            "~room_final_yaw_gain", 2.2))))
         self._direct_plane_translation_heading_limit = max(
             0.16, min(1.50, float(rospy.get_param(
                 "~direct_plane_translation_heading_limit_rad", 1.45))))
@@ -653,7 +653,7 @@ class ThreeFloorGoalSequencer:
             "~viewpoint_block_evidence_m", 0.35)))
         self._last_leg_accepted_short = False
         self._blocked_viewpoint_timeout = max(5.0, float(rospy.get_param(
-            "~blocked_viewpoint_progress_timeout_sec", 8.0)))
+            "~blocked_viewpoint_progress_timeout_sec", 5.0)))
 
         os.makedirs(self._output_dir, exist_ok=True)
         self._lock = threading.RLock()
