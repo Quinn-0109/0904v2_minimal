@@ -2024,19 +2024,22 @@ class ThreeFloorGoalSequencer:
                                 # the G3 audit itself had sensed on that
                                 # table.  Unaudited, it went through it
                                 # twice and the robot ended upside down
-                                # (upright z -0.725) at 2.13 m/s.  One
-                                # point-cloud refresh is cheaper than that.
-                                if not self._ensure_runtime_3d_audit(
+                                # (upright z -0.725) at 2.13 m/s.
+                                #
+                                # _runtime_3d_audit, not the _ensure_
+                                # wrapper: the wrapper answers a failed
+                                # audit by refreshing the cloud and DRIVING
+                                # detour legs, which is new motion this
+                                # optional rescan never had and a new way
+                                # for it to fail.  The rescan is skippable,
+                                # so the bare check is the whole decision.
+                                if not self._runtime_3d_audit(
                                         floor, rescan_waypoint):
-                                    with self._lock:
-                                        audit_reason = self._failure
-                                        self._failure = None
                                     self._record_event(
                                         "local_danger_rescan_soft_skipped",
                                         floor=floor_number, waypoint=note,
                                         room_id=room_key,
-                                        reason=(audit_reason or
-                                                "rescan_leg_audit_failed"))
+                                        reason="rescan_leg_audit_failed")
                                     self._write_room_evidence("running")
                                     return True, total
                                 reached, distance, _recoveries = (
@@ -2098,22 +2101,18 @@ class ThreeFloorGoalSequencer:
                                 self._maximum_floor_speed,
                                 self._speed_scale * float(
                                     return_waypoint["speed"]))
-                            # Same leg, same obstacle, same audit.  The
-                            # room's G4 scan is already banked, so a leg
-                            # the audit cannot clear skips the restore and
-                            # lets the normal route resume from G3 rather
-                            # than driving into what it just sensed.
-                            if not self._ensure_runtime_3d_audit(
+                            # Same leg, same obstacle, same bare check.
+                            # The room's G4 scan is already banked, so a
+                            # leg the audit cannot clear skips the restore
+                            # and lets the normal route resume from G3
+                            # rather than driving into what it just sensed.
+                            if not self._runtime_3d_audit(
                                     floor, return_waypoint):
-                                with self._lock:
-                                    audit_reason = self._failure
-                                    self._failure = None
                                 self._record_event(
                                     "local_danger_rescan_restore_skipped",
                                     floor=floor_number, waypoint=note,
                                     room_id=room_key,
-                                    reason=(audit_reason or
-                                            "restore_leg_audit_failed"))
+                                    reason="restore_leg_audit_failed")
                                 self._write_room_evidence("running")
                                 return True, total
                             reached, distance, _recoveries = (

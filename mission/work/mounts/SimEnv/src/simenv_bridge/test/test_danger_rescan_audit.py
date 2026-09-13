@@ -75,24 +75,46 @@ class RescanLegAuditTest(unittest.TestCase):
 
     def test_the_outbound_leg_is_audited_before_it_drives(self):
         block = self._rescan_block()
-        audit = block.index("_ensure_runtime_3d_audit(")
+        audit = block.index("self._runtime_3d_audit(")
         drive = block.index("_drive_direct_waypoint(")
         self.assertLess(audit, drive,
                         "the outbound rescan leg drives before it audits")
 
     def test_the_restore_leg_is_audited_before_it_drives(self):
         block = self._restore_block()
-        audit = block.index("_ensure_runtime_3d_audit(")
+        audit = block.index("self._runtime_3d_audit(")
         drive = block.index("_drive_direct_waypoint(")
         self.assertLess(audit, drive,
                         "the restore leg drives before it audits")
 
-    def test_a_failed_audit_clears_the_failure_and_keeps_the_room(self):
-        # The rescan is optional: a leg the audit cannot clear must leave
-        # the banked G3/G4 scans alone rather than fail the whole route.
+    def test_the_check_is_the_bare_audit_and_never_the_driving_wrapper(self):
+        # _ensure_runtime_3d_audit answers a failed audit by refreshing the
+        # cloud and driving detour legs.  That is new motion for an
+        # optional rescan and a new way for it to fail, so neither leg may
+        # reach it; the bare check is the whole decision.
         for block in (self._rescan_block(), self._restore_block()):
-            self.assertIn("self._failure = None", block)
+            self.assertNotIn("_ensure_runtime_3d_audit", block)
+            self.assertIn("self._runtime_3d_audit(", block)
+
+    def test_a_failed_audit_keeps_the_room_instead_of_failing_the_route(self):
+        for block in (self._rescan_block(), self._restore_block()):
             self.assertIn("return True, total", block)
+
+    def _skip_body(self, block):
+        """The audit-skip branch alone, up to the drive it guards."""
+        start = block.index("if not self._runtime_3d_audit(")
+        return block[start:block.index("_drive_direct_waypoint(", start)]
+
+    def test_the_skip_does_not_touch_the_failure_flag(self):
+        # The bare audit never sets self._failure, so the skip has nothing
+        # to clear.  An earlier version of this cleared it unconditionally
+        # and could have swallowed a real failure set elsewhere -- the
+        # pre-existing direct_rl_no_progress path does clear it, on
+        # purpose, and that one is outside this branch.
+        for block in (self._rescan_block(), self._restore_block()):
+            body = self._skip_body(block)
+            self.assertNotIn("self._failure", body)
+            self.assertIn("return True, total", body)
 
     def test_the_stale_reverse_segment_claim_is_gone(self):
         self.assertNotIn("exact reverse of the already", self.source)
